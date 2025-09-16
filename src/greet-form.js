@@ -5,8 +5,9 @@ export class GreetForm {
     this.onSuccess = onSuccess
   }
 
-  init() {
+  async init() {
     this.bindEvents()
+    await this.checkDevMode()
   }
 
   bindEvents() {
@@ -26,5 +27,19 @@ export class GreetForm {
         alert(`Error: ${error}`)
       }
     })
+  }
+
+  async checkDevMode() {
+    try {
+      const isDevMode = await invoke('is_dev_mode')
+      const devIndicator = document.getElementById('startup-dev-indicator')
+
+      if (isDevMode && devIndicator) {
+        devIndicator.classList.remove('hidden')
+        console.log('Developer mode is enabled')
+      }
+    } catch (error) {
+      console.error('Error checking dev mode:', error)
+    }
   }
 }

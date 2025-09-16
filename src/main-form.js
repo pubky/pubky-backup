@@ -4,6 +4,7 @@ export class MainForm {
   constructor() {
     this.pubky = null
     this.homeserver = null
+    this.developerMode = false
   }
 
   init() {
@@ -35,6 +36,7 @@ export class MainForm {
       const data = JSON.parse(stateMsg)
       this.pubky = data.pubky
       this.homeserver = data.homeserver
+      this.developerMode = data.developer_mode
       this.setHeader()
     } catch (error) {
       console.error('Error loading initial state:', error)
@@ -48,16 +50,24 @@ export class MainForm {
 
   setHeader() {
     const backupHeader = document.getElementById('backup-header')
+    
     const pubkyDisplay = document.getElementById('pubky-display')
     const homeserverDisplay = document.getElementById('homeserver-display')
-
     if (this.pubky && this.homeserver) {
-      // Display truncated values
       pubkyDisplay.textContent = this.displayPubky(this.pubky)
       homeserverDisplay.textContent = this.displayPubky(this.homeserver)
       backupHeader.classList.remove('hidden')
     } else {
-      backupHeader.classList.add('hidden')
+      console.log(`Failed to find State data`)
+    }
+    
+    const devIndicator = document.getElementById('dev-indicator')
+    if (this.developerMode && devIndicator) {
+      devIndicator.classList.remove('hidden')
+      console.log('Developer mode is enabled')
+    } else if (devIndicator) {
+      devIndicator.classList.add('hidden')
     }
   }
+
 }
