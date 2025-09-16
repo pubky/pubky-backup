@@ -9,12 +9,15 @@
     <!-- Startup Screen -->
     <div id="startup-screen" class="screen">
       <main class="container">
+        <div id="startup-dev-indicator" class="dev-indicator hidden">
+          <span>🔧 Developer Mode</span>
+        </div>
         <h1>Pubky Backup</h1>
         <p>Insert your pubky:</p>
         <input
           id="pubky-input"
           type="text"
-          value="g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y"
+          placeholder="g1b6wp8bhhxt..."
           class="pubky-input"
         />
         <button id="continue-btn" class="primary-btn">Continue to App</button>
@@ -24,6 +27,9 @@
     <!-- Main App Screen -->
     <div id="app-screen" class="screen hidden">
       <main class="container">
+        <div id="dev-indicator" class="dev-indicator hidden">
+          <span>🔧 Developer Mode</span>
+        </div>
         <div id="backup-header" class="backup-header hidden">
           <h2>Pubky: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
           <h2>Homeserver: <span id="homeserver-display"></span> <button id="copy-homeserver" class="copy-btn" title="Copy full homeserver">📋</button></h2>
