@@ -14,7 +14,7 @@
         <input
           id="pubky-input"
           type="text"
-          placeholder="Enter your pubky..."
+          value="g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y"
           class="pubky-input"
         />
         <button id="continue-btn" class="primary-btn">Continue to App</button>
@@ -24,22 +24,10 @@
     <!-- Main App Screen -->
     <div id="app-screen" class="screen hidden">
       <main class="container">
-        <h1>Welcome to Tauri + React</h1>
-
-        <form class="row" id="greet-form">
-          <input
-            id="greet-input"
-            placeholder="Enter a name..."
-          />
-          <button type="submit">Greet</button>
-        </form>
-        <form class="row" id="fetch-form">
-          <button type="submit">Fetch</button>
-        </form>
-        <form class="row" id="fetch-state-form">
-          <button type="submit">Fetch from state</button>
-        </form>
-        <p id="greet-msg"></p>
+        <div id="backup-header" class="backup-header hidden">
+          <h2>Pubky: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
+          <h2>Homeserver: <span id="homeserver-display"></span> <button id="copy-homeserver" class="copy-btn" title="Copy full homeserver">📋</button></h2>
+        </div>
       </main>
     </div>
     <script type="module" src="/main.js"></script>

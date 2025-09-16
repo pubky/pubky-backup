@@ -2,68 +2,62 @@ import { invoke } from '@tauri-apps/api/core'
 
 export class MainForm {
   constructor() {
-    this.name = ''
-    this.greetMsg = ''
+    this.pubky = null
+    this.homeserver = null
   }
 
   init() {
     this.bindEvents()
+    this.loadStateOnInit()
   }
 
   bindEvents() {
-    // Greet form functionality
-    const greetForm = document.getElementById('greet-form')
-    const greetInput = document.getElementById('greet-input')
-
-    greetInput.addEventListener('input', (e) => {
-      this.name = e.target.value
+    // Copy button functionality
+    document.getElementById('copy-pubky').addEventListener('click', () => {
+      navigator.clipboard.writeText(this.pubky).then(() => {
+        console.log('Pubky copied to clipboard')
+      }).catch(err => {
+        console.error('Failed to copy pubky:', err)
+      })
     })
-
-    greetForm.addEventListener('submit', async (e) => {
-      e.preventDefault()
-      if (this.name.trim() === '') {
-        return
-      }
-
-      try {
-        const newMsg = await invoke('greet', { name: this.name })
-        this.greetMsg = newMsg
-        this.updateGreetMsg()
-      } catch (error) {
-        console.error('Error calling greet:', error)
-      }
-    })
-
-    // Fetch form functionality
-    const fetchForm = document.getElementById('fetch-form')
-
-    fetchForm.addEventListener('submit', async (e) => {
-      e.preventDefault()
-      try {
-        const newMsg = await invoke('fetch_data')
-        this.greetMsg = newMsg
-        this.updateGreetMsg()
-      } catch (error) {
-        console.error('Error calling fetch_data:', error)
-      }
-    })
-
-    // Fetch from state form functionality
-    const fetchStateForm = document.getElementById('fetch-state-form')
-
-    fetchStateForm.addEventListener('submit', async (e) => {
-      e.preventDefault()
-      try {
-        const newMsg = await invoke('fetch_from_state')
-        this.greetMsg = newMsg
-        this.updateGreetMsg()
-      } catch (error) {
-        console.error('Error calling fetch_from_state:', error)
-      }
+    document.getElementById('copy-homeserver').addEventListener('click', () => {
+      navigator.clipboard.writeText(this.homeserver).then(() => {
+        console.log('Homeserver copied to clipboard')
+      }).catch(err => {
+        console.error('Failed to copy homeserver:', err)
+      })
     })
   }
 
-  updateGreetMsg() {
-    document.getElementById('greet-msg').textContent = this.greetMsg
+  async loadStateOnInit() {
+    try {
+      const stateMsg = await invoke('fetch_state')
+      const data = JSON.parse(stateMsg)
+      this.pubky = data.pubky
+      this.homeserver = data.homeserver
+      this.setHeader()
+    } catch (error) {
+      console.error('Error loading initial state:', error)
+      document.getElementById('backup-header').classList.add('hidden')
+    }
+  }
+
+  displayPubky(str, length = 8) {
+    return str.length > length ? str.substring(0, length) + '...' : str
+  }
+
+  setHeader() {
+    const backupHeader = document.getElementById('backup-header')
+    const pubkyDisplay = document.getElementById('pubky-display')
+    const homeserverDisplay = document.getElementById('homeserver-display')
+
+    if (this.pubky && this.homeserver) {
+      // Display truncated values
+      pubkyDisplay.textContent = this.displayPubky(this.pubky)
+      homeserverDisplay.textContent = this.displayPubky(this.homeserver)
+      backupHeader.classList.remove('hidden')
+    } else {
+      backupHeader.classList.add('hidden')
+    }
   }
 }
