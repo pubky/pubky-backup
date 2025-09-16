@@ -3,6 +3,8 @@ mod http_client;
 use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyPath, PublicKey};
 use serde::Serialize;
 use std::{env, str::FromStr, sync::Mutex};
+use opendal::{Operator, services::Fs};
+use log::{info, error, debug};
 
 // Global state to store the pubky
 static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
@@ -47,7 +49,7 @@ async fn store_pubky(pubky_str: &str) -> Result<(), String> {
         
     // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
     if let Err(e) = pubky_drive.get(path).await {
-        println!("Error: {}", e);
+        error!("Failed to get pubky data: {}", e);
         return Err(format!("Failed to find data for pubky"))
     }
 
@@ -75,17 +77,45 @@ async fn is_dev_mode() -> Result<bool, String> {
     }
 }
 
+#[tauri::command]
+async fn write_hello_world() -> Result<String, String> {
+    info!("Creating filesystem operator...");
+
+    // Create filesystem operator pointing to current directory
+    let builder = Fs::default().root("./");
+    let operator = Operator::new(builder)
+        .map_err(|e| {
+            error!("Failed to create operator: {}", e);
+            format!("Failed to create operator: {}", e)
+        })?
+        .layer(opendal::layers::LoggingLayer::default())
+        .finish();
+
+    debug!("Writing hello world file...");
+
+    // Write hello world file
+    let content = "Hello World from OpenDAL!";
+    operator.write("hello_world.txt", content)
+        .await
+        .map_err(|e| {
+            error!("Failed to write file: {}", e);
+            format!("Failed to write file: {}", e)
+        })?;
+
+    info!("Hello world file written successfully!");
+    Ok("Hello world file written successfully!".to_string())
+}
+
 
 
 fn init_developer_mode() {
     let args: Vec<String> = env::args().collect();
-    println!("args: {:?}", args);
     let developer_mode = args.contains(&"--developer".to_string());
 
     if let Ok(mut state) = APP_STATE.lock() {
         state.developer_mode = developer_mode;
         if developer_mode {
-            println!("Developer mode enabled");
+            info!("Developer mode enabled");
         }
     }
 }
@@ -96,7 +126,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![store_pubky, fetch_state, is_dev_mode])
+        .invoke_handler(tauri::generate_handler![store_pubky, fetch_state, is_dev_mode, write_hello_world])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

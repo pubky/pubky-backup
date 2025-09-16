@@ -29,3 +29,5 @@ serde_json = "1"
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 pubky = "0.6.0-rc.2"
+opendal = { version = "0.54.0", features = ["services-fs"] }
+log = "0.4.28"
