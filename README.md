@@ -1,1 +1,2 @@
-# Tauri + React
+# Tauri + Vanilla JS
+
