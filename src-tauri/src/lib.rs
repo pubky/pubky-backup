@@ -122,6 +122,7 @@ fn init_developer_mode() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    env_logger::init();
     init_developer_mode();
 
     tauri::Builder::default()

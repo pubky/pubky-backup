@@ -28,6 +28,13 @@ export class MainForm {
         console.error('Failed to copy homeserver:', err)
       })
     })
+
+    document.getElementById('back-btn').addEventListener('click', () => {
+      document.querySelectorAll('.screen').forEach(screen => {
+        screen.classList.add('hidden')
+        })
+      document.getElementById('startup-screen').classList.remove('hidden')
+    })
   }
 
   async loadStateOnInit() {
@@ -69,5 +76,4 @@ export class MainForm {
       devIndicator.classList.add('hidden')
     }
   }
-
 }
