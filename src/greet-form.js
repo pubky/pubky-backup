@@ -19,7 +19,7 @@ export class GreetForm {
       const pubkyValue = pubkyInput.value.trim()
 
       try {
-        const result = await invoke('store_pubky', { pubkyStr: pubkyValue })
+        const result = await invoke('init_pubky', { pubkyStr: pubkyValue })
         console.log(result)
         this.onSuccess()
       } catch (error) {
