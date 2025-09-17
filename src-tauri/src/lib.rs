@@ -1,66 +1,41 @@
-mod http_client;
+mod client;
 mod storage;
 
 use log::{debug, error, info};
 use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyPath, PublicKey};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{env, str::FromStr, sync::{Arc, Mutex}, time::Duration};
 use tokio::sync::broadcast;
 use tokio::time;
 
-use crate::http_client::HttpClient;
+use crate::client::{fetch_events, EventInfo};
 use crate::storage::Storage;
 
-// Global state to store the pubky
 static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     pubky: None,
     homeserver: None,
     developer_mode: false,
     storage: None,
-    background_task_cancel: None,
+    pubky_drive: None,
+    worker_thread_cancel: None,
 });
 
 #[derive(Serialize)]
 struct AppState {
+    /// This session's pubky
     pubky: Option<String>,
+    /// This session's pubky's homeserver. Stored only for displaying in GUI.
     homeserver: Option<String>,
+    /// Dev mode is for working on the front-end - doesnt make network calls and populates with mock data.
     developer_mode: bool,
     #[serde(skip)]
     storage: Option<Arc<Storage>>,
     #[serde(skip)]
-    background_task_cancel: Option<broadcast::Sender<()>>,
+    pubky_drive: Option<PubkyDrive>,
+    #[serde(skip)]
+    worker_thread_cancel: Option<broadcast::Sender<()>>,
 }
 
-#[derive(Debug, Deserialize)]
-struct EventsResponse {
-    events: Vec<String>,
-    cursor: String,
-}
-
-/// Parse events response from API
-fn parse_events_response(response: &str) -> Result<EventsResponse, String> {
-    let lines: Vec<&str> = response.trim().split('\n').collect();
-
-    if lines.is_empty() {
-        return Err("Empty response".to_string());
-    }
-
-    let mut events = Vec::new();
-    let mut cursor = String::new();
-
-    for line in lines {
-        let line = line.trim();
-        if line.starts_with("PUT pubky://") || line.starts_with("DEL pubky://") {
-            events.push(line.to_string());
-        } else if line.starts_with("cursor: ") {
-            cursor = line.strip_prefix("cursor: ").unwrap_or("").to_string();
-        }
-    }
-
-    Ok(EventsResponse { events, cursor })
-}
-
-/// Get or create storage instance - exits on failure
 fn get_or_create_storage() -> Arc<Storage> {
     let mut state = match APP_STATE.lock() {
         Ok(state) => state,
@@ -84,7 +59,31 @@ fn get_or_create_storage() -> Arc<Storage> {
     state.storage.clone().expect("Storage should be available")
 }
 
-/// Take a pubky, verify and add to State
+fn get_or_create_pubky_drive() -> PubkyDrive {
+    let mut state = match APP_STATE.lock() {
+        Ok(state) => state,
+        Err(_) => {
+            error!("Failed to acquire lock");
+            std::process::exit(1);
+        }
+    };
+
+    if state.pubky_drive.is_none() {
+        let client = match global_client() {
+            Ok(client) => client,
+            Err(e) => {
+                error!("Failed to create client: {}", e);
+                std::process::exit(1);
+            }
+        };
+        let drive = PubkyDrive::public_with_client(&client);
+        state.pubky_drive = Some(drive);
+    }
+
+    state.pubky_drive.clone().expect("PubkyDrive should be available")
+}
+
+/// Take a pubky, verify and add to State ready for usage.
 #[tauri::command]
 async fn init_state_for_pubky(pubky_str: &str) -> Result<(), String> {
     // Check if developer mode is enabled and use mock data
@@ -108,7 +107,7 @@ async fn init_state_for_pubky(pubky_str: &str) -> Result<(), String> {
         .ok_or_else(|| "Failed to find Homeserver for pubky".to_string())?;
 
     // Check Pubky has /pub/ data on Homeserver
-    let pubky_drive = PubkyDrive::public_with_client(&client);
+    let pubky_drive = get_or_create_pubky_drive();
     let path = PubkyPath::new(Some(pubky.clone()), "/pub/")
         .map_err(|e| format!("Internal error: {}", e))?;
 
@@ -122,6 +121,7 @@ async fn init_state_for_pubky(pubky_str: &str) -> Result<(), String> {
         error!("Failed to get pubky data: {}", e);
         return Err(format!("Failed to find data for pubky"));
     }
+    info!("Pubky is valid for Backup: {}", pubky);
 
     let mut state = APP_STATE
         .lock()
@@ -131,6 +131,7 @@ async fn init_state_for_pubky(pubky_str: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Serialise data in State for usage in front-end
 #[tauri::command]
 async fn fetch_state() -> Result<String, String> {
     match APP_STATE.lock() {
@@ -141,44 +142,47 @@ async fn fetch_state() -> Result<String, String> {
     }
 }
 
+/// Spawn separate worker thread for downloads and polling.
+/// To be called by front-end upon entering main screen.
 #[tauri::command]
-async fn start_background_task() -> Result<(), String> {
+async fn worker_thread_begin() -> Result<(), String> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| "Failed to acquire lock".to_string())?;
 
-    if state.background_task_cancel.is_some() {
-        return Err("Background task is already running".to_string());
+    if state.worker_thread_cancel.is_some() {
+        return Err("Worker thread is already running".to_string());
     }
 
     // Create cancellation channel and add to State for later access
     let (cancel_tx, cancel_rx) = broadcast::channel(1);
-    state.background_task_cancel = Some(cancel_tx);
+    state.worker_thread_cancel = Some(cancel_tx);
 
-    tauri::async_runtime::spawn(background_task(cancel_rx));
-    debug!("Background task started");
+    tauri::async_runtime::spawn(worker_thread(cancel_rx));
+    debug!("Worker thread started");
     Ok(())
 }
 
+/// Close worker thread if it exists.
+/// To be controlled by front-end on exiting main screen.
 #[tauri::command]
-async fn stop_background_task() -> Result<(), String> {
+async fn worker_thread_close() -> Result<(), String> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| "Failed to acquire lock".to_string())?;
 
-    if let Some(cancel_tx) = state.background_task_cancel.take() {
+    if let Some(cancel_tx) = state.worker_thread_cancel.take() {
         // Send cancellation signal
         let _ = cancel_tx.send(());
-        debug!("Background task stop signal sent");
+        debug!("Worker thread stop signal sent");
         Ok(())
     } else {
-        Err("No background task is running".to_string())
+        Err("No worker thread is running".to_string())
     }
 }
 
-/// Main backend loop
-/// -   Check if data already exists, initiate if not
-async fn background_task(mut cancel_rx: broadcast::Receiver<()>) {
+/// Backend worker for downloading and polling.
+async fn worker_thread(mut cancel_rx: broadcast::Receiver<()>) {
     let mut interval = time::interval(Duration::from_secs(5));
 
     // Init data-dir and/or read initial cursor
@@ -188,7 +192,7 @@ async fn background_task(mut cancel_rx: broadcast::Receiver<()>) {
             match &state.pubky {
                 Some(pubky) => pubky.clone(),
                 None => {
-                    error!("Pubky not available in background task");
+                    error!("Pubky not available in worker thread");
                     return;
                 }
             }
@@ -201,77 +205,106 @@ async fn background_task(mut cancel_rx: broadcast::Receiver<()>) {
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                info!("Background task interval..");
-
-                let cursor = match storage.read_cursor(&pubky).await {
-                    Ok(cursor) => {
-                        info!("Current cursor: {}", cursor);
-                        cursor
-                    },
-                    Err(e) => {
-                        info!("No cursor found or error: {}, using empty cursor", e);
-                        String::new()
-                    }
-                };
+                let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
+                info!("Worker thread interval. Current cursor: {}", cursor);
 
                 // Fetch events from API
                 match fetch_events(&cursor).await {
-                    Ok(response) => {
-                        match parse_events_response(&response) {
-                            Ok(events_response) => {
-                                info!("Fetched {} events", events_response.events.len());
-                                for event in &events_response.events {
-                                    info!("Event: {}", event);
-                                }
+                    Ok(events_response) => {
+                        info!("Fetched {} events", events_response.events.len());
 
-                                // Update cursor if we got a new one
-                                if !events_response.cursor.is_empty() && events_response.cursor != cursor {
-                                    if let Err(e) = storage.write_cursor(&pubky, events_response.cursor.clone()).await {
-                                        error!("Failed to update cursor: {}", e);
-                                    } else {
-                                        info!("Updated cursor to: {}", events_response.cursor);
-                                    }
-                                }
+                        // Process those events
+                        if let Err(e) = process_events(events_response.events(), &pubky).await {
+                            error!("Failed to process events: {}", e);
+                        } else {
+                            info!("Updated cursor to: {}", events_response.cursor);
+                        }
+
+                        // Update cursor only once all events processed
+                        if !events_response.cursor.is_empty() && events_response.cursor != cursor {
+                            if let Err(e) = storage.write_cursor(&pubky, events_response.cursor.clone()).await {
+                                error!("Failed to update cursor: {}", e);
+                            } else {
+                                info!("Updated cursor to: {}", events_response.cursor);
                             }
-                            Err(e) => error!("Failed to parse events response: {}", e),
                         }
                     }
-                    Err(e) => error!("Background fetch failed: {}", e),
+                    Err(e) => error!("Worker thread fetch failed: {}", e),
                 }
 
             }
             _ = cancel_rx.recv() => {
-                info!("Background task cancelled");
+                info!("Worker thread cancelled");
                 break;
             }
         }
     }
 }
 
-async fn fetch_events(cursor: &str) -> Result<String, String> {
-    let client = HttpClient::new();
+/// Take a list of events and store the data of those which belong to a given pubky
+async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), String> {
+    let pubky_drive = get_or_create_pubky_drive();
+    let storage = get_or_create_storage();
 
-    let limit = 10;
-    let pubky_url = format!(
-        "https://homeserver.staging.pubky.app/events/?limit={}&cursor={}",
-        limit, cursor
-    );
-    let pubky_host = "b3p9kmimbq8irxe8hwwg85qbe34r3i6f3fcqw9jo61wsh13eftio";
+    for event_info in events {
+        if !event_info.url.contains(pubky) {
+            debug!("Skipping event for different pubky: {}", event_info.url);
+            continue;
+        }
+        match event_info.operation.as_str() {
+            "PUT" => {
+                debug!("Processing PUT event for: {}", event_info.url);
 
-    match client
-        .get_with_header(&pubky_url, "Pubky-Host", pubky_host)
-        .await
-    {
-        Ok(response) => Ok(response),
-        Err(e) => Err(format!("HTTP request failed: {}", e)),
+                if let Ok(path) = PubkyPath::from_str(&event_info.url) {
+                    match pubky_drive.get(path).await {
+                        Ok(response) => {
+                            match response.bytes().await {
+                                Ok(data) => {
+                                    let data_vec = data.to_vec();
+                                    debug!("Successfully fetched data for PUT event: {} bytes", data_vec.len());
+
+                                    if let Err(e) = storage.write(&event_info.url, data_vec).await {
+                                        error!("Failed to store data for {}: {}", event_info.url, e);
+                                    } else {
+                                        info!("Successfully stored data for: {}", event_info.url);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to read response bytes for PUT event {}: {}", event_info.url, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to fetch data for PUT event {}: {}", event_info.url, e);
+                        }
+                    }
+                } else {
+                    error!("Invalid pubky URL format: {}", event_info.url);
+                }
+            }
+            "DEL" => {
+                debug!("Processing DEL event for: {}", event_info.url);
+
+                // Delete the data from local storage
+                if let Err(e) = storage.delete(&event_info.url).await {
+                    error!("Failed to delete data for {}: {}", event_info.url, e);
+                } else {
+                    debug!("Successfully deleted data for: {}", event_info.url);
+                }
+            }
+            _ => {
+                error!("Unknown event operation: {}", event_info.operation);
+            }
+        }
     }
+
+    Ok(())
 }
 
 pub fn run() {
     env_logger::init();
 
-    let args: Vec<String> = env::args().collect();
-    let developer_mode = args.contains(&"--developer".to_string());
+    let developer_mode = env::args().collect::<Vec<String>>().contains(&"--developer".to_string());
 
     if let Ok(mut state) = APP_STATE.lock() {
         state.developer_mode = developer_mode;
@@ -280,7 +313,6 @@ pub fn run() {
         }
     }
 
-    // Initialize storage
     let _ = get_or_create_storage();
 
     tauri::Builder::default()
@@ -288,8 +320,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             init_state_for_pubky,
             fetch_state,
-            start_background_task,
-            stop_background_task
+            worker_thread_begin,
+            worker_thread_close
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -300,13 +332,19 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "this test makes network calls"]
     async fn test_fetch_data() {
         let result = fetch_events("").await;
 
         match result {
-            Ok(data) => {
-                println!("Fetch successful: {}", data);
-                assert!(!data.is_empty(), "Response should not be empty");
+            Ok(events_response) => {
+                println!("Fetch successful: {} events, cursor: {}",
+                    events_response.events.len(), events_response.cursor);
+                for event in &events_response.events {
+                    println!("Event: {}", event);
+                }
+                assert!(!events_response.events.is_empty() || !events_response.cursor.is_empty(),
+                    "Response should contain events or cursor");
             }
             Err(e) => {
                 println!("Fetch failed: {}", e);

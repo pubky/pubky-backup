@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tauri + React App</title>
+    <script type="module" crossorigin src="/assets/index-Dxop84fo.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-C91LwgKJ.css">
+  </head>
+  <body>
+    <!-- Startup Screen -->
+    <div id="startup-screen" class="screen">
+      <main class="container">
+        <div id="startup-dev-indicator" class="dev-indicator hidden">
+          <span>🔧 Developer Mode</span>
+        </div>
+        <h1>Pubky Backup</h1>
+        <p>Insert your pubky:</p>
+        <input
+          id="pubky-input"
+          type="text"
+          placeholder="g1b6wp8bhhxt..."
+          class="pubky-input"
+        />
+        <button id="continue-btn" class="primary-btn">Continue to App</button>
+      </main>
+    </div>
+
+    <!-- Main App Screen -->
+    <div id="app-screen" class="screen hidden">
+      <main class="container">
+        <div id="dev-indicator" class="dev-indicator hidden">
+          <span>🔧 Developer Mode</span>
+        </div>
+        <button id="back-btn" class="back-btn">Back</button>
+        <div id="backup-header" class="backup-header hidden">
+          <h2>Pubky: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
+          <h2>Homeserver: <span id="homeserver-display"></span> <button id="copy-homeserver" class="copy-btn" title="Copy full homeserver">📋</button></h2>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>
