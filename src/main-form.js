@@ -31,7 +31,7 @@ export class MainForm {
 
     document.getElementById('back-btn').addEventListener('click', async () => {
       try {
-        await invoke('stop_background_task')
+        await invoke('worker_thread_close')
       } catch (error) {
         console.error('Internal Error:', error)
       }

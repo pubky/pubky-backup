@@ -22,7 +22,7 @@ export class GreetForm {
         await invoke('init_state_for_pubky', { pubkyStr: pubkyValue })
 
         // Start background task when transitioning to main form
-        await invoke('start_background_task')
+        await invoke('worker_thread_begin')
 
         this.onSuccess()
       } catch (error) {
