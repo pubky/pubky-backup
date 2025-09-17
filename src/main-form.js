@@ -29,7 +29,13 @@ export class MainForm {
       })
     })
 
-    document.getElementById('back-btn').addEventListener('click', () => {
+    document.getElementById('back-btn').addEventListener('click', async () => {
+      try {
+        await invoke('stop_background_task')
+      } catch (error) {
+        console.error('Internal Error:', error)
+      }
+
       document.querySelectorAll('.screen').forEach(screen => {
         screen.classList.add('hidden')
         })

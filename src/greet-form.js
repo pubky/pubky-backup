@@ -19,11 +19,14 @@ export class GreetForm {
       const pubkyValue = pubkyInput.value.trim()
 
       try {
-        const result = await invoke('init_pubky', { pubkyStr: pubkyValue })
-        console.log(result)
+        await invoke('init_state_for_pubky', { pubkyStr: pubkyValue })
+
+        // Start background task when transitioning to main form
+        await invoke('start_background_task')
+
         this.onSuccess()
       } catch (error) {
-        console.error('Error storing pubky:', error)
+        console.error('Internal Error:', error)
         alert(`Error: ${error}`)
       }
     })
@@ -31,10 +34,11 @@ export class GreetForm {
 
   async checkDevMode() {
     try {
-      const isDevMode = await invoke('is_dev_mode')
+      const stateMsg = await invoke('fetch_state')
+      const data = JSON.parse(stateMsg)
       const devIndicator = document.getElementById('startup-dev-indicator')
 
-      if (isDevMode && devIndicator) {
+      if (data.developer_mode && devIndicator) {
         devIndicator.classList.remove('hidden')
         console.log('Developer mode is enabled')
       }
