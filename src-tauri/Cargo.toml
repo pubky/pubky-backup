@@ -32,3 +32,4 @@ pubky = "0.6.0-rc.2"
 opendal = { version = "0.54.0", features = ["services-fs"] }
 log = "0.4.28"
 env_logger = "0.11.8"
+anyhow = "1.0"

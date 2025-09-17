@@ -18,8 +18,14 @@ impl HttpClient {
         Ok(text)
     }
 
-    pub async fn get_with_header(&self, url: &str, header_name: &str, header_value: &str) -> Result<String, reqwest::Error> {
-        let response = self.client
+    pub async fn get_with_header(
+        &self,
+        url: &str,
+        header_name: &str,
+        header_value: &str,
+    ) -> Result<String, reqwest::Error> {
+        let response = self
+            .client
             .get(url)
             .header(header_name, header_value)
             .send()

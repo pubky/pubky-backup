@@ -3798,6 +3798,7 @@ dependencies = [
 name = "pubky-backup"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "env_logger",
  "log",
  "opendal",
