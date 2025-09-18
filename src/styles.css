@@ -66,7 +66,7 @@ button {
 }
 
 .hidden {
-  display: none;
+  display: none !important;
 }
 
 .primary-btn {
@@ -159,6 +159,51 @@ button {
   border-color: #999;
 }
 
+.sync-status {
+  margin-top: 1em;
+  padding: 0.8em 1em;
+  border-radius: 6px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  transition: all 0.3s ease;
+}
+
+.sync-status.synced {
+  background-color: #d1fae5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+
+.sync-status.syncing {
+  background-color: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+  font-size: 1.2em;
+  display: inline-block;
+}
+
+.tick {
+  font-size: 1.2em;
+  font-weight: bold;
+  display: inline-block;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -200,5 +245,17 @@ button {
 
   .back-btn:hover {
     background-color: #9090ff;
+  }
+
+  .sync-status.synced {
+    background-color: #064e3b;
+    color: #a7f3d0;
+    border-color: #065f46;
+  }
+
+  .sync-status.syncing {
+    background-color: #78350f;
+    color: #fcd34d;
+    border-color: #92400e;
   }
 }

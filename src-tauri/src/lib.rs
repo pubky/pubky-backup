@@ -12,8 +12,8 @@ use std::{
 };
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
-    Manager,
+    tray::{TrayIconBuilder, TrayIcon},
+    Manager, AppHandle,
 };
 use tokio::sync::broadcast;
 use tokio::time;
@@ -25,9 +25,11 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     pubky: None,
     homeserver: None,
     developer_mode: false,
+    is_syncing: true,
     storage: None,
     pubky_drive: None,
     worker_thread_cancel: None,
+    app_handle: None,
 });
 
 #[derive(Serialize)]
@@ -38,12 +40,16 @@ pub struct AppState {
     homeserver: Option<String>,
     /// Dev mode is for working on the front-end - doesnt make network calls and populates with mock data.
     developer_mode: bool,
+    /// Current sync status
+    is_syncing: bool,
     #[serde(skip)]
     storage: Option<Arc<Storage>>,
     #[serde(skip)]
     pubky_drive: Option<PubkyDrive>,
     #[serde(skip)]
     worker_thread_cancel: Option<broadcast::Sender<()>>,
+    #[serde(skip)]
+    app_handle: Option<AppHandle>,
 }
 
 fn get_or_create_storage() -> Arc<Storage> {
@@ -234,20 +240,30 @@ async fn worker_thread(mut cancel_rx: broadcast::Receiver<()>) {
                         }
 
                         // Update cursor only once all events processed
-                        if !events_response.cursor.is_empty() && events_response.cursor != cursor {
+                        let cursor_changed = !events_response.cursor.is_empty() && events_response.cursor != cursor;
+                        if cursor_changed {
+                            set_sync_status(true);
                             if let Err(e) = storage.write_cursor(&pubky, events_response.cursor.clone()).await {
                                 error!("Failed to update cursor: {}", e);
                             } else {
                                 info!("Updated cursor to: {}", events_response.cursor);
                             }
+                        } else {
+                            // Sync cycle completed
+                            set_sync_status(false);
                         }
+
                     }
-                    Err(e) => error!("Worker thread fetch failed: {}", e),
+                    Err(e) => {
+                        error!("Worker thread fetch failed: {}", e);
+                        set_sync_status(false);
+                    }
                 }
 
             }
             _ = cancel_rx.recv() => {
                 info!("Worker thread cancelled");
+                set_sync_status(false);
                 break;
             }
         }
@@ -352,6 +368,30 @@ fn get_mock_data_for_url(url: &str) -> Vec<u8> {
     }
 }
 
+/// Update sync status in state and tray icon
+fn set_sync_status(is_syncing: bool) {
+    if let Ok(mut state) = APP_STATE.lock() {
+        state.is_syncing = is_syncing;
+
+        if let Some(app_handle) = &state.app_handle {
+            if let Some(tray) = app_handle.tray_by_id("main") {
+                // Update tooltip (doesnt seem to be visible on Ubuntu)
+                let tooltip = if is_syncing {
+                    "🔄 Pubky Backup - Syncing..."
+                } else {
+                    "✅ Pubky Backup - Synced"
+                };
+                let _ = tray.set_tooltip(Some(tooltip));
+
+                let title = if is_syncing { "🔄" } else { "✅" };
+                if let Err(e) = tray.set_title(Some(title)) {
+                    error!("Failed to update tray title: {}", e);
+                }
+            }
+        }
+    }
+}
+
 pub fn run() {
     env_logger::init();
 
@@ -371,6 +411,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Store app handle for tray updates
+            if let Ok(mut state) = APP_STATE.lock() {
+                state.app_handle = Some(app.handle().clone());
+            }
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
             let hide = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
