@@ -5,11 +5,14 @@ export class MainForm {
     this.pubky = null
     this.homeserver = null
     this.developerMode = false
+    this.isSyncing = false
+    this.statusInterval = null
   }
 
   init() {
     this.bindEvents()
     this.loadStateOnInit()
+    this.startStatusPolling()
   }
 
   bindEvents() {
@@ -32,6 +35,7 @@ export class MainForm {
     document.getElementById('back-btn').addEventListener('click', async () => {
       try {
         await invoke('worker_thread_close')
+        this.stopStatusPolling()
       } catch (error) {
         console.error('Internal Error:', error)
       }
@@ -50,7 +54,9 @@ export class MainForm {
       this.pubky = data.pubky
       this.homeserver = data.homeserver
       this.developerMode = data.developer_mode
+      this.isSyncing = data.is_syncing
       this.setHeader()
+      this.updateSyncStatus()
     } catch (error) {
       console.error('Error loading initial state:', error)
       document.getElementById('backup-header').classList.add('hidden')
@@ -80,6 +86,57 @@ export class MainForm {
       console.log('Developer mode is enabled')
     } else if (devIndicator) {
       devIndicator.classList.add('hidden')
+    }
+  }
+
+  startStatusPolling() {
+    // Poll for status updates every second
+    this.statusInterval = setInterval(async () => {
+      await this.fetchAndUpdateStatus()
+    }, 1000)
+  }
+
+  stopStatusPolling() {
+    if (this.statusInterval) {
+      clearInterval(this.statusInterval)
+      this.statusInterval = null
+    }
+  }
+
+  async fetchAndUpdateStatus() {
+    try {
+      const stateMsg = await invoke('fetch_state')
+      const data = JSON.parse(stateMsg)
+      const newIsSyncing = data.is_syncing
+
+      // Only update if status changed
+      if (newIsSyncing !== this.isSyncing) {
+        this.isSyncing = newIsSyncing
+        this.updateSyncStatus()
+      }
+    } catch (error) {
+      console.error('Error fetching status:', error)
+    }
+  }
+
+  updateSyncStatus() {
+    const statusText = document.getElementById('status-text')
+    const statusSpinner = document.getElementById('status-spinner')
+    const statusTick = document.getElementById('status-tick')
+    const syncStatus = document.getElementById('sync-status')
+
+    if (this.isSyncing) {
+      statusText.textContent = 'Syncing...'
+      statusSpinner.classList.remove('hidden')
+      statusTick.classList.add('hidden')
+      syncStatus.classList.add('syncing')
+      syncStatus.classList.remove('synced')
+    } else {
+      statusText.textContent = 'Synced'
+      statusSpinner.classList.add('hidden')
+      statusTick.classList.remove('hidden')
+      syncStatus.classList.add('synced')
+      syncStatus.classList.remove('syncing')
     }
   }
 }
