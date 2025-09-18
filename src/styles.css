@@ -195,6 +195,41 @@ button {
   display: inline-block;
 }
 
+.sync-controls {
+  margin-top: 1em;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 1em;
+}
+
+.countdown {
+  font-size: 0.9em;
+  color: #666;
+  font-weight: 500;
+}
+
+.force-sync-btn {
+  background-color: #646cff;
+  color: white;
+  border: none;
+  padding: 0.6em 1.2em;
+  border-radius: 6px;
+  font-size: 0.9em;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.force-sync-btn:hover {
+  background-color: #535bf2;
+}
+
+.force-sync-btn:active {
+  background-color: #4c4bdb;
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);
@@ -257,5 +292,21 @@ button {
     background-color: #78350f;
     color: #fcd34d;
     border-color: #92400e;
+  }
+
+  .countdown {
+    color: #aaa;
+  }
+
+  .force-sync-btn {
+    background-color: #7c7cff;
+  }
+
+  .force-sync-btn:hover {
+    background-color: #9090ff;
+  }
+
+  .force-sync-btn:active {
+    background-color: #a3a3ff;
   }
 }

@@ -21,14 +21,26 @@ use tokio::time;
 use crate::client::{fetch_events, EventInfo};
 use crate::storage::Storage;
 
+const SYNC_INTERVAL_SECONDS: u64 = 5;
+
+/// Get the next sync time (current time + sync interval)
+fn next_sync_time() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() + SYNC_INTERVAL_SECONDS
+}
+
 pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     pubky: None,
     homeserver: None,
     developer_mode: false,
     is_syncing: true,
+    next_sync_time: 0,
     storage: None,
     pubky_drive: None,
     worker_thread_cancel: None,
+    force_sync_sender: None,
     app_handle: None,
 });
 
@@ -42,12 +54,16 @@ pub struct AppState {
     developer_mode: bool,
     /// Current sync status
     is_syncing: bool,
+    /// Next sync time in seconds since epoch (for countdown display)
+    next_sync_time: u64,
     #[serde(skip)]
     storage: Option<Arc<Storage>>,
     #[serde(skip)]
     pubky_drive: Option<PubkyDrive>,
     #[serde(skip)]
     worker_thread_cancel: Option<broadcast::Sender<()>>,
+    #[serde(skip)]
+    force_sync_sender: Option<broadcast::Sender<()>>,
     #[serde(skip)]
     app_handle: Option<AppHandle>,
 }
@@ -173,11 +189,14 @@ async fn worker_thread_begin() -> Result<(), String> {
         return Err("Worker thread is already running".to_string());
     }
 
-    // Create cancellation channel and add to State for later access
+    // Create cancellation and force-sync channels
     let (cancel_tx, cancel_rx) = broadcast::channel(1);
-    state.worker_thread_cancel = Some(cancel_tx);
+    let (force_sync_tx, force_sync_rx) = broadcast::channel(1);
 
-    tauri::async_runtime::spawn(worker_thread(cancel_rx));
+    state.worker_thread_cancel = Some(cancel_tx);
+    state.force_sync_sender = Some(force_sync_tx);
+
+    tauri::async_runtime::spawn(worker_thread(cancel_rx, force_sync_rx));
     debug!("Worker thread started");
     Ok(())
 }
@@ -200,9 +219,34 @@ async fn worker_thread_close() -> Result<(), String> {
     }
 }
 
+/// Force immediate sync by skipping the current interval
+#[tauri::command]
+async fn force_sync_now() -> Result<(), String> {
+    let state = APP_STATE
+        .lock()
+        .map_err(|_| "Failed to acquire lock".to_string())?;
+
+    if let Some(force_sync_tx) = &state.force_sync_sender {
+        match force_sync_tx.send(()) {
+            Ok(_) => {
+                debug!("Force sync signal sent");
+                Ok(())
+            }
+            Err(_) => Err("Failed to send force sync signal".to_string()),
+        }
+    } else {
+        Err("No worker thread is running".to_string())
+    }
+}
+
 /// Backend worker for downloading and polling.
-async fn worker_thread(mut cancel_rx: broadcast::Receiver<()>) {
-    let mut interval = time::interval(Duration::from_secs(5));
+async fn worker_thread(mut cancel_rx: broadcast::Receiver<()>, mut force_sync_rx: broadcast::Receiver<()>) {
+    let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
+
+    // Update next sync time
+    if let Ok(mut state) = APP_STATE.lock() {
+        state.next_sync_time = next_sync_time();
+    }
 
     // Init data-dir and/or read initial cursor
     let storage = get_or_create_storage();
@@ -224,48 +268,64 @@ async fn worker_thread(mut cancel_rx: broadcast::Receiver<()>) {
     loop {
         tokio::select! {
             _ = interval.tick() => {
+                // Update next sync time for countdown
+                if let Ok(mut state) = APP_STATE.lock() {
+                    state.next_sync_time = next_sync_time();
+                }
                 let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
                 info!("Worker thread interval. Current cursor: {}", cursor);
 
-                // Fetch events from API
-                match fetch_events(&cursor).await {
-                    Ok(events_response) => {
-                        info!("Fetched {} events", events_response.events.len());
+                perform_sync(&storage, &pubky, &cursor).await;
+            }
+            _ = force_sync_rx.recv() => {
+                info!("Force sync triggered");
+                let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
+                perform_sync(&storage, &pubky, &cursor).await;
 
-                        // Process those events
-                        if let Err(e) = process_events(events_response.events(), &pubky).await {
-                            error!("Failed to process events: {}", e);
-                        } else {
-                            info!("Updated cursor to: {}", events_response.cursor);
-                        }
-
-                        // Update cursor only once all events processed
-                        let cursor_changed = !events_response.cursor.is_empty() && events_response.cursor != cursor;
-                        if cursor_changed {
-                            set_sync_status(true);
-                            if let Err(e) = storage.write_cursor(&pubky, events_response.cursor.clone()).await {
-                                error!("Failed to update cursor: {}", e);
-                            } else {
-                                info!("Updated cursor to: {}", events_response.cursor);
-                            }
-                        } else {
-                            // Sync cycle completed
-                            set_sync_status(false);
-                        }
-
-                    }
-                    Err(e) => {
-                        error!("Worker thread fetch failed: {}", e);
-                        set_sync_status(false);
-                    }
+                // Reset the interval timer after force sync
+                interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
+                if let Ok(mut state) = APP_STATE.lock() {
+                    state.next_sync_time = next_sync_time();
                 }
-
             }
             _ = cancel_rx.recv() => {
                 info!("Worker thread cancelled");
                 set_sync_status(false);
                 break;
             }
+        }
+    }
+}
+
+/// Perform a sync operation
+async fn perform_sync(storage: &Arc<Storage>, pubky: &str, cursor: &str) {
+    // Fetch events from API
+    match fetch_events(cursor).await {
+        Ok(events_response) => {
+            info!("Fetched {} events", events_response.events.len());
+
+            // Process those events
+            if let Err(e) = process_events(events_response.events(), pubky).await {
+                error!("Failed to process events: {}", e);
+            }
+
+            // Update cursor only once all events processed
+            let cursor_changed = !events_response.cursor.is_empty() && events_response.cursor != cursor;
+            if cursor_changed {
+                set_sync_status(true);
+                if let Err(e) = storage.write_cursor(pubky, events_response.cursor.clone()).await {
+                    error!("Failed to update cursor: {}", e);
+                } else {
+                    debug!("Updated cursor to: {}", events_response.cursor);
+                }
+            } else {
+                // Sync cycle completed
+                set_sync_status(false);
+            }
+        }
+        Err(e) => {
+            error!("Sync fetch failed: {}", e);
+            set_sync_status(false);
         }
     }
 }
@@ -458,7 +518,8 @@ pub fn run() {
             init_state_for_pubky,
             fetch_state,
             worker_thread_begin,
-            worker_thread_close
+            worker_thread_close,
+            force_sync_now
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

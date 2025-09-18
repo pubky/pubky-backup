@@ -6,7 +6,9 @@ export class MainForm {
     this.homeserver = null
     this.developerMode = false
     this.isSyncing = false
+    this.nextSyncTime = 0
     this.statusInterval = null
+    this.countdownInterval = null
   }
 
   init() {
@@ -16,7 +18,7 @@ export class MainForm {
   }
 
   bindEvents() {
-    // Copy button functionality
+    // Copy pubky and homeserver buttons
     document.getElementById('copy-pubky').addEventListener('click', () => {
       navigator.clipboard.writeText(this.pubky).then(() => {
         console.log('Pubky copied to clipboard')
@@ -32,18 +34,29 @@ export class MainForm {
       })
     })
 
+    // Back button
     document.getElementById('back-btn').addEventListener('click', async () => {
       try {
         await invoke('worker_thread_close')
         this.stopStatusPolling()
+        this.stopCountdown()
       } catch (error) {
         console.error('Internal Error:', error)
       }
-
       document.querySelectorAll('.screen').forEach(screen => {
         screen.classList.add('hidden')
         })
       document.getElementById('startup-screen').classList.remove('hidden')
+    })
+
+    // Force sync button
+    document.getElementById('force-sync-btn').addEventListener('click', async () => {
+      try {
+        await invoke('force_sync_now')
+        console.log('Force sync triggered')
+      } catch (error) {
+        console.error('Force sync failed:', error)
+      }
     })
   }
 
@@ -55,8 +68,10 @@ export class MainForm {
       this.homeserver = data.homeserver
       this.developerMode = data.developer_mode
       this.isSyncing = data.is_syncing
+      this.nextSyncTime = data.next_sync_time
       this.setHeader()
       this.updateSyncStatus()
+      this.startCountdown()
     } catch (error) {
       console.error('Error loading initial state:', error)
       document.getElementById('backup-header').classList.add('hidden')
@@ -108,11 +123,17 @@ export class MainForm {
       const stateMsg = await invoke('fetch_state')
       const data = JSON.parse(stateMsg)
       const newIsSyncing = data.is_syncing
+      const newNextSyncTime = data.next_sync_time
 
-      // Only update if status changed
+      // Status
       if (newIsSyncing !== this.isSyncing) {
         this.isSyncing = newIsSyncing
         this.updateSyncStatus()
+      }
+
+      // Next sync time
+      if (newNextSyncTime !== this.nextSyncTime) {
+        this.nextSyncTime = newNextSyncTime
       }
     } catch (error) {
       console.error('Error fetching status:', error)
@@ -137,6 +158,39 @@ export class MainForm {
       statusTick.classList.remove('hidden')
       syncStatus.classList.add('synced')
       syncStatus.classList.remove('syncing')
+    }
+  }
+
+  startCountdown() {
+    // Update countdown every second
+    this.countdownInterval = setInterval(() => {
+      this.updateCountdown()
+    }, 1000)
+  }
+
+  stopCountdown() {
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval)
+      this.countdownInterval = null
+    }
+  }
+
+  updateCountdown() {
+    const countdownElement = document.getElementById('countdown-timer')
+    const now = Math.floor(Date.now() / 1000)
+
+    if (this.nextSyncTime > now) {
+      const remaining = this.nextSyncTime - now
+      const minutes = Math.floor(remaining / 60)
+      const seconds = remaining % 60
+
+      if (minutes > 0) {
+        countdownElement.textContent = `${minutes}m ${seconds}s`
+      } else {
+        countdownElement.textContent = `${seconds}s`
+      }
+    } else {
+      countdownElement.textContent = '0s'
     }
   }
 }
