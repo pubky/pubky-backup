@@ -13,14 +13,15 @@
           <span>🔧 Developer Mode</span>
         </div>
         <h1>Pubky Backup</h1>
-        <p>Insert your pubky:</p>
-        <input
-          id="pubky-input"
-          type="text"
-          placeholder="g1b6wp8bhhxt..."
-          class="pubky-input"
-        />
-        <button id="continue-btn" class="primary-btn">Continue to App</button>
+        <div id="startup-form" class="form-box">
+          <p>Insert your pubky:</p>
+          <input
+            id="pubky-input"
+            type="text"
+            placeholder="g1b6wp8bhhxt..."
+          />
+          <button id="continue-btn" class="standard-btn">Continue to App</button>
+        </div>
       </main>
     </div>
 
@@ -31,18 +32,18 @@
           <span>🔧 Developer Mode</span>
         </div>
         <button id="back-btn" class="back-btn">Back</button>
-        <div id="backup-header" class="backup-header hidden">
+        <div id="backup-header" class="form-box hidden">
           <h2>Pubky: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
           <h2>Homeserver: <span id="homeserver-display"></span> <button id="copy-homeserver" class="copy-btn" title="Copy full homeserver">📋</button></h2>
           <div id="sync-status" class="sync-status">
             <span id="status-text">Synced</span>
-            <span id="status-spinner" class="spinner hidden">⟳</span>
+            <span id="status-spinner" class="spinner hidden">◐</span>
             <span id="status-tick" class="tick hidden">✓</span>
           </div>
           <div id="backup-size" class="backup-size">Current Backup size: <span id="backup-size-value">--</span></div>
           <div id="sync-controls" class="sync-controls">
             <div id="countdown-display" class="countdown">Next sync in: <span id="countdown-timer">--</span></div>
-            <button id="force-sync-btn" class="force-sync-btn">Force sync Now</button>
+            <button id="force-sync-btn" class="standard-btn">Force sync Now</button>
           </div>
         </div>
       </main>
