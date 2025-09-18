@@ -67,7 +67,7 @@ impl EventsResponse {
     }
 }
 
-// This is required for making `/events/ requests until the SDK adds them 
+// This is required for making `/events/ requests until the SDK adds them
 pub struct HttpClient {
     client: reqwest::Client,
 }
@@ -99,6 +99,15 @@ impl HttpClient {
 /// Fetch event list from given cursor
 /// This fetches all events for all pubkys currently
 pub async fn fetch_events(cursor: &str) -> Result<EventsResponse, String> {
+    if crate::APP_STATE
+        .lock()
+        .map_err(|_| "Failed to acquire app state lock".to_string())?
+        .developer_mode
+    {
+        return get_mock_events_response(cursor);
+    }
+
+    // TODO: add client to AppState
     let client = HttpClient::new();
 
     let limit = 10;
@@ -115,4 +124,50 @@ pub async fn fetch_events(cursor: &str) -> Result<EventsResponse, String> {
         Ok(response) => EventsResponse::from_response(&response),
         Err(e) => Err(format!("HTTP request failed: {}", e)),
     }
+}
+
+/// Generate mock events response for developer mode
+fn get_mock_events_response(cursor: &str) -> Result<EventsResponse, String> {
+    let mock_pubky = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
+
+    // Simulate progression through different cursors
+    let (events, new_cursor) = match cursor {
+        "" => {
+            // First call - return initial events
+            (
+                vec![
+                    format!("PUT pubky://{}/pub/posts/001", mock_pubky),
+                    format!("PUT pubky://{}/pub/posts/002", mock_pubky),
+                    format!("PUT pubky://{}/pub/profile", mock_pubky),
+                ],
+                "cursor001".to_string(),
+            )
+        }
+        "cursor001" => {
+            // Second call - return more events
+            (
+                vec![
+                    format!("PUT pubky://{}/pub/posts/003", mock_pubky),
+                    format!("DEL pubky://{}/pub/posts/001", mock_pubky),
+                ],
+                "cursor002".to_string(),
+            )
+        }
+        "cursor002" => {
+            // Third call - return single event
+            (
+                vec![format!("PUT pubky://{}/pub/posts/004", mock_pubky)],
+                "cursor003".to_string(),
+            )
+        }
+        _ => {
+            // No more events
+            (vec![], cursor.to_string())
+        }
+    };
+
+    Ok(EventsResponse {
+        events,
+        cursor: new_cursor,
+    })
 }

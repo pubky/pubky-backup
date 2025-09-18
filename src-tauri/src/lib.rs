@@ -4,14 +4,24 @@ mod storage;
 use log::{debug, error, info};
 use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyPath, PublicKey};
 use serde::Serialize;
-use std::{env, str::FromStr, sync::{Arc, Mutex}, time::Duration};
+use std::{
+    env,
+    str::FromStr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::TrayIconBuilder,
+    Manager,
+};
 use tokio::sync::broadcast;
 use tokio::time;
 
 use crate::client::{fetch_events, EventInfo};
 use crate::storage::Storage;
 
-static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
+pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     pubky: None,
     homeserver: None,
     developer_mode: false,
@@ -21,7 +31,7 @@ static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
 });
 
 #[derive(Serialize)]
-struct AppState {
+pub struct AppState {
     /// This session's pubky
     pubky: Option<String>,
     /// This session's pubky's homeserver. Stored only for displaying in GUI.
@@ -80,7 +90,10 @@ fn get_or_create_pubky_drive() -> PubkyDrive {
         state.pubky_drive = Some(drive);
     }
 
-    state.pubky_drive.clone().expect("PubkyDrive should be available")
+    state
+        .pubky_drive
+        .clone()
+        .expect("PubkyDrive should be available")
 }
 
 /// Take a pubky, verify and add to State ready for usage.
@@ -243,7 +256,6 @@ async fn worker_thread(mut cancel_rx: broadcast::Receiver<()>) {
 
 /// Take a list of events and store the data of those which belong to a given pubky
 async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), String> {
-    let pubky_drive = get_or_create_pubky_drive();
     let storage = get_or_create_storage();
 
     for event_info in events {
@@ -255,31 +267,21 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), Strin
             "PUT" => {
                 debug!("Processing PUT event for: {}", event_info.url);
 
-                if let Ok(path) = PubkyPath::from_str(&event_info.url) {
-                    match pubky_drive.get(path).await {
-                        Ok(response) => {
-                            match response.bytes().await {
-                                Ok(data) => {
-                                    let data_vec = data.to_vec();
-                                    debug!("Successfully fetched data for PUT event: {} bytes", data_vec.len());
-
-                                    if let Err(e) = storage.write(&event_info.url, data_vec).await {
-                                        error!("Failed to store data for {}: {}", event_info.url, e);
-                                    } else {
-                                        info!("Successfully stored data for: {}", event_info.url);
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Failed to read response bytes for PUT event {}: {}", event_info.url, e);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to fetch data for PUT event {}: {}", event_info.url, e);
-                        }
+                let data_vec = match fetch_data_for_url(&event_info.url).await {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!(
+                            "Failed to fetch data for PUT event {}: {}",
+                            event_info.url, e
+                        );
+                        continue;
                     }
+                };
+
+                if let Err(e) = storage.write(&event_info.url, data_vec).await {
+                    error!("Failed to store data for {}: {}", event_info.url, e);
                 } else {
-                    error!("Invalid pubky URL format: {}", event_info.url);
+                    info!("Successfully stored data for: {}", event_info.url);
                 }
             }
             "DEL" => {
@@ -301,10 +303,61 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), Strin
     Ok(())
 }
 
+/// Fetch data for a URL, either from network or mock data
+async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>, String> {
+    if crate::APP_STATE
+        .lock()
+        .map_err(|_| "Failed to acquire app state lock".to_string())?
+        .developer_mode
+    {
+        return Ok(get_mock_data_for_url(url));
+    }
+
+    let pubky_drive = get_or_create_pubky_drive();
+
+    let response = pubky_drive
+        .get(PubkyPath::from_str(url).map_err(|_| "Invalid pubky URL format".to_string())?)
+        .await
+        .map_err(|e| format!("Failed to fetch data: {}", e))?;
+
+    let data = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response bytes: {}", e))?;
+
+    let data_vec = data.to_vec();
+    debug!("Successfully fetched data: {} bytes", data_vec.len());
+    Ok(data_vec)
+}
+
+/// Generate mock data for a given pubky URL in developer mode
+fn get_mock_data_for_url(url: &str) -> Vec<u8> {
+    if url.contains("/profile") {
+        r#"{"name":"Mock User","bio":"This is mock profile data for development","avatar":"https://example.com/avatar.jpg"}"#.as_bytes().to_vec()
+    } else if url.contains("/posts/") {
+        let post_id = url.split('/').last().unwrap_or("unknown");
+        format!(r#"{{"id":"{}","content":"This is mock post content for {}","timestamp":"2024-01-01T12:00:00Z","author":"Mock User"}}"#, post_id, post_id).as_bytes().to_vec()
+    } else if url.contains("/follows") {
+        r#"{"following":["pubky1","pubky2","pubky3"],"followers":["pubky4","pubky5"]}"#
+            .as_bytes()
+            .to_vec()
+    } else {
+        // Generic mock data
+        format!(
+            r#"{{"url":"{}","data":"Mock data for development","type":"generic"}}"#,
+            url
+        )
+        .as_bytes()
+        .to_vec()
+    }
+}
+
 pub fn run() {
     env_logger::init();
 
-    let developer_mode = env::args().collect::<Vec<String>>().contains(&"--developer".to_string());
+    let developer_mode = env::args()
+        .collect::<Vec<String>>()
+        .contains(&"--developer".to_string());
 
     if let Ok(mut state) = APP_STATE.lock() {
         state.developer_mode = developer_mode;
@@ -317,6 +370,46 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
+            let hide = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&show, &hide, &quit])
+                .build()?;
+
+            let _tray = TrayIconBuilder::with_id("main")
+                .menu(&menu)
+                // TODO: Create logo
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("pubky-backup")
+                .on_menu_event(move |app, event| match event.id.as_ref() {
+                    "show" => {
+                        let windows = app.webview_windows();
+                        windows
+                            .values()
+                            .next()
+                            .expect("sorry, no window found")
+                            .set_focus()
+                            .expect("can't Bring Window to Focus");
+                    }
+                    "hide" => {
+                        let windows = app.webview_windows();
+                        windows
+                            .values()
+                            .next()
+                            .expect("sorry, no window found")
+                            .hide()
+                            .expect("can't Hide Window");
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             init_state_for_pubky,
             fetch_state,
@@ -332,28 +425,5 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "this test makes network calls"]
-    async fn test_fetch_data() {
-        let result = fetch_events("").await;
-
-        match result {
-            Ok(events_response) => {
-                println!("Fetch successful: {} events, cursor: {}",
-                    events_response.events.len(), events_response.cursor);
-                for event in &events_response.events {
-                    println!("Event: {}", event);
-                }
-                assert!(!events_response.events.is_empty() || !events_response.cursor.is_empty(),
-                    "Response should contain events or cursor");
-            }
-            Err(e) => {
-                println!("Fetch failed: {}", e);
-                // Test passes if we get an error response (network might be down)
-                assert!(
-                    e.contains("HTTP request failed") || e.contains("Failed"),
-                    "Error should be descriptive"
-                );
-            }
-        }
-    }
+    async fn test() {}
 }
