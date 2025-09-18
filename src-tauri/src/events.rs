@@ -1,6 +1,9 @@
 use log::warn;
-use reqwest;
+use pubky::PubkyHttpClient;
+use reqwest::{self, Method};
 use serde::Deserialize;
+
+const EVENTS_LIMIT: u32 = 100;
 
 #[derive(Debug, Clone)]
 pub struct EventInfo {
@@ -67,38 +70,9 @@ impl EventsResponse {
     }
 }
 
-// This is required for making `/events/ requests until the SDK adds them
-pub struct HttpClient {
-    client: reqwest::Client,
-}
-
-impl HttpClient {
-    pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::new(),
-        }
-    }
-
-    pub async fn get_with_header(
-        &self,
-        url: &str,
-        header_name: &str,
-        header_value: &str,
-    ) -> Result<String, reqwest::Error> {
-        let response = self
-            .client
-            .get(url)
-            .header(header_name, header_value)
-            .send()
-            .await?;
-        let text = response.text().await?;
-        Ok(text)
-    }
-}
-
 /// Fetch event list from given cursor
 /// This fetches all events for all pubkys currently
-pub async fn fetch_events(cursor: &str) -> Result<EventsResponse, String> {
+pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse, String> {
     if crate::APP_STATE
         .lock()
         .map_err(|_| "Failed to acquire app state lock".to_string())?
@@ -107,21 +81,26 @@ pub async fn fetch_events(cursor: &str) -> Result<EventsResponse, String> {
         return get_mock_events_response(cursor);
     }
 
-    // TODO: add client to AppState
-    let client = HttpClient::new();
-
-    let limit = 10;
-    let pubky_url = format!(
-        "https://homeserver.staging.pubky.app/events/?limit={}&cursor={}",
-        limit, cursor
-    );
-    let pubky_host = "b3p9kmimbq8irxe8hwwg85qbe34r3i6f3fcqw9jo61wsh13eftio";
+    let client = PubkyHttpClient::new().unwrap();
 
     match client
-        .get_with_header(&pubky_url, "Pubky-Host", pubky_host)
+        .request(
+            Method::GET,
+            format!(
+                "https://_pubky.{pubky}/events/?limit={}&cursor={}",
+                EVENTS_LIMIT, cursor
+            ),
+        )
+        .send()
         .await
     {
-        Ok(response) => EventsResponse::from_response(&response),
+        Ok(response) => {
+            let text = response
+                .text()
+                .await
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+            EventsResponse::from_response(&text)
+        }
         Err(e) => Err(format!("HTTP request failed: {}", e)),
     }
 }

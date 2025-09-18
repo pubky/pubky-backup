@@ -40,6 +40,14 @@ impl Storage {
         Ok(())
     }
 
+    /// Read data from storage using pubky URL path
+    #[allow(dead_code)]
+    pub async fn read(&self, pubky_url: &str) -> Result<Vec<u8>> {
+        let file_path = self.url_to_path(pubky_url)?;
+        let data = self.operator.read(&file_path).await?;
+        Ok(data.to_vec())
+    }
+
     pub async fn write_cursor(&self, pubky: &str, cursor_value: String) -> Result<()> {
         let cursor_path = format!("{}/{}", pubky, CURSOR_FILENAME);
         self.operator

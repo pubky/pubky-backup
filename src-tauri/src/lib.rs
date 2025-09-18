@@ -1,4 +1,4 @@
-mod client;
+mod events;
 mod storage;
 
 use log::{debug, error, info};
@@ -12,13 +12,13 @@ use std::{
 };
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::{TrayIconBuilder, TrayIcon},
-    Manager, AppHandle,
+    tray::TrayIconBuilder,
+    AppHandle, Manager,
 };
 use tokio::sync::broadcast;
 use tokio::time;
 
-use crate::client::{fetch_events, EventInfo};
+use crate::events::{fetch_events, EventInfo};
 use crate::storage::Storage;
 
 const SYNC_INTERVAL_SECONDS: u64 = 5;
@@ -28,7 +28,8 @@ fn next_sync_time() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() + SYNC_INTERVAL_SECONDS
+        .as_secs()
+        + SYNC_INTERVAL_SECONDS
 }
 
 pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
@@ -240,7 +241,10 @@ async fn force_sync_now() -> Result<(), String> {
 }
 
 /// Backend worker for downloading and polling.
-async fn worker_thread(mut cancel_rx: broadcast::Receiver<()>, mut force_sync_rx: broadcast::Receiver<()>) {
+async fn worker_thread(
+    mut cancel_rx: broadcast::Receiver<()>,
+    mut force_sync_rx: broadcast::Receiver<()>,
+) {
     let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
 
     // Update next sync time
@@ -300,7 +304,7 @@ async fn worker_thread(mut cancel_rx: broadcast::Receiver<()>, mut force_sync_rx
 /// Perform a sync operation
 async fn perform_sync(storage: &Arc<Storage>, pubky: &str, cursor: &str) {
     // Fetch events from API
-    match fetch_events(cursor).await {
+    match fetch_events(cursor, pubky).await {
         Ok(events_response) => {
             info!("Fetched {} events", events_response.events.len());
 
@@ -309,11 +313,15 @@ async fn perform_sync(storage: &Arc<Storage>, pubky: &str, cursor: &str) {
                 error!("Failed to process events: {}", e);
             }
 
-            // Update cursor only once all events processed
-            let cursor_changed = !events_response.cursor.is_empty() && events_response.cursor != cursor;
+            // Move on once all events of this batch processed
+            let cursor_changed =
+                !events_response.cursor.is_empty() && events_response.cursor != cursor;
             if cursor_changed {
                 set_sync_status(true);
-                if let Err(e) = storage.write_cursor(pubky, events_response.cursor.clone()).await {
+                if let Err(e) = storage
+                    .write_cursor(pubky, events_response.cursor.clone())
+                    .await
+                {
                     error!("Failed to update cursor: {}", e);
                 } else {
                     debug!("Updated cursor to: {}", events_response.cursor);
@@ -335,14 +343,14 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), Strin
     let storage = get_or_create_storage();
 
     for event_info in events {
+        // Skip events for other pubkys
+        // TODO: Filter server-side
         if !event_info.url.contains(pubky) {
-            debug!("Skipping event for different pubky: {}", event_info.url);
             continue;
         }
         match event_info.operation.as_str() {
             "PUT" => {
                 debug!("Processing PUT event for: {}", event_info.url);
-
                 let data_vec = match fetch_data_for_url(&event_info.url).await {
                     Ok(data) => data,
                     Err(e) => {
@@ -356,18 +364,12 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), Strin
 
                 if let Err(e) = storage.write(&event_info.url, data_vec).await {
                     error!("Failed to store data for {}: {}", event_info.url, e);
-                } else {
-                    info!("Successfully stored data for: {}", event_info.url);
                 }
             }
             "DEL" => {
                 debug!("Processing DEL event for: {}", event_info.url);
-
-                // Delete the data from local storage
                 if let Err(e) = storage.delete(&event_info.url).await {
                     error!("Failed to delete data for {}: {}", event_info.url, e);
-                } else {
-                    debug!("Successfully deleted data for: {}", event_info.url);
                 }
             }
             _ => {
@@ -528,7 +530,85 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::EventInfo;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn setup_test_app_state() {
+        INIT.call_once(|| {
+            let mut state = APP_STATE.lock().unwrap();
+            state.developer_mode = true;
+            state.storage = Some(Arc::new(
+                Storage::new().expect("Failed to create test storage"),
+            ));
+        });
+    }
 
     #[tokio::test]
-    async fn test() {}
+    async fn test_process_events() {
+        setup_test_app_state();
+
+        let test_pubky = "test_pubky_123";
+        let test_url_1 = format!("pubky://{}/pub/posts/001", test_pubky);
+        let test_url_2 = format!("pubky://{}/pub/profile", test_pubky);
+        let test_url_unknown = format!("pubky://{}/pub/unknown", test_pubky);
+        let other_pubky_url = "pubky://other_pubky/pub/posts/001";
+
+        let events = vec![
+            EventInfo {
+                operation: "PUT".to_string(),
+                url: test_url_1.clone(),
+            },
+            EventInfo {
+                operation: "PUT".to_string(),
+                url: test_url_2.clone(),
+            },
+            EventInfo {
+                operation: "PUT".to_string(),
+                url: other_pubky_url.to_string(), // This should be skipped (wrong pubky)
+            },
+            EventInfo {
+                operation: "DEL".to_string(),
+                url: test_url_1.clone(), // Delete the first URL
+            },
+            EventInfo {
+                operation: "UNKNOWN".to_string(),
+                url: test_url_unknown.clone(), // Unknown operation
+            },
+        ];
+
+        let result = process_events(events, test_pubky).await;
+        assert!(result.is_ok(), "process_events should succeed");
+
+        let storage = get_or_create_storage();
+
+        // The first URL should have been deleted, so it shouldn't exist
+        let read_result_1 = storage.read(&test_url_1).await;
+        assert!(
+            read_result_1.is_err(),
+            "URL that was deleted should not exist in storage"
+        );
+
+        // The second URL should still exist (only PUT, no DEL)
+        let read_result_2 = storage.read(&test_url_2).await;
+        assert!(
+            read_result_2.is_ok(),
+            "URL that was only PUT should exist in storage"
+        );
+
+        // The other pubky URL should not exist (was filtered out)
+        let read_result_other = storage.read(other_pubky_url).await;
+        assert!(
+            read_result_other.is_err(),
+            "URL from other pubky should not exist in storage"
+        );
+
+        // The unknown operation URL should not exist (unknown operations ignored)
+        let read_result_unknown = storage.read(&test_url_unknown).await;
+        assert!(
+            read_result_unknown.is_err(),
+            "Unknown operation should not store anything"
+        );
+    }
 }
