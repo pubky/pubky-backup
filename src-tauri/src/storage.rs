@@ -1,6 +1,7 @@
 use anyhow::Result;
-use log::{debug, info};
+use log::{debug, error, info, warn};
 use opendal::{services::Fs, Operator};
+use std::path::Path;
 
 const DATA_DIR: &str = "../data-dir";
 const CURSOR_FILENAME: &str = "cursor";
@@ -73,6 +74,42 @@ impl Storage {
             }
         }
     }
+
+    /// Calculate the total size of data stored for a specific pubky
+    pub fn calculate_pubky_size(&self, pubky: &str) -> u64 {
+        let pubky_path = Path::new(DATA_DIR).join(pubky);
+        if !pubky_path.exists() {
+            return 0;
+        }
+
+        match calculate_dir_size(&pubky_path) {
+            Ok(size) => size,
+            Err(e) => {
+                error!("Failed to calculate data size for pubky {}: {}", pubky, e);
+                0
+            }
+        }
+    }
+}
+
+/// Recursively calculate the size of a directory
+fn calculate_dir_size(dir: &Path) -> Result<u64> {
+    let mut total_size = 0u64;
+
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                total_size += calculate_dir_size(&path)?;
+            } else if path.is_file() {
+                total_size += entry.metadata()?.len();
+            }
+        }
+    }
+
+    Ok(total_size)
 }
 
 #[cfg(test)]
