@@ -1,6 +1,6 @@
-use opendal::{Operator, services::Fs};
-use log::{info, debug};
 use anyhow::Result;
+use log::{debug, info};
+use opendal::{services::Fs, Operator};
 
 const DATA_DIR: &str = "../data-dir";
 const CURSOR_FILENAME: &str = "cursor";
@@ -20,7 +20,8 @@ impl Storage {
 
     /// Convert pubky URL to file path by stripping the "pubky://" prefix
     fn url_to_path(&self, pubky_url: &str) -> Result<String> {
-        pubky_url.strip_prefix("pubky://")
+        pubky_url
+            .strip_prefix("pubky://")
             .map(|path| path.to_string())
             .ok_or_else(|| anyhow::anyhow!("Invalid pubky URL format: {}", pubky_url))
     }
@@ -41,7 +42,9 @@ impl Storage {
 
     pub async fn write_cursor(&self, pubky: &str, cursor_value: String) -> Result<()> {
         let cursor_path = format!("{}/{}", pubky, CURSOR_FILENAME);
-        self.operator.write(&cursor_path, cursor_value.clone()).await?;
+        self.operator
+            .write(&cursor_path, cursor_value.clone())
+            .await?;
         debug!("Cursor value written: {}", cursor_value);
         Ok(())
     }
@@ -74,7 +77,9 @@ mod tests {
         let test_cursor = "0033E867HX6FE";
         let test_pubky = "test_pubky";
 
-        let write_result = storage.write_cursor(test_pubky, test_cursor.to_string()).await;
+        let write_result = storage
+            .write_cursor(test_pubky, test_cursor.to_string())
+            .await;
         assert!(write_result.is_ok());
 
         let read_result = storage.read_cursor(test_pubky).await;
