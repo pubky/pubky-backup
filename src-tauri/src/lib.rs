@@ -1,7 +1,7 @@
 mod events;
 mod storage;
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyPath, PublicKey};
 use serde::Serialize;
 use std::{
@@ -38,6 +38,7 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     developer_mode: false,
     is_syncing: true,
     next_sync_time: 0,
+    data_dir_size: 0,
     storage: None,
     pubky_drive: None,
     worker_thread_cancel: None,
@@ -57,6 +58,8 @@ pub struct AppState {
     is_syncing: bool,
     /// Next sync time in seconds since epoch (for countdown display)
     next_sync_time: u64,
+    /// Size of data stored for current pubky in bytes
+    data_dir_size: u64,
     #[serde(skip)]
     storage: Option<Arc<Storage>>,
     #[serde(skip)]
@@ -247,22 +250,25 @@ async fn worker_thread(
 ) {
     let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
 
-    // Update next sync time
-    if let Ok(mut state) = APP_STATE.lock() {
-        state.next_sync_time = next_sync_time();
-    }
-
     // Init data-dir and/or read initial cursor
     let storage = get_or_create_storage();
     let pubky = {
-        if let Ok(state) = APP_STATE.lock() {
-            match &state.pubky {
+        if let Ok(mut state) = APP_STATE.lock() {
+            // Update next sync time
+            state.next_sync_time = next_sync_time();
+
+            let pubky = match &state.pubky {
                 Some(pubky) => pubky.clone(),
                 None => {
                     error!("Pubky not available in worker thread");
                     return;
                 }
-            }
+            };
+
+            // Calculate and store initial data-dir size for this pubky
+            state.data_dir_size = storage.calculate_pubky_size(&pubky);
+
+            pubky
         } else {
             error!("Failed to acquire app state lock");
             return;
@@ -276,6 +282,7 @@ async fn worker_thread(
                 if let Ok(mut state) = APP_STATE.lock() {
                     state.next_sync_time = next_sync_time();
                 }
+
                 let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
                 info!("Worker thread interval. Current cursor: {}", cursor);
 
@@ -306,26 +313,32 @@ async fn perform_sync(storage: &Arc<Storage>, pubky: &str, cursor: &str) {
     // Fetch events from API
     match fetch_events(cursor, pubky).await {
         Ok(events_response) => {
-            info!("Fetched {} events", events_response.events.len());
+            let num_events = events_response.events.len();
+            info!("Fetched {} events", num_events);
 
-            // Process those events
-            if let Err(e) = process_events(events_response.events(), pubky).await {
-                error!("Failed to process events: {}", e);
-            }
-
-            // Move on once all events of this batch processed
-            let cursor_changed =
-                !events_response.cursor.is_empty() && events_response.cursor != cursor;
-            if cursor_changed {
+            if num_events > 0 {
+                // Set Sync status
                 set_sync_status(true);
+
+                // Process those events
+                if let Err(e) = process_events(events_response.events(), pubky).await {
+                    error!("Failed to process events: {}", e);
+                }
+
+                // Store new cursor
                 if let Err(e) = storage
                     .write_cursor(pubky, events_response.cursor.clone())
                     .await
                 {
                     error!("Failed to update cursor: {}", e);
-                } else {
-                    debug!("Updated cursor to: {}", events_response.cursor);
                 }
+
+                // Calculate and store the data-dir size for this pubky
+                let size = storage.calculate_pubky_size(pubky);
+                if let Ok(mut state) = APP_STATE.lock() {
+                    state.data_dir_size = size;
+                }
+                info!("Data size for pubky {}: {} bytes", pubky, size);
             } else {
                 // Sync cycle completed
                 set_sync_status(false);

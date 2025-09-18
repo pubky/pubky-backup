@@ -7,6 +7,7 @@ export class MainForm {
     this.developerMode = false
     this.isSyncing = false
     this.nextSyncTime = 0
+    this.dataSize = 0
     this.statusInterval = null
     this.countdownInterval = null
   }
@@ -69,8 +70,10 @@ export class MainForm {
       this.developerMode = data.developer_mode
       this.isSyncing = data.is_syncing
       this.nextSyncTime = data.next_sync_time
+      this.dataSize = data.data_dir_size || 0
       this.setHeader()
       this.updateSyncStatus()
+      this.updateBackupSize()
       this.startCountdown()
     } catch (error) {
       console.error('Error loading initial state:', error)
@@ -124,6 +127,7 @@ export class MainForm {
       const data = JSON.parse(stateMsg)
       const newIsSyncing = data.is_syncing
       const newNextSyncTime = data.next_sync_time
+      const newDataSize = data.data_dir_size || 0
 
       // Status
       if (newIsSyncing !== this.isSyncing) {
@@ -134,6 +138,12 @@ export class MainForm {
       // Next sync time
       if (newNextSyncTime !== this.nextSyncTime) {
         this.nextSyncTime = newNextSyncTime
+      }
+
+      // Data size
+      if (newDataSize !== this.dataSize) {
+        this.dataSize = newDataSize
+        this.updateBackupSize()
       }
     } catch (error) {
       console.error('Error fetching status:', error)
@@ -159,6 +169,24 @@ export class MainForm {
       syncStatus.classList.add('synced')
       syncStatus.classList.remove('syncing')
     }
+  }
+
+  updateBackupSize() {
+    const backupSizeValue = document.getElementById('backup-size-value')
+    backupSizeValue.textContent = this.formatFileSize(this.dataSize)
+  }
+
+  formatFileSize(bytes) {
+    if (bytes === 0) return '0 B'
+
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+
+    const size = bytes / Math.pow(k, i)
+    const decimals = i === 0 ? 0 : (size < 10 ? 2 : 1)
+
+    return `${size.toFixed(decimals)} ${sizes[i]}`
   }
 
   startCountdown() {

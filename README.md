@@ -11,7 +11,7 @@ Run development server:
 
 For full logging add:
 
-`RUST_LOG="debug,opendal::services=debug"`
+`RUST_LOG=debug`
 
 ### Development mode
 
