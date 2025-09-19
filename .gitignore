@@ -1,5 +1,5 @@
-.vscode/
-.claude/
+.vscode
+.claude
 
 /target/
 /Cargo.lock

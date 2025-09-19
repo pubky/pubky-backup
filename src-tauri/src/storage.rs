@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
 use std::path::Path;
 
@@ -138,20 +138,16 @@ mod tests {
         let test_url = "pubky://68rkfi1d78baobycj6w4b7dga43o8qtnuhubban5at6qywrieb5y/pub/pubky.app/posts/0033E8XNPVSTG";
         let test_data = b"Hello, world!".to_vec();
         let expected_path = "68rkfi1d78baobycj6w4b7dga43o8qtnuhubban5at6qywrieb5y/pub/pubky.app/posts/0033E8XNPVSTG";
-
         // Test write
         let write_result = storage.write(test_url, test_data.clone()).await;
         assert!(write_result.is_ok());
-
         // Verify the data was written to the correct path
         let read_result = storage.operator.read(expected_path).await;
         assert!(read_result.is_ok());
         assert_eq!(read_result.unwrap().to_vec(), test_data);
-
         // Test delete
         let delete_result = storage.delete(test_url).await;
         assert!(delete_result.is_ok());
-
         // Verify the data no longer exists
         let read_after_delete = storage.operator.read(expected_path).await;
         assert!(read_after_delete.is_err());
