@@ -5,6 +5,18 @@ export class GreetForm {
     this.onSuccess = onSuccess
   }
 
+  resetContinueButton() {
+    const continueBtn = document.getElementById('continue-btn')
+    if (continueBtn) {
+      continueBtn.disabled = false
+      // Remove spinner if it exists
+      const spinner = continueBtn.querySelector('.spinner')
+      if (spinner) {
+        spinner.remove()
+      }
+    }
+  }
+
   async init() {
     this.bindEvents()
     await this.checkDevMode()
@@ -27,16 +39,30 @@ export class GreetForm {
       e.preventDefault()
       const pubkyValue = pubkyInput.value.trim()
 
+      // Show loading state - add spinner to button
+      continueBtn.disabled = true
+      const spinner = document.createElement('span')
+      spinner.className = 'spinner'
+      spinner.textContent = '◐'
+      continueBtn.append(' ')
+      continueBtn.append(spinner)
+
       try {
         await invoke('init_state_for_pubky', { pubkyStr: pubkyValue })
 
         // Start background task when transitioning to main form
         await invoke('worker_thread_begin')
 
+        // Remove spinner before transitioning
+        this.resetContinueButton()
+
         this.onSuccess()
       } catch (error) {
         console.error('Internal Error:', error)
         alert(`Error: ${error}`)
+
+        // Restore button state on error
+        this.resetContinueButton()
       }
     })
   }
