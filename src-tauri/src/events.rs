@@ -34,8 +34,9 @@ impl EventsResponse {
                 events.push(line.to_string());
             } else if line.starts_with("cursor: ") {
                 cursor = line.strip_prefix("cursor: ").unwrap_or("").to_string();
-            } else {
-                warn!("Unhandled event: {}", line);
+            } else if !line.is_empty() {
+                // [""] is a valid empty response
+                warn!("Unhandled event: {:?}", line);
             }
         }
 

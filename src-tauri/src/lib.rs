@@ -321,6 +321,8 @@ async fn worker_thread(
 
                 // Reset the interval timer after force sync
                 interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
+                // Consume the first tick to prevent immediate re-sync
+                interval.tick().await;
                 if let Ok(mut state) = APP_STATE.lock() {
                     state.next_sync_time = next_sync_time();
                 }

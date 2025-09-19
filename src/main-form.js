@@ -196,7 +196,7 @@ export class MainForm {
     // Update countdown every second
     this.countdownInterval = setInterval(() => {
       this.updateCountdown()
-    }, 1000)
+    }, 100)
   }
 
   stopCountdown() {
