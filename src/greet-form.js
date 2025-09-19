@@ -14,6 +14,15 @@ export class GreetForm {
     const continueBtn = document.getElementById('continue-btn')
     const pubkyInput = document.getElementById('pubky-input')
 
+    // Clear placeholder on focus or input
+    pubkyInput.addEventListener('focus', () => {
+      pubkyInput.placeholder = ''
+    })
+
+    pubkyInput.addEventListener('input', () => {
+      pubkyInput.placeholder = ''
+    })
+
     continueBtn.addEventListener('click', async (e) => {
       e.preventDefault()
       const pubkyValue = pubkyInput.value.trim()

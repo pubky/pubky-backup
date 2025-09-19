@@ -1,9 +1,8 @@
 use log::warn;
-use pubky::PubkyHttpClient;
 use reqwest::{self, Method};
 use serde::Deserialize;
 
-const EVENTS_LIMIT: u32 = 100;
+const EVENTS_LIMIT: u32 = 1000;
 
 #[derive(Debug, Clone)]
 pub struct EventInfo {
@@ -81,7 +80,7 @@ pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse, S
         return get_mock_events_response(cursor);
     }
 
-    let client = PubkyHttpClient::new().unwrap();
+    let client = crate::get_or_create_http_client();
 
     match client
         .request(

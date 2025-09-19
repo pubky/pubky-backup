@@ -1,8 +1,8 @@
 mod events;
 mod storage;
 
-use log::{debug, error, info, warn};
-use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyPath, PublicKey};
+use log::{debug, error, info};
+use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyHttpClient, PubkyPath, PublicKey};
 use serde::Serialize;
 use std::{
     env,
@@ -21,7 +21,7 @@ use tokio::time;
 use crate::events::{fetch_events, EventInfo};
 use crate::storage::Storage;
 
-const SYNC_INTERVAL_SECONDS: u64 = 5;
+const SYNC_INTERVAL_SECONDS: u64 = 30;
 
 /// Get the next sync time (current time + sync interval)
 fn next_sync_time() -> u64 {
@@ -44,6 +44,7 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     worker_thread_cancel: None,
     force_sync_sender: None,
     app_handle: None,
+    http_client: None,
 });
 
 #[derive(Serialize)]
@@ -70,6 +71,29 @@ pub struct AppState {
     force_sync_sender: Option<broadcast::Sender<()>>,
     #[serde(skip)]
     app_handle: Option<AppHandle>,
+    #[serde(skip)]
+    http_client: Option<PubkyHttpClient>,
+}
+
+pub fn get_or_create_http_client() -> PubkyHttpClient {
+    let mut state = match APP_STATE.lock() {
+        Ok(state) => state,
+        Err(_) => {
+            error!("Failed to acquire lock");
+            std::process::exit(1);
+        }
+    };
+    if state.http_client.is_none() {
+        let client = match PubkyHttpClient::new() {
+            Ok(client) => client,
+            Err(e) => {
+                error!("Failed to create HTTP client: {}", e);
+                std::process::exit(1);
+            }
+        };
+        state.http_client = Some(client);
+    }
+    state.http_client.as_ref().unwrap().clone()
 }
 
 fn get_or_create_storage() -> Arc<Storage> {
@@ -80,7 +104,6 @@ fn get_or_create_storage() -> Arc<Storage> {
             std::process::exit(1);
         }
     };
-
     if state.storage.is_none() {
         let storage = match Storage::new() {
             Ok(storage) => storage,
@@ -91,7 +114,6 @@ fn get_or_create_storage() -> Arc<Storage> {
         };
         state.storage = Some(Arc::new(storage));
     }
-
     state.storage.clone().expect("Storage should be available")
 }
 
@@ -103,7 +125,6 @@ fn get_or_create_pubky_drive() -> PubkyDrive {
             std::process::exit(1);
         }
     };
-
     if state.pubky_drive.is_none() {
         let client = match global_client() {
             Ok(client) => client,
@@ -115,7 +136,6 @@ fn get_or_create_pubky_drive() -> PubkyDrive {
         let drive = PubkyDrive::public_with_client(&client);
         state.pubky_drive = Some(drive);
     }
-
     state
         .pubky_drive
         .clone()
@@ -136,7 +156,7 @@ async fn init_state_for_pubky(pubky_str: &str) -> Result<(), String> {
     }
 
     let pubky =
-        PublicKey::from_str(&pubky_str).map_err(|e| format!("Invalid pubky format: {}", e))?;
+        PublicKey::from_str(pubky_str).map_err(|e| format!("Invalid pubky format: {}", e))?;
     let client = global_client().map_err(|e| format!("Internal error: {}", e))?;
 
     // Check pubky is discoverable
@@ -165,7 +185,7 @@ async fn init_state_for_pubky(pubky_str: &str) -> Result<(), String> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| "Failed to acquire lock".to_string())?;
-    state.pubky = Some(pubky_str.to_string());
+    state.pubky = Some(pubky.to_string());
     state.homeserver = Some(homeserver_pubky_str);
     Ok(())
 }
@@ -282,16 +302,11 @@ async fn worker_thread(
                 if let Ok(mut state) = APP_STATE.lock() {
                     state.next_sync_time = next_sync_time();
                 }
-
-                let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
-                info!("Worker thread interval. Current cursor: {}", cursor);
-
-                perform_sync(&storage, &pubky, &cursor).await;
+                perform_sync(&storage, &pubky).await;
             }
             _ = force_sync_rx.recv() => {
                 info!("Force sync triggered");
-                let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
-                perform_sync(&storage, &pubky, &cursor).await;
+                perform_sync(&storage, &pubky).await;
 
                 // Reset the interval timer after force sync
                 interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
@@ -309,46 +324,59 @@ async fn worker_thread(
 }
 
 /// Perform a sync operation
-async fn perform_sync(storage: &Arc<Storage>, pubky: &str, cursor: &str) {
-    // Fetch events from API
-    match fetch_events(cursor, pubky).await {
-        Ok(events_response) => {
-            let num_events = events_response.events.len();
-            info!("Fetched {} events", num_events);
+async fn perform_sync(storage: &Arc<Storage>, pubky: &str) {
+    let mut cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
+    info!("Syncing at current cursor: {}", cursor);
+    set_sync_status(true);
 
-            if num_events > 0 {
-                // Set Sync status
-                set_sync_status(true);
+    // Keep fetching events until there are none left
+    let mut has_more_events = true;
+    while has_more_events {
+        match fetch_events(&cursor, pubky).await {
+            Ok(events_response) => {
+                let num_events = events_response.events.len();
+                info!("Fetched {} events", num_events);
 
-                // Process those events
-                if let Err(e) = process_events(events_response.events(), pubky).await {
-                    error!("Failed to process events: {}", e);
+                if num_events > 0 {
+                    // Set Sync status
+
+                    // Process those events
+                    if let Err(e) = process_events(events_response.events(), pubky).await {
+                        error!("Failed to process events: {}", e);
+                        break;
+                    }
+
+                    // Store new cursor
+                    if let Err(e) = storage
+                        .write_cursor(pubky, events_response.cursor.clone())
+                        .await
+                    {
+                        error!("Failed to update cursor: {}", e);
+                        break;
+                    }
+
+                    // Calculate and store the data-dir size for this pubky after a bacth processed
+                    let size = storage.calculate_pubky_size(pubky);
+                    if let Ok(mut state) = APP_STATE.lock() {
+                        state.data_dir_size = size;
+                    }
+
+                    // Update cursor for next iteration
+                    cursor = events_response.cursor;
+                } else {
+                    // No more events, sync cycle completed
+                    has_more_events = false;
                 }
-
-                // Store new cursor
-                if let Err(e) = storage
-                    .write_cursor(pubky, events_response.cursor.clone())
-                    .await
-                {
-                    error!("Failed to update cursor: {}", e);
-                }
-
-                // Calculate and store the data-dir size for this pubky
-                let size = storage.calculate_pubky_size(pubky);
-                if let Ok(mut state) = APP_STATE.lock() {
-                    state.data_dir_size = size;
-                }
-                info!("Data size for pubky {}: {} bytes", pubky, size);
-            } else {
-                // Sync cycle completed
-                set_sync_status(false);
+            }
+            Err(e) => {
+                error!("Sync fetch failed: {}", e);
+                break;
             }
         }
-        Err(e) => {
-            error!("Sync fetch failed: {}", e);
-            set_sync_status(false);
-        }
     }
+
+    info!("Sync completed");
+    set_sync_status(false);
 }
 
 /// Take a list of events and store the data of those which belong to a given pubky
@@ -481,8 +509,6 @@ pub fn run() {
         }
     }
 
-    let _ = get_or_create_storage();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -595,33 +621,17 @@ mod tests {
         assert!(result.is_ok(), "process_events should succeed");
 
         let storage = get_or_create_storage();
-
         // The first URL should have been deleted, so it shouldn't exist
         let read_result_1 = storage.read(&test_url_1).await;
-        assert!(
-            read_result_1.is_err(),
-            "URL that was deleted should not exist in storage"
-        );
-
+        assert!(read_result_1.is_err());
         // The second URL should still exist (only PUT, no DEL)
         let read_result_2 = storage.read(&test_url_2).await;
-        assert!(
-            read_result_2.is_ok(),
-            "URL that was only PUT should exist in storage"
-        );
-
+        assert!(read_result_2.is_ok());
         // The other pubky URL should not exist (was filtered out)
         let read_result_other = storage.read(other_pubky_url).await;
-        assert!(
-            read_result_other.is_err(),
-            "URL from other pubky should not exist in storage"
-        );
-
+        assert!(read_result_other.is_err());
         // The unknown operation URL should not exist (unknown operations ignored)
         let read_result_unknown = storage.read(&test_url_unknown).await;
-        assert!(
-            read_result_unknown.is_err(),
-            "Unknown operation should not store anything"
-        );
+        assert!(read_result_unknown.is_err());
     }
 }

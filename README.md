@@ -15,7 +15,7 @@ For full logging add:
 
 ### Development mode
 
-Development mode is useful when working on the GUI: it auto-populates `AppState` and skips network calls.
+Development mode is useful when working on the GUI: it skips network calls by auto-populating `AppState` and returning mock data from `fetch` calls.
 
 **You do not need to enter a valid pubky in this mode. A default is preset.**
 
