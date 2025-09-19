@@ -36,7 +36,7 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     pubky: None,
     homeserver: None,
     developer_mode: false,
-    is_syncing: true,
+    is_syncing: false,
     next_sync_time: 0,
     data_dir_size: 0,
     storage: None,
@@ -298,11 +298,22 @@ async fn worker_thread(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                // Update next sync time for countdown
-                if let Ok(mut state) = APP_STATE.lock() {
-                    state.next_sync_time = next_sync_time();
+                // Do not attempt sync if currently syncing
+                let should_sync = if let Ok(state) = APP_STATE.lock() {
+                    !state.is_syncing
+                } else {
+                    info!("is_syncing true. returning");
+                   return;
+                };
+
+                if should_sync {
+                    perform_sync(&storage, &pubky).await;
+
+                    // Update next sync time after sync completes
+                    if let Ok(mut state) = APP_STATE.lock() {
+                        state.next_sync_time = next_sync_time();
+                    }
                 }
-                perform_sync(&storage, &pubky).await;
             }
             _ = force_sync_rx.recv() => {
                 info!("Force sync triggered");

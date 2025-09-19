@@ -81,27 +81,62 @@ pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse, S
     }
 
     let client = crate::get_or_create_http_client();
+    const MAX_RETRIES: u32 = 3;
 
-    match client
-        .request(
-            Method::GET,
-            format!(
-                "https://_pubky.{pubky}/events/?limit={}&cursor={}",
-                EVENTS_LIMIT, cursor
-            ),
-        )
-        .send()
-        .await
-    {
-        Ok(response) => {
-            let text = response
-                .text()
-                .await
-                .map_err(|e| format!("Failed to read response: {}", e))?;
-            EventsResponse::from_response(&text)
+    for attempt in 1..=MAX_RETRIES {
+        match client
+            .request(
+                Method::GET,
+                format!(
+                    "https://_pubky.{pubky}/events/?limit={}&cursor={}",
+                    EVENTS_LIMIT, cursor
+                ),
+            )
+            .send()
+            .await
+        {
+            Ok(response) => {
+                // Check for rate limiting
+                if response.status() == 429 {
+                    if attempt < MAX_RETRIES {
+                        let sleep_time = 2 * attempt;
+                        warn!(
+                            "HTTP request rate limited on attempt {}, sleeping for {} seconds",
+                            attempt, sleep_time
+                        );
+                        tokio::time::sleep(tokio::time::Duration::from_secs(sleep_time.into()))
+                            .await;
+                        continue; // Retry
+                    } else {
+                        return Err("Rate limited after maximum retries".to_string());
+                    }
+                }
+
+                let text = response
+                    .text()
+                    .await
+                    .map_err(|e| format!("Failed to read response: {}", e))?;
+                return EventsResponse::from_response(&text);
+            }
+            Err(e) => {
+                if attempt < MAX_RETRIES {
+                    warn!(
+                        "HTTP request failed on attempt {}: {}, retrying...",
+                        attempt, e
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    continue; // Retry
+                } else {
+                    return Err(format!(
+                        "HTTP request failed after {} attempts: {}",
+                        MAX_RETRIES, e
+                    ));
+                }
+            }
         }
-        Err(e) => Err(format!("HTTP request failed: {}", e)),
     }
+
+    Err("Unexpected error in fetch_events retry loop".to_string())
 }
 
 /// Generate mock events response for developer mode

@@ -155,6 +155,7 @@ export class MainForm {
     const statusSpinner = document.getElementById('status-spinner')
     const statusTick = document.getElementById('status-tick')
     const syncStatus = document.getElementById('sync-status')
+    const syncControls = document.getElementById('sync-controls')
 
     if (this.isSyncing) {
       statusText.textContent = 'Syncing...'
@@ -162,12 +163,14 @@ export class MainForm {
       statusTick.classList.add('hidden')
       syncStatus.classList.add('syncing')
       syncStatus.classList.remove('synced')
+      syncControls.classList.add('hidden')
     } else {
       statusText.textContent = 'Synced'
       statusSpinner.classList.add('hidden')
       statusTick.classList.remove('hidden')
       syncStatus.classList.add('synced')
       syncStatus.classList.remove('syncing')
+      syncControls.classList.remove('hidden')
     }
   }
 
