@@ -7,13 +7,12 @@ export class GreetForm {
 
   resetContinueButton() {
     const continueBtn = document.getElementById('continue-btn')
+    const spinner = document.getElementById('continue-spinner')
     if (continueBtn) {
       continueBtn.disabled = false
-      // Remove spinner if it exists
-      const spinner = continueBtn.querySelector('.spinner')
-      if (spinner) {
-        spinner.remove()
-      }
+    }
+    if (spinner) {
+      spinner.classList.add('hidden')
     }
   }
 
@@ -39,24 +38,23 @@ export class GreetForm {
       e.preventDefault()
       const pubkyValue = pubkyInput.value.trim()
 
-      // Show loading state - add spinner to button
+      // Show loading state - show spinner
       continueBtn.disabled = true
-      const spinner = document.createElement('span')
-      spinner.className = 'spinner'
-      spinner.textContent = '◐'
-      continueBtn.append(' ')
-      continueBtn.append(spinner)
+      const spinner = document.getElementById('continue-spinner')
+      if (spinner) {
+        spinner.classList.remove('hidden')
+      }
 
       try {
         await invoke('init_app_state', { pubkyStr: pubkyValue })
 
-        // Start background task when transitioning to main form
+        // Start backup task when transitioning to main form
         await invoke('backup_controller_begin')
 
-        // Remove spinner before transitioning
-        this.resetContinueButton()
-
         this.onSuccess()
+
+        // Remove spinner after transitioning
+        this.resetContinueButton()
       } catch (error) {
         console.error('Internal Error:', error)
         alert(`Error: ${error}`)
