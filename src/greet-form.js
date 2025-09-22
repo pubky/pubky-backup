@@ -48,10 +48,10 @@ export class GreetForm {
       continueBtn.append(spinner)
 
       try {
-        await invoke('init_state_for_pubky', { pubkyStr: pubkyValue })
+        await invoke('init_app_state', { pubkyStr: pubkyValue })
 
         // Start background task when transitioning to main form
-        await invoke('worker_thread_begin')
+        await invoke('backup_controller_begin')
 
         // Remove spinner before transitioning
         this.resetContinueButton()

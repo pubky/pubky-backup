@@ -1,7 +1,7 @@
 mod events;
 mod storage;
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyHttpClient, PubkyPath, PublicKey};
 use serde::Serialize;
 use std::{
@@ -23,6 +23,12 @@ use crate::storage::Storage;
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
 
+#[derive(Debug, Clone)]
+enum BackupControllerMessage {
+    Cancel,
+    ForceSync,
+}
+
 /// Get the next sync time (current time + sync interval)
 fn next_sync_time() -> u64 {
     std::time::SystemTime::now()
@@ -41,12 +47,13 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     data_dir_size: 0,
     storage: None,
     pubky_drive: None,
-    worker_thread_cancel: None,
-    force_sync_sender: None,
+    backup_control_tx: None,
     app_handle: None,
     http_client: None,
 });
 
+/// AppState is Tauri's Rust back-end State. 
+/// Here we provide an interface for the front-end and manage other application tasks (eg. The Backup task)
 #[derive(Serialize)]
 pub struct AppState {
     /// This session's pubky
@@ -66,9 +73,7 @@ pub struct AppState {
     #[serde(skip)]
     pubky_drive: Option<PubkyDrive>,
     #[serde(skip)]
-    worker_thread_cancel: Option<broadcast::Sender<()>>,
-    #[serde(skip)]
-    force_sync_sender: Option<broadcast::Sender<()>>,
+    backup_control_tx: Option<broadcast::Sender<BackupControllerMessage>>,
     #[serde(skip)]
     app_handle: Option<AppHandle>,
     #[serde(skip)]
@@ -144,7 +149,7 @@ fn get_or_create_pubky_drive() -> PubkyDrive {
 
 /// Take a pubky, verify and add to State ready for usage.
 #[tauri::command]
-async fn init_state_for_pubky(pubky_str: &str) -> Result<(), String> {
+async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     // Check if developer mode is enabled and use mock data
     if let Ok(mut state) = APP_STATE.lock() {
         if state.developer_mode {
@@ -201,57 +206,60 @@ async fn fetch_state() -> Result<String, String> {
     }
 }
 
-/// Spawn separate worker thread for downloads and polling.
+/// Spawn task for downloads and polling.
 /// To be called by front-end upon entering main screen.
 #[tauri::command]
-async fn worker_thread_begin() -> Result<(), String> {
+async fn backup_controller_begin() -> Result<(), String> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| "Failed to acquire lock".to_string())?;
 
-    if state.worker_thread_cancel.is_some() {
-        return Err("Worker thread is already running".to_string());
+    let pubky = state
+        .pubky
+        .clone()
+        .ok_or("Pubky not available in AppState")?;
+
+    if state.backup_control_tx.is_some() {
+        // This shouldnt happen in production builds.
+        // We dont panic to allow for dev-mode automatic GUI updating which cause forms to restart without having done correct startup or cleanup steps.
+        warn!("Backup controller task is already running");
+        return Ok(());
     }
 
-    // Create cancellation and force-sync channels
-    let (cancel_tx, cancel_rx) = broadcast::channel(1);
-    let (force_sync_tx, force_sync_rx) = broadcast::channel(1);
+    let (backup_control_tx, backup_control_rx) = broadcast::channel(1);
+    state.backup_control_tx = Some(backup_control_tx);
 
-    state.worker_thread_cancel = Some(cancel_tx);
-    state.force_sync_sender = Some(force_sync_tx);
-
-    tauri::async_runtime::spawn(worker_thread(cancel_rx, force_sync_rx));
-    debug!("Worker thread started");
+    tauri::async_runtime::spawn(backup_controller(pubky, Some(backup_control_rx)));
+    debug!("Backup controller task started");
     Ok(())
 }
 
-/// Close worker thread if it exists.
+/// Send backup controller task Cancel message.
 /// To be controlled by front-end on exiting main screen.
 #[tauri::command]
-async fn worker_thread_close() -> Result<(), String> {
+async fn backup_controller_close() -> Result<(), String> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| "Failed to acquire lock".to_string())?;
 
-    if let Some(cancel_tx) = state.worker_thread_cancel.take() {
-        // Send cancellation signal
-        let _ = cancel_tx.send(());
-        debug!("Worker thread stop signal sent");
+    if let Some(control_tx) = state.backup_control_tx.take() {
+        let _ = control_tx.send(BackupControllerMessage::Cancel);
+        debug!("Backup controller task stop signal sent");
         Ok(())
     } else {
-        Err("No worker thread is running".to_string())
+        Err("No Backup controller task running".to_string())
     }
 }
 
-/// Force immediate sync by skipping the current interval
+/// Send backup controller task ForceSync message.
 #[tauri::command]
 async fn force_sync_now() -> Result<(), String> {
     let state = APP_STATE
         .lock()
         .map_err(|_| "Failed to acquire lock".to_string())?;
 
-    if let Some(force_sync_tx) = &state.force_sync_sender {
-        match force_sync_tx.send(()) {
+    if let Some(control_tx) = &state.backup_control_tx {
+        match control_tx.send(BackupControllerMessage::ForceSync) {
             Ok(_) => {
                 debug!("Force sync signal sent");
                 Ok(())
@@ -259,40 +267,36 @@ async fn force_sync_now() -> Result<(), String> {
             Err(_) => Err("Failed to send force sync signal".to_string()),
         }
     } else {
-        Err("No worker thread is running".to_string())
+        Err("No Backup controller task is running".to_string())
     }
 }
 
-/// Backend worker for downloading and polling.
-async fn worker_thread(
-    mut cancel_rx: broadcast::Receiver<()>,
-    mut force_sync_rx: broadcast::Receiver<()>,
+/// Main backup task controller:
+///     1) Take a Public Key
+///     2) Fetch and store all public data
+///
+/// Currently spins up a single async task which pulls batches of /events/ and processes them immediately.
+/// Once all events have been processed it polls for more events every SYNC_INTERVAL_SECONDS.
+/// Optionally takes a broadcast channel receiver for control operations (Cancel, ForceSync)
+/// 
+/// TODO: De-couple from AppState. Ie remove state read and writes from this logic
+async fn backup_controller(
+    pubky: String,
+    mut control_rx: Option<broadcast::Receiver<BackupControllerMessage>>,
 ) {
     let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
 
     // Init data-dir and/or read initial cursor
     let storage = get_or_create_storage();
-    let pubky = {
-        if let Ok(mut state) = APP_STATE.lock() {
-            // Update next sync time
-            state.next_sync_time = next_sync_time();
 
-            let pubky = match &state.pubky {
-                Some(pubky) => pubky.clone(),
-                None => {
-                    error!("Pubky not available in worker thread");
-                    return;
-                }
-            };
-
-            // Calculate and store initial data-dir size for this pubky
-            state.data_dir_size = storage.calculate_pubky_size(&pubky);
-
-            pubky
-        } else {
-            error!("Failed to acquire app state lock");
-            return;
-        }
+    if let Ok(mut state) = APP_STATE.lock() {
+        // Update next sync time
+        state.next_sync_time = next_sync_time();
+        // Calculate and store initial data-dir size for this pubky
+        state.data_dir_size = storage.calculate_pubky_size(&pubky);
+    } else {
+        error!("Failed to acquire app state lock");
+        return;
     };
 
     loop {
@@ -315,22 +319,36 @@ async fn worker_thread(
                     }
                 }
             }
-            _ = force_sync_rx.recv() => {
-                info!("Force sync triggered");
-                perform_sync(&storage, &pubky).await;
-
-                // Reset the interval timer after force sync
-                interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
-                // Consume the first tick to prevent immediate re-sync
-                interval.tick().await;
-                if let Ok(mut state) = APP_STATE.lock() {
-                    state.next_sync_time = next_sync_time();
+            msg = async {
+                if let Some(ref mut rx) = control_rx {
+                    rx.recv().await
+                } else {
+                    std::future::pending().await
                 }
-            }
-            _ = cancel_rx.recv() => {
-                info!("Worker thread cancelled");
-                set_sync_status(false);
-                break;
+            } => {
+                match msg {
+                    Ok(BackupControllerMessage::Cancel) => {
+                        info!("Backup controller task cancelled");
+                        set_sync_status(false);
+                        break;
+                    }
+                    Ok(BackupControllerMessage::ForceSync) => {
+                        info!("Force sync triggered");
+                        perform_sync(&storage, &pubky).await;
+
+                        // Reset the interval timer after force sync
+                        interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
+                        // Consume the first tick to prevent immediate re-sync
+                        interval.tick().await;
+                        if let Ok(mut state) = APP_STATE.lock() {
+                            state.next_sync_time = next_sync_time();
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Backup controller task closed: {}", e);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -569,10 +587,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            init_state_for_pubky,
+            init_app_state,
             fetch_state,
-            worker_thread_begin,
-            worker_thread_close,
+            backup_controller_begin,
+            backup_controller_close,
             force_sync_now
         ])
         .run(tauri::generate_context!())
