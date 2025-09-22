@@ -38,7 +38,7 @@ export class MainForm {
     // Back button
     document.getElementById('back-btn').addEventListener('click', async () => {
       try {
-        await invoke('worker_thread_close')
+        await invoke('backup_controller_close')
         this.stopStatusPolling()
         this.stopCountdown()
       } catch (error) {
