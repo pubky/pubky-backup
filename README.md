@@ -1,5 +1,7 @@
 # Pubky Backup App
 
+# This Application is currently in pre-release. Do not trust as your primary backup.
+
 A basic multi-platform desktop application which takes a `pubky` and downloads all of it's files to a local directory.
 
 
