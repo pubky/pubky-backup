@@ -87,7 +87,6 @@ export class MainForm {
 
   setHeader() {
     const backupHeader = document.getElementById('backup-header')
-    
     const pubkyDisplay = document.getElementById('pubky-display')
     const homeserverDisplay = document.getElementById('homeserver-display')
     if (this.pubky && this.homeserver) {
@@ -108,10 +107,10 @@ export class MainForm {
   }
 
   startStatusPolling() {
-    // Poll for status updates every second
+    // Poll for status updates every 200 ms
     this.statusInterval = setInterval(async () => {
       await this.fetchAndUpdateStatus()
-    }, 1000)
+    }, 200)
   }
 
   stopStatusPolling() {
@@ -196,7 +195,7 @@ export class MainForm {
     // Update countdown every second
     this.countdownInterval = setInterval(() => {
       this.updateCountdown()
-    }, 100)
+    }, 1000)
   }
 
   stopCountdown() {
