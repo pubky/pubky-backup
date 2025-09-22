@@ -52,7 +52,7 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     http_client: None,
 });
 
-/// AppState is Tauri's Rust back-end State. 
+/// AppState is Tauri's Rust back-end State.
 /// Here we provide an interface for the front-end and manage other application tasks (eg. The Backup task)
 #[derive(Serialize)]
 pub struct AppState {
@@ -226,7 +226,7 @@ async fn backup_controller_begin() -> Result<(), String> {
         return Ok(());
     }
 
-    let (backup_control_tx, backup_control_rx) = broadcast::channel(1);
+    let (backup_control_tx, backup_control_rx) = broadcast::channel(5);
     state.backup_control_tx = Some(backup_control_tx);
 
     tauri::async_runtime::spawn(backup_controller(pubky, Some(backup_control_rx)));
@@ -278,7 +278,7 @@ async fn force_sync_now() -> Result<(), String> {
 /// Currently spins up a single async task which pulls batches of /events/ and processes them immediately.
 /// Once all events have been processed it polls for more events every SYNC_INTERVAL_SECONDS.
 /// Optionally takes a broadcast channel receiver for control operations (Cancel, ForceSync)
-/// 
+///
 /// TODO: De-couple from AppState. Ie remove state read and writes from this logic
 async fn backup_controller(
     pubky: String,
@@ -290,8 +290,6 @@ async fn backup_controller(
     let storage = get_or_create_storage();
 
     if let Ok(mut state) = APP_STATE.lock() {
-        // Update next sync time
-        state.next_sync_time = next_sync_time();
         // Calculate and store initial data-dir size for this pubky
         state.data_dir_size = storage.calculate_pubky_size(&pubky);
     } else {
@@ -303,20 +301,36 @@ async fn backup_controller(
         tokio::select! {
             _ = interval.tick() => {
                 // Do not attempt sync if currently syncing
-                let should_sync = if let Ok(state) = APP_STATE.lock() {
-                    !state.is_syncing
+                if let Ok(state) = APP_STATE.lock() {
+                    if state.is_syncing {
+                        return;
+                    }
                 } else {
-                    info!("is_syncing true. returning");
-                   return;
+                    error!("Failed to acquire app state lock");
+                    return;
                 };
 
-                if should_sync {
-                    perform_sync(&storage, &pubky).await;
+                set_sync_status(true);
 
-                    // Update next sync time after sync completes
-                    if let Ok(mut state) = APP_STATE.lock() {
-                        state.next_sync_time = next_sync_time();
+                match perform_sync_batch(&storage, &pubky).await {
+                    Ok(true) => {
+                        // More events available, keep syncing (next tick will process more)
+                        interval = time::interval_at(
+                            time::Instant::now(),
+                            Duration::from_secs(SYNC_INTERVAL_SECONDS)
+                        );
                     }
+                    Err(e) => {
+                        error!("Sync batch failed: {}", e);
+                    }
+                    _ => {
+                        // Sync complete
+                    }
+                }
+
+                set_sync_status(false);
+                if let Ok(mut state) = APP_STATE.lock() {
+                    state.next_sync_time = next_sync_time();
                 }
             }
             msg = async {
@@ -334,15 +348,11 @@ async fn backup_controller(
                     }
                     Ok(BackupControllerMessage::ForceSync) => {
                         info!("Force sync triggered");
-                        perform_sync(&storage, &pubky).await;
-
-                        // Reset the interval timer after force sync
-                        interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
-                        // Consume the first tick to prevent immediate re-sync
-                        interval.tick().await;
-                        if let Ok(mut state) = APP_STATE.lock() {
-                            state.next_sync_time = next_sync_time();
-                        }
+                        // Reset interval to trigger immediately
+                        interval = time::interval_at(
+                            time::Instant::now(),
+                            Duration::from_secs(SYNC_INTERVAL_SECONDS)
+                        );
                     }
                     Err(e) => {
                         warn!("Backup controller task closed: {}", e);
@@ -354,60 +364,48 @@ async fn backup_controller(
     }
 }
 
-/// Perform a sync operation
-async fn perform_sync(storage: &Arc<Storage>, pubky: &str) {
-    let mut cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
-    info!("Syncing at current cursor: {}", cursor);
-    set_sync_status(true);
+/// Process one batch of sync events
+/// Returns Ok(true) if more events are available, Ok(false) if sync is complete, Err on failure
+async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<bool, String> {
+    let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
 
-    // Keep fetching events until there are none left
-    let mut has_more_events = true;
-    while has_more_events {
-        match fetch_events(&cursor, pubky).await {
-            Ok(events_response) => {
-                let num_events = events_response.events.len();
-                info!("Fetched {} events", num_events);
+    match fetch_events(&cursor, pubky).await {
+        Ok(events_response) => {
+            let num_events = events_response.events.len();
+            info!("Fetched {} events", num_events);
 
-                if num_events > 0 {
-                    // Set Sync status
-
-                    // Process those events
-                    if let Err(e) = process_events(events_response.events(), pubky).await {
-                        error!("Failed to process events: {}", e);
-                        break;
-                    }
-
-                    // Store new cursor
-                    if let Err(e) = storage
-                        .write_cursor(pubky, events_response.cursor.clone())
-                        .await
-                    {
-                        error!("Failed to update cursor: {}", e);
-                        break;
-                    }
-
-                    // Calculate and store the data-dir size for this pubky after a bacth processed
-                    let size = storage.calculate_pubky_size(pubky);
-                    if let Ok(mut state) = APP_STATE.lock() {
-                        state.data_dir_size = size;
-                    }
-
-                    // Update cursor for next iteration
-                    cursor = events_response.cursor;
-                } else {
-                    // No more events, sync cycle completed
-                    has_more_events = false;
+            if num_events > 0 {
+                // Process those events
+                if let Err(e) = process_events(events_response.events(), pubky).await {
+                    error!("Failed to process events: {}", e);
+                    return Err(format!("Failed to process events: {}", e));
                 }
-            }
-            Err(e) => {
-                error!("Sync fetch failed: {}", e);
-                break;
+
+                // Store new cursor
+                if let Err(e) = storage
+                    .write_cursor(pubky, events_response.cursor.clone())
+                    .await
+                {
+                    error!("Failed to update cursor: {}", e);
+                    return Err(format!("Failed to update cursor: {}", e));
+                }
+
+                // Calculate and store the data-dir size for this pubky after a batch processed
+                let size = storage.calculate_pubky_size(pubky);
+                if let Ok(mut state) = APP_STATE.lock() {
+                    state.data_dir_size = size;
+                }
+
+                Ok(true)
+            } else {
+                Ok(false)
             }
         }
+        Err(e) => {
+            error!("Sync fetch failed: {}", e);
+            Err(format!("Sync fetch failed: {}", e))
+        }
     }
-
-    info!("Sync completed");
-    set_sync_status(false);
 }
 
 /// Take a list of events and store the data of those which belong to a given pubky
