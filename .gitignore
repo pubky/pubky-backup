@@ -7,4 +7,4 @@
 /dist/
 /node_modules
 
-/data-dir/
+/.pubky-backup/
