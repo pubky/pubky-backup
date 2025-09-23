@@ -163,6 +163,7 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
 
     let pubky =
         PublicKey::from_str(pubky_str).map_err(|e| format!("Invalid pubky format: {}", e))?;
+
     let client = global_client().map_err(|e| format!("Internal error: {}", e))?;
 
     // Check pubky is discoverable
@@ -172,7 +173,11 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
         .ok_or_else(|| "Failed to find Homeserver for pubky".to_string())?;
 
     // Check Pubky has /pub/ data on Homeserver
-    let pubky_drive = get_or_create_pubky_drive();
+    let pubky_drive = PubkyDrive::public_with_client(&client);
+    if let Ok(mut state) = APP_STATE.lock() {
+        state.pubky_drive = Some(pubky_drive.clone());
+    }
+
     let path = PubkyPath::new(Some(pubky.clone()), "/pub/")
         .map_err(|e| format!("Internal error: {}", e))?;
 
@@ -367,7 +372,10 @@ async fn backup_controller(
 
 /// Process one batch of sync events
 /// Returns Ok(Continue) if more events are available, Ok(Break) if sync is complete, Err on failure
-async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<ControlFlow<(), ()>, String> {
+async fn perform_sync_batch(
+    storage: &Arc<Storage>,
+    pubky: &str,
+) -> Result<ControlFlow<(), ()>, String> {
     let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
 
     match fetch_events(&cursor, pubky).await {
@@ -378,8 +386,7 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<Contr
             if num_events > 0 {
                 // Process those events
                 if let Err(e) = process_events(events_response.events(), pubky).await {
-                    error!("Failed to process events: {}", e);
-                    return Err(format!("Failed to process events: {}", e));
+                    return Err(e);
                 }
 
                 // Store new cursor
@@ -422,29 +429,34 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), Strin
         match event_info.operation.as_str() {
             "PUT" => {
                 debug!("Processing PUT event for: {}", event_info.url);
-                let data_vec = match fetch_data_for_url(&event_info.url).await {
-                    Ok(data) => data,
-                    Err(e) => {
-                        error!(
-                            "Failed to fetch data for PUT event {}: {}",
-                            event_info.url, e
-                        );
-                        continue;
-                    }
-                };
+                let data_vec = fetch_data_for_url(&event_info.url).await.map_err(|e| {
+                    format!(
+                        "Failed to fetch data for PUT event {}: {}",
+                        event_info.url, e
+                    )
+                })?;
 
-                if let Err(e) = storage.write(&event_info.url, data_vec).await {
-                    error!("Failed to store data for {}: {}", event_info.url, e);
+                // Skip storing empty data (404 responses)
+                if !data_vec.is_empty() {
+                    storage
+                        .write(&event_info.url, data_vec)
+                        .await
+                        .map_err(|e| {
+                            format!("Failed to store data for {}: {}", event_info.url, e)
+                        })?;
+                } else {
+                    debug!("Skipping storage of empty data for {}", event_info.url);
                 }
             }
             "DEL" => {
                 debug!("Processing DEL event for: {}", event_info.url);
-                if let Err(e) = storage.delete(&event_info.url).await {
-                    error!("Failed to delete data for {}: {}", event_info.url, e);
-                }
+                storage
+                    .delete(&event_info.url)
+                    .await
+                    .map_err(|e| format!("Failed to delete data for {}: {}", event_info.url, e))?;
             }
             _ => {
-                error!("Unknown event operation: {}", event_info.operation);
+                return Err(format!("Unknown event operation: {}", event_info.operation));
             }
         }
     }
@@ -453,6 +465,7 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), Strin
 }
 
 /// Fetch data for a URL, either from network or mock data
+/// TODO: Check if retry logic built-in to PubkyHttpClient
 async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>, String> {
     if crate::APP_STATE
         .lock()
@@ -464,10 +477,20 @@ async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>, String> {
 
     let pubky_drive = get_or_create_pubky_drive();
 
-    let response = pubky_drive
+    let response = match pubky_drive
         .get(PubkyPath::from_str(url).map_err(|_| "Invalid pubky URL format".to_string())?)
         .await
-        .map_err(|e| format!("Failed to fetch data: {}", e))?;
+    {
+        Ok(response) => response,
+        Err(e) => {
+            let error_msg = format!("{}", e);
+            // Treat 404s and "not found" errors as empty results, not failures
+            if error_msg.contains("404") || error_msg.to_lowercase().contains("not found") {
+                return Ok(Vec::new());
+            }
+            return Err(format!("Failed to fetch data: {}", e));
+        }
+    };
 
     let data = response
         .bytes()
