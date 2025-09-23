@@ -3,7 +3,7 @@ use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
 use std::path::Path;
 
-const DATA_DIR: &str = "../data-dir";
+const DATA_DIR: &str = "../.pubky-backup";
 const CURSOR_FILENAME: &str = "cursor";
 
 pub struct Storage {
