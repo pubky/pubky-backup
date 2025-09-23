@@ -6,6 +6,7 @@ use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyHttpClient, PubkyPath
 use serde::Serialize;
 use std::{
     env,
+    ops::ControlFlow,
     str::FromStr,
     sync::{Arc, Mutex},
     time::Duration,
@@ -313,18 +314,18 @@ async fn backup_controller(
                 set_sync_status(true);
 
                 match perform_sync_batch(&storage, &pubky).await {
-                    Ok(true) => {
-                        // More events available, keep syncing (next tick will process more)
+                    Ok(ControlFlow::Continue(())) => {
+                        // More events available, keep syncing immediately
                         interval = time::interval_at(
                             time::Instant::now(),
                             Duration::from_secs(SYNC_INTERVAL_SECONDS)
                         );
                     }
+                    Ok(ControlFlow::Break(())) => {
+                        // Sync complete
+                    }
                     Err(e) => {
                         error!("Sync batch failed: {}", e);
-                    }
-                    _ => {
-                        // Sync complete
                     }
                 }
 
@@ -365,8 +366,8 @@ async fn backup_controller(
 }
 
 /// Process one batch of sync events
-/// Returns Ok(true) if more events are available, Ok(false) if sync is complete, Err on failure
-async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<bool, String> {
+/// Returns Ok(Continue) if more events are available, Ok(Break) if sync is complete, Err on failure
+async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<ControlFlow<(), ()>, String> {
     let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
 
     match fetch_events(&cursor, pubky).await {
@@ -396,9 +397,9 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<bool,
                     state.data_dir_size = size;
                 }
 
-                Ok(true)
+                Ok(ControlFlow::Continue(()))
             } else {
-                Ok(false)
+                Ok(ControlFlow::Break(()))
             }
         }
         Err(e) => {
