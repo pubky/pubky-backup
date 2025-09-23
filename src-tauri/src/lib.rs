@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyHttpClient, PubkyPath, PublicKey};
 use serde::Serialize;
+
 use std::{
     env,
     ops::ControlFlow,
@@ -24,6 +25,44 @@ use crate::events::{fetch_events, EventInfo};
 use crate::storage::Storage;
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
+
+/// Custom error types. Only these should be exposed to the front-end.
+#[derive(Debug)]
+pub enum BackupAppError {
+    Internal(anyhow::Error),
+    HomeserverNotFound,
+    DataNotFound,
+    InvalidPubkyFormat(String),
+}
+
+impl BackupAppError {
+    pub fn internal<E: Into<anyhow::Error>>(err: E) -> Self {
+        Self::Internal(err.into())
+    }
+
+    pub fn lock_failed() -> Self {
+        Self::Internal(anyhow!("Failed to acquire lock"))
+    }
+}
+
+impl std::fmt::Display for BackupAppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BackupAppError::Internal(err) => write!(f, "Internal error: {}", err),
+            BackupAppError::HomeserverNotFound => write!(f, "Failed to find Homeserver for pubky"),
+            BackupAppError::DataNotFound => write!(f, "Failed to find data for pubky"),
+            BackupAppError::InvalidPubkyFormat(msg) => write!(f, "Invalid pubky format: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for BackupAppError {}
+
+impl From<BackupAppError> for String {
+    fn from(err: BackupAppError) -> String {
+        err.to_string()
+    }
+}
 
 #[derive(Debug, Clone)]
 enum BackupControllerMessage {
@@ -85,7 +124,7 @@ pub struct AppState {
 pub fn get_or_create_http_client() -> Result<PubkyHttpClient> {
     let mut state = APP_STATE
         .lock()
-        .map_err(|_| anyhow!("Failed to acquire app state lock"))?;
+        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?;
 
     if state.http_client.is_none() {
         let client =
@@ -99,7 +138,7 @@ pub fn get_or_create_http_client() -> Result<PubkyHttpClient> {
 fn get_or_create_storage() -> Result<Arc<Storage>> {
     let mut state = APP_STATE
         .lock()
-        .map_err(|_| anyhow!("Failed to acquire app state lock"))?;
+        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?;
 
     if state.storage.is_none() {
         let storage = Storage::new().map_err(|e| anyhow!("Failed to create storage: {}", e))?;
@@ -112,7 +151,7 @@ fn get_or_create_storage() -> Result<Arc<Storage>> {
 fn get_or_create_pubky_drive() -> Result<PubkyDrive> {
     let mut state = APP_STATE
         .lock()
-        .map_err(|_| anyhow!("Failed to acquire app state lock"))?;
+        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?;
 
     if state.pubky_drive.is_none() {
         let client =
@@ -137,21 +176,20 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
         }
     }
 
-    let pubky =
-        PublicKey::from_str(pubky_str).map_err(|e| format!("Invalid pubky format: {}", e))?;
+    let pubky = PublicKey::from_str(pubky_str)
+        .map_err(|e| BackupAppError::InvalidPubkyFormat(e.to_string()))?;
 
     // Check pubky is discoverable
-    let client = get_or_create_http_client().map_err(|e| format!("Internal error: {}", e))?;
+    let client = get_or_create_http_client().map_err(BackupAppError::internal)?;
     let homeserver_pubky_str = Pkdns::with_client(&client)
         .get_homeserver(&pubky)
         .await
-        .ok_or_else(|| "Failed to find Homeserver for pubky".to_string())?;
+        .ok_or_else(|| BackupAppError::HomeserverNotFound)?;
 
     // Check Pubky has /pub/ data on Homeserver
-    let pubky_drive = get_or_create_pubky_drive().map_err(|e| format!("Internal error: {}", e))?;
+    let pubky_drive = get_or_create_pubky_drive().map_err(BackupAppError::internal)?;
 
-    let path = PubkyPath::new(Some(pubky.clone()), "/pub/")
-        .map_err(|e| format!("Internal error: {}", e))?;
+    let path = PubkyPath::new(Some(pubky.clone()), "/pub/").map_err(BackupAppError::internal)?;
 
     // TODO: We should check the pub key has data with exists(), but currently incorrectly returns 401 (https://github.com/pubky/pubky-core/issues/236)
     // if !pubky_drive.exists(path.clone()).await.map_err(|e| format!("Internal error: {}", e))? {
@@ -161,13 +199,13 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
     if let Err(e) = pubky_drive.get(path).await {
         error!("Failed to get pubky data: {}", e);
-        return Err("Failed to find data for pubky".to_string());
+        return Err(BackupAppError::DataNotFound.into());
     }
     info!("Pubky is valid for Backup: {}", pubky);
 
     let mut state = APP_STATE
         .lock()
-        .map_err(|_| "Failed to acquire lock".to_string())?;
+        .map_err(|_| BackupAppError::lock_failed())?;
     state.pubky = Some(pubky.to_string());
     state.homeserver = Some(homeserver_pubky_str);
     Ok(())
@@ -177,10 +215,9 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
 #[tauri::command]
 async fn fetch_state() -> Result<String, String> {
     match APP_STATE.lock() {
-        Ok(state) => {
-            serde_json::to_string(&*state).map_err(|e| format!("Serialisation error: {}", e))
-        }
-        Err(_) => Err("Failed to acquire lock".to_string()),
+        Ok(state) => serde_json::to_string(&*state)
+            .map_err(|e| BackupAppError::internal(anyhow!("Serialisation error: {}", e)).into()),
+        Err(_) => Err(BackupAppError::lock_failed().into()),
     }
 }
 
@@ -190,12 +227,12 @@ async fn fetch_state() -> Result<String, String> {
 async fn backup_controller_begin() -> Result<(), String> {
     let mut state = APP_STATE
         .lock()
-        .map_err(|_| "Failed to acquire lock".to_string())?;
+        .map_err(|_| BackupAppError::lock_failed())?;
 
     let pubky = state
         .pubky
         .clone()
-        .ok_or("Pubky not available in AppState")?;
+        .ok_or_else(|| BackupAppError::internal(anyhow!("Pubky not available in AppState")))?;
 
     if state.backup_control_tx.is_some() {
         // This shouldnt happen in production builds.
@@ -208,7 +245,7 @@ async fn backup_controller_begin() -> Result<(), String> {
     state.backup_control_tx = Some(backup_control_tx);
 
     tauri::async_runtime::spawn(backup_controller(pubky, Some(backup_control_rx)));
-    debug!("Backup controller task started");
+    info!("Backup controller task started");
     Ok(())
 }
 
@@ -218,14 +255,14 @@ async fn backup_controller_begin() -> Result<(), String> {
 async fn backup_controller_close() -> Result<(), String> {
     let mut state = APP_STATE
         .lock()
-        .map_err(|_| "Failed to acquire lock".to_string())?;
+        .map_err(|_| BackupAppError::lock_failed())?;
 
     if let Some(control_tx) = state.backup_control_tx.take() {
         let _ = control_tx.send(BackupControllerMessage::Cancel);
         debug!("Backup controller task stop signal sent");
         Ok(())
     } else {
-        Err("No Backup controller task running".to_string())
+        Err(BackupAppError::internal(anyhow!("No Backup controller task running")).into())
     }
 }
 
@@ -234,7 +271,7 @@ async fn backup_controller_close() -> Result<(), String> {
 async fn force_sync_now() -> Result<(), String> {
     let state = APP_STATE
         .lock()
-        .map_err(|_| "Failed to acquire lock".to_string())?;
+        .map_err(|_| BackupAppError::lock_failed())?;
 
     if let Some(control_tx) = &state.backup_control_tx {
         match control_tx.send(BackupControllerMessage::ForceSync) {
@@ -242,10 +279,12 @@ async fn force_sync_now() -> Result<(), String> {
                 debug!("Force sync signal sent");
                 Ok(())
             }
-            Err(_) => Err("Failed to send force sync signal".to_string()),
+            Err(_) => {
+                Err(BackupAppError::internal(anyhow!("Failed to send force sync signal")).into())
+            }
         }
     } else {
-        Err("No Backup controller task is running".to_string())
+        Err(BackupAppError::internal(anyhow!("No Backup controller task running")).into())
     }
 }
 
@@ -401,7 +440,10 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<()> {
                 if !data_vec.is_empty() {
                     storage.write(&event_info.url, data_vec).await?;
                 } else {
-                    debug!("Skipping storage of empty data for {}", event_info.url);
+                    info!(
+                        "404 response: Skipping storage of empty data for {}",
+                        event_info.url
+                    );
                 }
             }
             "DEL" => {
@@ -422,7 +464,7 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<()> {
 async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>> {
     if crate::APP_STATE
         .lock()
-        .map_err(|_| anyhow!("Failed to acquire app state lock"))?
+        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?
         .developer_mode
     {
         return Ok(get_mock_data_for_url(url));
