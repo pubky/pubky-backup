@@ -1,9 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
 use std::path::Path;
 
-const DATA_DIR: &str = "../data-dir";
+const DATA_DIR: &str = "../.pubky-backup";
 const CURSOR_FILENAME: &str = "cursor";
 
 pub struct Storage {
@@ -30,14 +30,20 @@ impl Storage {
     /// Write data to storage using pubky URL path
     pub async fn write(&self, pubky_url: &str, data: Vec<u8>) -> Result<()> {
         let file_path = self.url_to_path(pubky_url)?;
-        self.operator.write(&file_path, data).await?;
+        self.operator
+            .write(&file_path, data)
+            .await
+            .with_context(|| format!("Failed to store data for {}", pubky_url))?;
         Ok(())
     }
 
     /// Delete data from storage using pubky URL path
     pub async fn delete(&self, pubky_url: &str) -> Result<()> {
         let file_path = self.url_to_path(pubky_url)?;
-        self.operator.delete(&file_path).await?;
+        self.operator
+            .delete(&file_path)
+            .await
+            .with_context(|| format!("Failed to delete data for {}", pubky_url))?;
         Ok(())
     }
 
@@ -45,7 +51,11 @@ impl Storage {
     #[allow(dead_code)]
     pub async fn read(&self, pubky_url: &str) -> Result<Vec<u8>> {
         let file_path = self.url_to_path(pubky_url)?;
-        let data = self.operator.read(&file_path).await?;
+        let data = self
+            .operator
+            .read(&file_path)
+            .await
+            .with_context(|| format!("Failed to read data for {}", pubky_url))?;
         Ok(data.to_vec())
     }
 
@@ -53,7 +63,8 @@ impl Storage {
         let cursor_path = format!("{}/{}", pubky, CURSOR_FILENAME);
         self.operator
             .write(&cursor_path, cursor_value.clone())
-            .await?;
+            .await
+            .with_context(|| format!("Failed to update cursor for {}", pubky))?;
         debug!("Cursor value written: {}", cursor_value);
         Ok(())
     }
@@ -69,7 +80,10 @@ impl Storage {
             Err(_) => {
                 // TODO:In this case check if data exists. If so then something has gone wrong and we will start backup from the top.
                 info!("Cursor file not found, creating empty cursor file");
-                self.operator.write(&cursor_path, "").await?;
+                self.operator
+                    .write(&cursor_path, "")
+                    .await
+                    .with_context(|| format!("Failed to create cursor file for {}", pubky))?;
                 Ok(String::new())
             }
         }
