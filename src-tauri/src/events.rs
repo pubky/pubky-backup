@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use log::warn;
 use reqwest::{self, Method};
 use serde::Deserialize;
@@ -18,11 +19,11 @@ pub struct EventsResponse {
 
 impl EventsResponse {
     /// Parse events response from API
-    pub fn from_response(response: &str) -> Result<Self, String> {
+    pub fn from_response(response: &str) -> Result<Self> {
         let lines: Vec<&str> = response.trim().split('\n').collect();
 
         if lines.is_empty() {
-            return Err("Empty response".to_string());
+            return Err(anyhow!("Empty response"));
         }
 
         let mut events = Vec::new();
@@ -72,16 +73,16 @@ impl EventsResponse {
 
 /// Fetch event list from given cursor
 /// This fetches all events for all pubkys currently
-pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse, String> {
+pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse> {
     if crate::APP_STATE
         .lock()
-        .map_err(|_| "Failed to acquire app state lock".to_string())?
+        .map_err(|_| anyhow!("Failed to acquire app state lock"))?
         .developer_mode
     {
         return get_mock_events_response(cursor);
     }
 
-    let client = crate::get_or_create_http_client();
+    let client = crate::get_or_create_http_client()?;
     const MAX_RETRIES: u32 = 3;
 
     for attempt in 1..=MAX_RETRIES {
@@ -109,14 +110,14 @@ pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse, S
                             .await;
                         continue; // Retry
                     } else {
-                        return Err("Rate limited after maximum retries".to_string());
+                        return Err(anyhow!("Rate limited after maximum retries"));
                     }
                 }
 
                 let text = response
                     .text()
                     .await
-                    .map_err(|e| format!("Failed to read response: {}", e))?;
+                    .map_err(|e| anyhow!("Failed to read response: {}", e))?;
                 return EventsResponse::from_response(&text);
             }
             Err(e) => {
@@ -128,20 +129,21 @@ pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse, S
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     continue; // Retry
                 } else {
-                    return Err(format!(
+                    return Err(anyhow!(
                         "HTTP request failed after {} attempts: {}",
-                        MAX_RETRIES, e
+                        MAX_RETRIES,
+                        e
                     ));
                 }
             }
         }
     }
 
-    Err("Unexpected error in fetch_events retry loop".to_string())
+    Err(anyhow!("Unexpected error in fetch_events retry loop"))
 }
 
 /// Generate mock events response for developer mode
-fn get_mock_events_response(cursor: &str) -> Result<EventsResponse, String> {
+fn get_mock_events_response(cursor: &str) -> Result<EventsResponse> {
     let mock_pubky = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
 
     // Simulate progression through different cursors

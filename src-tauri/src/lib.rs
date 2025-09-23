@@ -1,6 +1,7 @@
 mod events;
 mod storage;
 
+use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyHttpClient, PubkyPath, PublicKey};
 use serde::Serialize;
@@ -81,71 +82,46 @@ pub struct AppState {
     http_client: Option<PubkyHttpClient>,
 }
 
-pub fn get_or_create_http_client() -> PubkyHttpClient {
-    let mut state = match APP_STATE.lock() {
-        Ok(state) => state,
-        Err(_) => {
-            error!("Failed to acquire lock");
-            std::process::exit(1);
-        }
-    };
+pub fn get_or_create_http_client() -> Result<PubkyHttpClient> {
+    let mut state = APP_STATE
+        .lock()
+        .map_err(|_| anyhow!("Failed to acquire app state lock"))?;
+
     if state.http_client.is_none() {
-        let client = match PubkyHttpClient::new() {
-            Ok(client) => client,
-            Err(e) => {
-                error!("Failed to create HTTP client: {}", e);
-                std::process::exit(1);
-            }
-        };
+        let client =
+            PubkyHttpClient::new().map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
         state.http_client = Some(client);
     }
-    state.http_client.as_ref().unwrap().clone()
+
+    Ok(state.http_client.as_ref().unwrap().clone())
 }
 
-fn get_or_create_storage() -> Arc<Storage> {
-    let mut state = match APP_STATE.lock() {
-        Ok(state) => state,
-        Err(_) => {
-            error!("Failed to acquire lock");
-            std::process::exit(1);
-        }
-    };
+fn get_or_create_storage() -> Result<Arc<Storage>> {
+    let mut state = APP_STATE
+        .lock()
+        .map_err(|_| anyhow!("Failed to acquire app state lock"))?;
+
     if state.storage.is_none() {
-        let storage = match Storage::new() {
-            Ok(storage) => storage,
-            Err(e) => {
-                error!("Failed to create storage: {}", e);
-                std::process::exit(1);
-            }
-        };
+        let storage = Storage::new().map_err(|e| anyhow!("Failed to create storage: {}", e))?;
         state.storage = Some(Arc::new(storage));
     }
-    state.storage.clone().expect("Storage should be available")
+
+    Ok(state.storage.clone().unwrap())
 }
 
-fn get_or_create_pubky_drive() -> PubkyDrive {
-    let mut state = match APP_STATE.lock() {
-        Ok(state) => state,
-        Err(_) => {
-            error!("Failed to acquire lock");
-            std::process::exit(1);
-        }
-    };
+fn get_or_create_pubky_drive() -> Result<PubkyDrive> {
+    let mut state = APP_STATE
+        .lock()
+        .map_err(|_| anyhow!("Failed to acquire app state lock"))?;
+
     if state.pubky_drive.is_none() {
-        let client = match global_client() {
-            Ok(client) => client,
-            Err(e) => {
-                error!("Failed to create client: {}", e);
-                std::process::exit(1);
-            }
-        };
+        let client =
+            global_client().map_err(|e| anyhow!("Failed to create pubky client: {}", e))?;
         let drive = PubkyDrive::public_with_client(&client);
         state.pubky_drive = Some(drive);
     }
-    state
-        .pubky_drive
-        .clone()
-        .expect("PubkyDrive should be available")
+
+    Ok(state.pubky_drive.clone().unwrap())
 }
 
 /// Take a pubky, verify and add to State ready for usage.
@@ -164,19 +140,15 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     let pubky =
         PublicKey::from_str(pubky_str).map_err(|e| format!("Invalid pubky format: {}", e))?;
 
-    let client = global_client().map_err(|e| format!("Internal error: {}", e))?;
-
     // Check pubky is discoverable
+    let client = get_or_create_http_client().map_err(|e| format!("Internal error: {}", e))?;
     let homeserver_pubky_str = Pkdns::with_client(&client)
         .get_homeserver(&pubky)
         .await
         .ok_or_else(|| "Failed to find Homeserver for pubky".to_string())?;
 
     // Check Pubky has /pub/ data on Homeserver
-    let pubky_drive = PubkyDrive::public_with_client(&client);
-    if let Ok(mut state) = APP_STATE.lock() {
-        state.pubky_drive = Some(pubky_drive.clone());
-    }
+    let pubky_drive = get_or_create_pubky_drive().map_err(|e| format!("Internal error: {}", e))?;
 
     let path = PubkyPath::new(Some(pubky.clone()), "/pub/")
         .map_err(|e| format!("Internal error: {}", e))?;
@@ -189,7 +161,7 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
     if let Err(e) = pubky_drive.get(path).await {
         error!("Failed to get pubky data: {}", e);
-        return Err(format!("Failed to find data for pubky"));
+        return Err("Failed to find data for pubky".to_string());
     }
     info!("Pubky is valid for Backup: {}", pubky);
 
@@ -293,15 +265,18 @@ async fn backup_controller(
     let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
 
     // Init data-dir and/or read initial cursor
-    let storage = get_or_create_storage();
+    let storage = match get_or_create_storage() {
+        Ok(storage) => storage,
+        Err(e) => {
+            error!("Failed to initialize storage: {}", e);
+            return;
+        }
+    };
 
     if let Ok(mut state) = APP_STATE.lock() {
         // Calculate and store initial data-dir size for this pubky
         state.data_dir_size = storage.calculate_pubky_size(&pubky);
-    } else {
-        error!("Failed to acquire app state lock");
-        return;
-    };
+    }
 
     loop {
         tokio::select! {
@@ -372,11 +347,8 @@ async fn backup_controller(
 
 /// Process one batch of sync events
 /// Returns Ok(Continue) if more events are available, Ok(Break) if sync is complete, Err on failure
-async fn perform_sync_batch(
-    storage: &Arc<Storage>,
-    pubky: &str,
-) -> Result<ControlFlow<(), ()>, String> {
-    let cursor = storage.read_cursor(&pubky).await.unwrap_or_default();
+async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<ControlFlow<(), ()>> {
+    let cursor = storage.read_cursor(&pubky).await?;
 
     match fetch_events(&cursor, pubky).await {
         Ok(events_response) => {
@@ -385,18 +357,12 @@ async fn perform_sync_batch(
 
             if num_events > 0 {
                 // Process those events
-                if let Err(e) = process_events(events_response.events(), pubky).await {
-                    return Err(e);
-                }
+                process_events(events_response.events(), pubky).await?;
 
                 // Store new cursor
-                if let Err(e) = storage
+                storage
                     .write_cursor(pubky, events_response.cursor.clone())
-                    .await
-                {
-                    error!("Failed to update cursor: {}", e);
-                    return Err(format!("Failed to update cursor: {}", e));
-                }
+                    .await?;
 
                 // Calculate and store the data-dir size for this pubky after a batch processed
                 let size = storage.calculate_pubky_size(pubky);
@@ -411,14 +377,14 @@ async fn perform_sync_batch(
         }
         Err(e) => {
             error!("Sync fetch failed: {}", e);
-            Err(format!("Sync fetch failed: {}", e))
+            Err(anyhow!("Sync fetch failed: {}", e))
         }
     }
 }
 
 /// Take a list of events and store the data of those which belong to a given pubky
-async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), String> {
-    let storage = get_or_create_storage();
+async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<()> {
+    let storage = get_or_create_storage()?;
 
     for event_info in events {
         // Skip events for other pubkys
@@ -429,34 +395,21 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), Strin
         match event_info.operation.as_str() {
             "PUT" => {
                 debug!("Processing PUT event for: {}", event_info.url);
-                let data_vec = fetch_data_for_url(&event_info.url).await.map_err(|e| {
-                    format!(
-                        "Failed to fetch data for PUT event {}: {}",
-                        event_info.url, e
-                    )
-                })?;
+                let data_vec = fetch_data_for_url(&event_info.url).await?;
 
                 // Skip storing empty data (404 responses)
                 if !data_vec.is_empty() {
-                    storage
-                        .write(&event_info.url, data_vec)
-                        .await
-                        .map_err(|e| {
-                            format!("Failed to store data for {}: {}", event_info.url, e)
-                        })?;
+                    storage.write(&event_info.url, data_vec).await?;
                 } else {
                     debug!("Skipping storage of empty data for {}", event_info.url);
                 }
             }
             "DEL" => {
                 debug!("Processing DEL event for: {}", event_info.url);
-                storage
-                    .delete(&event_info.url)
-                    .await
-                    .map_err(|e| format!("Failed to delete data for {}: {}", event_info.url, e))?;
+                storage.delete(&event_info.url).await?;
             }
             _ => {
-                return Err(format!("Unknown event operation: {}", event_info.operation));
+                return Err(anyhow!("Unknown event operation: {}", event_info.operation));
             }
         }
     }
@@ -466,19 +419,19 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<(), Strin
 
 /// Fetch data for a URL, either from network or mock data
 /// TODO: Check if retry logic built-in to PubkyHttpClient
-async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>, String> {
+async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>> {
     if crate::APP_STATE
         .lock()
-        .map_err(|_| "Failed to acquire app state lock".to_string())?
+        .map_err(|_| anyhow!("Failed to acquire app state lock"))?
         .developer_mode
     {
         return Ok(get_mock_data_for_url(url));
     }
 
-    let pubky_drive = get_or_create_pubky_drive();
+    let pubky_drive = get_or_create_pubky_drive()?;
 
     let response = match pubky_drive
-        .get(PubkyPath::from_str(url).map_err(|_| "Invalid pubky URL format".to_string())?)
+        .get(PubkyPath::from_str(url).map_err(|_| anyhow!("Invalid pubky URL format: {}", url))?)
         .await
     {
         Ok(response) => response,
@@ -488,14 +441,14 @@ async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>, String> {
             if error_msg.contains("404") || error_msg.to_lowercase().contains("not found") {
                 return Ok(Vec::new());
             }
-            return Err(format!("Failed to fetch data: {}", e));
+            return Err(anyhow!("Failed to fetch data for PUT event {}: {}", url, e));
         }
     };
 
     let data = response
         .bytes()
         .await
-        .map_err(|e| format!("Failed to read response bytes: {}", e))?;
+        .map_err(|e| anyhow!("Failed to read response bytes for {}: {}", url, e))?;
 
     let data_vec = data.to_vec();
     debug!("Successfully fetched data: {} bytes", data_vec.len());
@@ -673,7 +626,7 @@ mod tests {
         let result = process_events(events, test_pubky).await;
         assert!(result.is_ok(), "process_events should succeed");
 
-        let storage = get_or_create_storage();
+        let storage = get_or_create_storage().expect("Storage creation should succeed in test");
         // The first URL should have been deleted, so it shouldn't exist
         let read_result_1 = storage.read(&test_url_1).await;
         assert!(read_result_1.is_err());
