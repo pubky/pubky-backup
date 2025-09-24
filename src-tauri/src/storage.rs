@@ -12,7 +12,11 @@ pub struct Storage {
 
 impl Storage {
     pub fn new() -> Result<Self> {
-        let builder = Fs::default().root(DATA_DIR);
+        Self::with_root(DATA_DIR)
+    }
+
+    pub fn with_root(root_dir: &str) -> Result<Self> {
+        let builder = Fs::default().root(root_dir);
         let operator = Operator::new(builder)?
             .layer(opendal::layers::LoggingLayer::default())
             .finish();
@@ -152,10 +156,13 @@ fn calculate_dir_size(dir: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_cursor_read_write() {
-        let storage = Storage::new().expect("Failed to create storage");
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path().to_str().expect("Failed to get temp path");
+        let storage = Storage::with_root(temp_path).expect("Failed to create storage");
         let test_cursor = "0033E867HX6FE";
         let test_pubky = "test_pubky";
 
@@ -171,7 +178,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_delete_pubky_data() {
-        let storage = Storage::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path().to_str().expect("Failed to get temp path");
+        let storage = Storage::with_root(temp_path).expect("Failed to create storage");
         let test_url = "pubky://68rkfi1d78baobycj6w4b7dga43o8qtnuhubban5at6qywrieb5y/pub/pubky.app/posts/0033E8XNPVSTG";
         let test_data = b"Hello, world!".to_vec();
         let expected_path = "68rkfi1d78baobycj6w4b7dga43o8qtnuhubban5at6qywrieb5y/pub/pubky.app/posts/0033E8XNPVSTG";

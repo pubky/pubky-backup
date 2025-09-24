@@ -81,6 +81,7 @@ fn next_sync_time() -> u64 {
         + SYNC_INTERVAL_SECONDS
 }
 
+// TODO: Mutex here feels fine for now whilst we have a single worker task and single state poller. As the App becomes more complex we should reconsider this choice.
 pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     pubky: None,
     homeserver: None,
@@ -403,7 +404,7 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<Contr
 
             if num_events > 0 {
                 // Process those events
-                process_events(events_response.events()?, pubky).await?;
+                process_events(events_response.events()?, pubky, storage.clone()).await?;
 
                 // Store new cursor
                 storage
@@ -432,9 +433,7 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<Contr
 }
 
 /// Take a list of events and store the data of those which belong to a given pubky
-async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<()> {
-    let storage = get_or_create_storage()?;
-
+async fn process_events(events: Vec<EventInfo>, pubky: &str, storage: Arc<Storage>) -> Result<()> {
     for event_info in events {
         // Skip events for other pubkys
         // TODO: Filter server-side
@@ -484,13 +483,9 @@ async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>> {
         return Ok(get_mock_data_for_url(url));
     }
 
-    let pubky_drive = get_or_create_pubky_drive()?;
-    let pubky_path =
-        PubkyPath::from_str(url).map_err(|_| anyhow!("Invalid pubky URL format: {}", url))?;
-
     let response = match retry_with_backoff(|| async {
-        pubky_drive
-            .get(pubky_path.clone())
+        get_or_create_pubky_drive()?
+            .get(url)
             .await
             .map_err(|e| anyhow!("{}", e))
     })
@@ -640,6 +635,7 @@ mod tests {
     use super::*;
     use crate::events::EventInfo;
     use std::sync::Once;
+    use tempfile::TempDir;
 
     static INIT: Once = Once::new();
 
@@ -647,9 +643,6 @@ mod tests {
         INIT.call_once(|| {
             let mut state = APP_STATE.lock().unwrap();
             state.developer_mode = true;
-            state.storage = Some(Arc::new(
-                Storage::new().expect("Failed to create test storage"),
-            ));
         });
     }
 
@@ -657,10 +650,14 @@ mod tests {
     async fn test_process_events() {
         setup_test_app_state();
 
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path().to_str().expect("Failed to get temp path");
+        let storage =
+            Arc::new(Storage::with_root(temp_path).expect("Failed to create test storage"));
+
         let test_pubky = "test_pubky_123";
         let test_url_1 = format!("pubky://{}/pub/posts/001", test_pubky);
         let test_url_2 = format!("pubky://{}/pub/profile", test_pubky);
-        let test_url_unknown = format!("pubky://{}/pub/unknown", test_pubky);
         let other_pubky_url = format!("pubky://other_pubky/pub/posts/001");
 
         let events = vec![
@@ -680,16 +677,11 @@ mod tests {
                 operation: "DEL".to_string(),
                 url: test_url_1.clone(), // Delete the first URL
             },
-            EventInfo {
-                operation: "UNKNOWN".to_string(),
-                url: test_url_unknown.clone(), // Unknown operation
-            },
         ];
 
-        let result = process_events(events, test_pubky).await;
+        let result = process_events(events, test_pubky, storage.clone()).await;
         assert!(result.is_ok(), "process_events should succeed");
 
-        let storage = get_or_create_storage().expect("Storage creation should succeed in test");
         // The first URL should have been deleted, so it shouldn't exist
         let read_result_1 = storage.read(&test_url_1).await;
         assert!(read_result_1.is_err());
@@ -699,8 +691,18 @@ mod tests {
         // The other pubky URL should not exist (was filtered out)
         let read_result_other = storage.read(&other_pubky_url).await;
         assert!(read_result_other.is_err());
-        // The unknown operation URL should not exist (unknown operations ignored)
-        let read_result_unknown = storage.read(&test_url_unknown).await;
-        assert!(read_result_unknown.is_err());
+
+        // Test that unknown operations cause an error
+        let test_url_unknown = format!("pubky://{}/pub/unknown", test_pubky);
+        let unknown_events = vec![EventInfo {
+            operation: "UNKNOWN".to_string(),
+            url: test_url_unknown.clone(),
+        }];
+
+        let result = process_events(unknown_events, test_pubky, storage.clone()).await;
+        assert!(
+            result.is_err(),
+            "process_events should fail on unknown operation"
+        );
     }
 }
