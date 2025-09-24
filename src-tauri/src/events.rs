@@ -4,6 +4,8 @@ use reqwest::{self, Method};
 use serde::Deserialize;
 
 const EVENTS_LIMIT: u32 = 1000;
+const PUT_OPERATION: &str = "PUT";
+const DEL_OPERATION: &str = "DEL";
 
 #[derive(Debug, Clone)]
 pub struct EventInfo {
@@ -45,29 +47,28 @@ impl EventsResponse {
     }
 
     /// Get parsed events as EventInfo structs
-    pub fn events(&self) -> Vec<EventInfo> {
+    pub fn events(&self) -> Result<Vec<EventInfo>> {
         self.events
             .iter()
-            .filter_map(|event| Self::parse_event(event))
+            .filter_map(|event| Self::parse_event(event).transpose())
             .collect()
     }
 
-    fn parse_event(event: &str) -> Option<EventInfo> {
+    fn parse_event(event: &str) -> Result<Option<EventInfo>> {
         let event = event.trim();
 
-        if let Some(url) = event.strip_prefix("PUT ") {
-            Some(EventInfo {
-                operation: "PUT".to_string(),
-                url: url.to_string(),
-            })
+        let (operation, url_str) = if let Some(url) = event.strip_prefix("PUT ") {
+            (PUT_OPERATION, url)
         } else if let Some(url) = event.strip_prefix("DEL ") {
-            Some(EventInfo {
-                operation: "DEL".to_string(),
-                url: url.to_string(),
-            })
+            (DEL_OPERATION, url)
         } else {
-            None
-        }
+            return Ok(None);
+        };
+
+        Ok(Some(EventInfo {
+            operation: operation.to_string(),
+            url: url_str.to_string(),
+        }))
     }
 }
 
@@ -83,63 +84,26 @@ pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse> {
     }
 
     let client = crate::get_or_create_http_client()?;
-    const MAX_RETRIES: u32 = 3;
+    let url = format!(
+        "https://_pubky.{pubky}/events/?limit={}&cursor={}",
+        EVENTS_LIMIT, cursor
+    );
 
-    for attempt in 1..=MAX_RETRIES {
-        match client
-            .request(
-                Method::GET,
-                format!(
-                    "https://_pubky.{pubky}/events/?limit={}&cursor={}",
-                    EVENTS_LIMIT, cursor
-                ),
-            )
+    let response = crate::retry_with_backoff(|| async {
+        client
+            .request(Method::GET, &url)
             .send()
             .await
-        {
-            Ok(response) => {
-                // Check for rate limiting
-                if response.status() == 429 {
-                    if attempt < MAX_RETRIES {
-                        let sleep_time = 2 * attempt;
-                        warn!(
-                            "HTTP request rate limited on attempt {}, sleeping for {} seconds",
-                            attempt, sleep_time
-                        );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(sleep_time.into()))
-                            .await;
-                        continue; // Retry
-                    } else {
-                        return Err(anyhow!("Rate limited after maximum retries"));
-                    }
-                }
+            .map_err(|e| anyhow!("Failed to fetch events data for {}: {}", url, e))
+    })
+    .await?;
 
-                let text = response
-                    .text()
-                    .await
-                    .map_err(|e| anyhow!("Failed to read response: {}", e))?;
-                return EventsResponse::from_response(&text);
-            }
-            Err(e) => {
-                if attempt < MAX_RETRIES {
-                    warn!(
-                        "HTTP request failed on attempt {}: {}, retrying...",
-                        attempt, e
-                    );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    continue; // Retry
-                } else {
-                    return Err(anyhow!(
-                        "HTTP request failed after {} attempts: {}",
-                        MAX_RETRIES,
-                        e
-                    ));
-                }
-            }
-        }
-    }
+    let text = response
+        .text()
+        .await
+        .map_err(|e| anyhow!("Failed to read response: {}", e))?;
 
-    Err(anyhow!("Unexpected error in fetch_events retry loop"))
+    EventsResponse::from_response(&text)
 }
 
 /// Generate mock events response for developer mode

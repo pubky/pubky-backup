@@ -89,6 +89,29 @@ impl Storage {
         }
     }
 
+    /// Write error to error log file
+    /// TODO: write_append mode?
+    pub async fn write_error(&self, pubky: &str, url: &str, error_msg: &str) -> Result<()> {
+        let error_log_path = format!("{}/error.log", pubky);
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+        let log_entry = format!("[{}] Failed to fetch {}: {}\n", timestamp, url, error_msg);
+
+        // Append to existing error log or create new one
+        let existing_content = match self.operator.read(&error_log_path).await {
+            Ok(data) => String::from_utf8_lossy(&data.to_vec()).to_string(),
+            Err(_) => String::new(),
+        };
+
+        self.operator
+            .write(
+                &error_log_path,
+                format!("{}{}", existing_content, log_entry),
+            )
+            .await
+            .with_context(|| format!("Failed to write error log for {}", pubky))?;
+        Ok(())
+    }
+
     /// Calculate the total size of data stored for a specific pubky
     pub fn calculate_pubky_size(&self, pubky: &str) -> u64 {
         let pubky_path = Path::new(DATA_DIR).join(pubky);

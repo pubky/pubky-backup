@@ -1,5 +1,6 @@
 mod events;
 mod storage;
+mod utils;
 
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
@@ -23,6 +24,7 @@ use tokio::time;
 
 use crate::events::{fetch_events, EventInfo};
 use crate::storage::Storage;
+use crate::utils::retry_with_backoff;
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
 
@@ -86,6 +88,7 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     is_syncing: false,
     next_sync_time: 0,
     data_dir_size: 0,
+    backup_controller_error: None,
     storage: None,
     pubky_drive: None,
     backup_control_tx: None,
@@ -109,6 +112,8 @@ pub struct AppState {
     next_sync_time: u64,
     /// Size of data stored for current pubky in bytes
     data_dir_size: u64,
+    /// Error message if backup controller failed, None if running normally
+    backup_controller_error: Option<String>,
     #[serde(skip)]
     storage: Option<Arc<Storage>>,
     #[serde(skip)]
@@ -234,13 +239,6 @@ async fn backup_controller_begin() -> Result<(), String> {
         .clone()
         .ok_or_else(|| BackupAppError::internal(anyhow!("Pubky not available in AppState")))?;
 
-    if state.backup_control_tx.is_some() {
-        // This shouldnt happen in production builds.
-        // We dont panic to allow for dev-mode automatic GUI updating which cause forms to restart without having done correct startup or cleanup steps.
-        warn!("Backup controller task is already running");
-        return Ok(());
-    }
-
     let (backup_control_tx, backup_control_rx) = broadcast::channel(5);
     state.backup_control_tx = Some(backup_control_tx);
 
@@ -256,6 +254,7 @@ async fn backup_controller_close() -> Result<(), String> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
+    state.backup_controller_error = None;
 
     if let Some(control_tx) = state.backup_control_tx.take() {
         let _ = control_tx.send(BackupControllerMessage::Cancel);
@@ -344,7 +343,15 @@ async fn backup_controller(
                         // Sync complete
                     }
                     Err(e) => {
-                        error!("Sync batch failed: {}", e);
+                        error!("Critical sync batch failure - terminating backup controller: {}", e);
+                        set_sync_status(false);
+
+                        // Set error message so frontend can detect failure and show alert
+                        if let Ok(mut state) = APP_STATE.lock() {
+                            state.backup_control_tx = None;
+                            state.backup_controller_error = Some(format!("Critical sync batch failure: {}", e));
+                        }
+                        return;
                     }
                 }
 
@@ -396,7 +403,7 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<Contr
 
             if num_events > 0 {
                 // Process those events
-                process_events(events_response.events(), pubky).await?;
+                process_events(events_response.events()?, pubky).await?;
 
                 // Store new cursor
                 storage
@@ -415,8 +422,11 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<Contr
             }
         }
         Err(e) => {
-            error!("Sync fetch failed: {}", e);
-            Err(anyhow!("Sync fetch failed: {}", e))
+            error!("Sync events fetch failed: {}", e);
+            storage
+                .write_error(pubky, &"/events/", &format!("Fetch failed: {}", e))
+                .await?;
+            Err(e)
         }
     }
 }
@@ -428,22 +438,26 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str) -> Result<()> {
     for event_info in events {
         // Skip events for other pubkys
         // TODO: Filter server-side
-        if !event_info.url.contains(pubky) {
+        if !event_info.url.starts_with(&format!("pubky://{}/", pubky)) {
             continue;
         }
         match event_info.operation.as_str() {
             "PUT" => {
                 debug!("Processing PUT event for: {}", event_info.url);
-                let data_vec = fetch_data_for_url(&event_info.url).await?;
-
-                // Skip storing empty data (404 responses)
-                if !data_vec.is_empty() {
-                    storage.write(&event_info.url, data_vec).await?;
-                } else {
-                    info!(
-                        "404 response: Skipping storage of empty data for {}",
-                        event_info.url
-                    );
+                match fetch_data_for_url(&event_info.url).await {
+                    Ok(data_vec) => {
+                        // Skip storing empty data (404 responses)
+                        if !data_vec.is_empty() {
+                            storage.write(&event_info.url, data_vec).await?;
+                        }
+                    }
+                    Err(e) => {
+                        // Log fetch errors and continue processing other events
+                        storage
+                            .write_error(pubky, &event_info.url, &format!("Fetch failed: {}", e))
+                            .await?;
+                        warn!("Failed to fetch data for {}: {}", event_info.url, e);
+                    }
                 }
             }
             "DEL" => {
@@ -471,19 +485,26 @@ async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>> {
     }
 
     let pubky_drive = get_or_create_pubky_drive()?;
+    let pubky_path =
+        PubkyPath::from_str(url).map_err(|_| anyhow!("Invalid pubky URL format: {}", url))?;
 
-    let response = match pubky_drive
-        .get(PubkyPath::from_str(url).map_err(|_| anyhow!("Invalid pubky URL format: {}", url))?)
-        .await
+    let response = match retry_with_backoff(|| async {
+        pubky_drive
+            .get(pubky_path.clone())
+            .await
+            .map_err(|e| anyhow!("{}", e))
+    })
+    .await
     {
         Ok(response) => response,
         Err(e) => {
-            let error_msg = format!("{}", e);
-            // Treat 404s and "not found" errors as empty results, not failures
-            if error_msg.contains("404") || error_msg.to_lowercase().contains("not found") {
+            // TODO: Is it correct that 404s are returned as Error rather than Ok response with status = 404?
+            let error_str = e.to_string();
+            if error_str.contains("404") || error_str.to_lowercase().contains("not found") {
+                info!("404 response: Returning empty data for {}", url);
                 return Ok(Vec::new());
             }
-            return Err(anyhow!("Failed to fetch data for PUT event {}: {}", url, e));
+            return Err(anyhow!("Failed to fetch data for {}: {}", url, e));
         }
     };
 
@@ -640,7 +661,7 @@ mod tests {
         let test_url_1 = format!("pubky://{}/pub/posts/001", test_pubky);
         let test_url_2 = format!("pubky://{}/pub/profile", test_pubky);
         let test_url_unknown = format!("pubky://{}/pub/unknown", test_pubky);
-        let other_pubky_url = "pubky://other_pubky/pub/posts/001";
+        let other_pubky_url = format!("pubky://other_pubky/pub/posts/001");
 
         let events = vec![
             EventInfo {
@@ -653,7 +674,7 @@ mod tests {
             },
             EventInfo {
                 operation: "PUT".to_string(),
-                url: other_pubky_url.to_string(), // This should be skipped (wrong pubky)
+                url: other_pubky_url.clone(), // This should be skipped (wrong pubky)
             },
             EventInfo {
                 operation: "DEL".to_string(),
@@ -676,7 +697,7 @@ mod tests {
         let read_result_2 = storage.read(&test_url_2).await;
         assert!(read_result_2.is_ok());
         // The other pubky URL should not exist (was filtered out)
-        let read_result_other = storage.read(other_pubky_url).await;
+        let read_result_other = storage.read(&other_pubky_url).await;
         assert!(read_result_other.is_err());
         // The unknown operation URL should not exist (unknown operations ignored)
         let read_result_unknown = storage.read(&test_url_unknown).await;

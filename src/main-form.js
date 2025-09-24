@@ -8,6 +8,7 @@ export class MainForm {
     this.isSyncing = false
     this.nextSyncTime = 0
     this.dataSize = 0
+    this.backupControllerError = null
     this.statusInterval = null
     this.countdownInterval = null
   }
@@ -37,17 +38,7 @@ export class MainForm {
 
     // Back button
     document.getElementById('back-btn').addEventListener('click', async () => {
-      try {
-        await invoke('backup_controller_close')
-        this.stopStatusPolling()
-        this.stopCountdown()
-      } catch (error) {
-        console.error('Internal Error:', error)
-      }
-      document.querySelectorAll('.screen').forEach(screen => {
-        screen.classList.add('hidden')
-        })
-      document.getElementById('startup-screen').classList.remove('hidden')
+      await this.returnToStartup()
     })
 
     // Force sync button
@@ -71,6 +62,7 @@ export class MainForm {
       this.isSyncing = data.is_syncing
       this.nextSyncTime = data.next_sync_time
       this.dataSize = data.data_dir_size || 0
+      this.backupControllerError = data.backup_controller_error
       this.setHeader()
       this.updateSyncStatus()
       this.updateBackupSize()
@@ -127,6 +119,7 @@ export class MainForm {
       const newIsSyncing = data.is_syncing
       const newNextSyncTime = data.next_sync_time
       const newDataSize = data.data_dir_size || 0
+      const newBackupControllerError = data.backup_controller_error
 
       // Status
       if (newIsSyncing !== this.isSyncing) {
@@ -143,6 +136,15 @@ export class MainForm {
       if (newDataSize !== this.dataSize) {
         this.dataSize = newDataSize
         this.updateBackupSize()
+      }
+
+      // Backup controller error
+      if (newBackupControllerError !== this.backupControllerError) {
+        this.backupControllerError = newBackupControllerError
+        if (this.backupControllerError) {
+          alert(`Internal Error: ${this.backupControllerError}`)
+          this.returnToStartup()
+        }
       }
     } catch (error) {
       console.error('Error fetching status:', error)
@@ -221,6 +223,28 @@ export class MainForm {
       }
     } else {
       countdownElement.textContent = '0s'
+    }
+  }
+
+  async returnToStartup() {
+    try {
+      // Try to stop backup controller, but don't fail if it's already stopped
+      try {
+        await invoke('backup_controller_close')
+      } catch (closeError) {
+        console.log('Backup controller already stopped:', closeError)
+      }
+      
+      this.stopStatusPolling()
+      this.stopCountdown()
+
+      // Navigate back to startup screen
+      document.querySelectorAll('.screen').forEach(screen => {
+        screen.classList.add('hidden')
+      })
+      document.getElementById('startup-screen').classList.remove('hidden')
+    } catch (error) {
+      console.error('Error returning to startup:', error)
     }
   }
 }
