@@ -322,7 +322,7 @@ async fn backup_controller(
                 // Do not attempt sync if currently syncing
                 if let Ok(state) = APP_STATE.lock() {
                     if state.is_syncing {
-                        return;
+                        continue;
                     }
                 } else {
                     error!("Failed to acquire app state lock");
