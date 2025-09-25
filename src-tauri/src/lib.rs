@@ -29,11 +29,15 @@ use crate::utils::retry_with_backoff;
 const SYNC_INTERVAL_SECONDS: u64 = 30;
 
 /// Custom error types. Only these should be exposed to the front-end.
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum BackupAppError {
-    Internal(anyhow::Error),
+    #[error("Internal error: {0}")]
+    Internal(#[from] anyhow::Error),
+    #[error("Failed to find Homeserver for pubky")]
     HomeserverNotFound,
+    #[error("Failed to find data for pubky")]
     DataNotFound,
+    #[error("Invalid pubky format: {0}")]
     InvalidPubkyFormat(String),
 }
 
@@ -43,22 +47,9 @@ impl BackupAppError {
     }
 
     pub fn lock_failed() -> Self {
-        Self::Internal(anyhow!("Failed to acquire lock"))
+        Self::Internal(anyhow::anyhow!("Failed to acquire lock"))
     }
 }
-
-impl std::fmt::Display for BackupAppError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BackupAppError::Internal(err) => write!(f, "Internal error: {}", err),
-            BackupAppError::HomeserverNotFound => write!(f, "Failed to find Homeserver for pubky"),
-            BackupAppError::DataNotFound => write!(f, "Failed to find data for pubky"),
-            BackupAppError::InvalidPubkyFormat(msg) => write!(f, "Invalid pubky format: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for BackupAppError {}
 
 impl From<BackupAppError> for String {
     fn from(err: BackupAppError) -> String {
