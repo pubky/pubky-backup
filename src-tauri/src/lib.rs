@@ -294,9 +294,10 @@ async fn backup_controller(
         }
     };
 
+    // Calculate initial data-dir size for this pubky
+    let data_dir_size = storage.calculate_pubky_size(&pubky).await;
     if let Ok(mut state) = APP_STATE.lock() {
-        // Calculate and store initial data-dir size for this pubky
-        state.data_dir_size = storage.calculate_pubky_size(&pubky);
+        state.data_dir_size = data_dir_size;
     }
 
     loop {
@@ -394,7 +395,7 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<Contr
                     .await?;
 
                 // Calculate and store the data-dir size for this pubky after a batch processed
-                let size = storage.calculate_pubky_size(pubky);
+                let size = storage.calculate_pubky_size(pubky).await;
                 if let Ok(mut state) = APP_STATE.lock() {
                     state.data_dir_size = size;
                 }

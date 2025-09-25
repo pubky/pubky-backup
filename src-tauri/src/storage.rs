@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use futures_lite::StreamExt;
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
 use pubky::ResourcePath;
@@ -19,7 +20,6 @@ pub fn get_data_directory() -> Result<PathBuf> {
 
 pub struct Storage {
     operator: Operator,
-    data_dir: PathBuf,
 }
 
 impl Storage {
@@ -42,12 +42,11 @@ impl Storage {
     }
 
     pub fn with_root(root_dir: &str) -> Result<Self> {
-        let data_dir = PathBuf::from(root_dir);
         let builder = Fs::default().root(root_dir);
         let operator = Operator::new(builder)?
             .layer(opendal::layers::LoggingLayer::default())
             .finish();
-        Ok(Storage { operator, data_dir })
+        Ok(Storage { operator })
     }
 
     /// Convert pubky URL to safe file path
@@ -166,13 +165,15 @@ impl Storage {
     }
 
     /// Calculate the total size of data stored for a specific pubky
-    pub fn calculate_pubky_size(&self, pubky: &str) -> u64 {
-        let pubky_path = self.data_dir.join(pubky);
-        if !pubky_path.exists() {
-            return 0;
-        }
+    pub async fn calculate_pubky_size(&self, pubky: &str) -> u64 {
+        // Ensure path ends with / for directory listing
+        let path = if pubky.ends_with('/') {
+            pubky.to_string()
+        } else {
+            format!("{}/", pubky)
+        };
 
-        match calculate_dir_size(&pubky_path) {
+        match self.calculate_dir_size_opendal(&path).await {
             Ok(size) => size,
             Err(e) => {
                 error!("Failed to calculate data size for pubky {}: {}", pubky, e);
@@ -180,26 +181,46 @@ impl Storage {
             }
         }
     }
-}
 
-/// Recursively calculate the size of a directory
-fn calculate_dir_size(dir: &Path) -> Result<u64> {
-    let mut total_size = 0u64;
+    /// Recursively calculate directory size
+    async fn calculate_dir_size_opendal(&self, path: &str) -> Result<u64> {
+        let mut total_size = 0u64;
 
-    if dir.is_dir() {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                total_size += calculate_dir_size(&path)?;
-            } else if path.is_file() {
-                total_size += entry.metadata()?.len();
+        // Check if directory exists first
+        match self.operator.stat(path).await {
+            Ok(metadata) => {
+                if !metadata.is_dir() {
+                    return Ok(0);
+                }
+            }
+            Err(_) => {
+                return Ok(0); // Directory doesn't exist, return 0 size
             }
         }
-    }
 
-    Ok(total_size)
+        let mut entries = self.operator.lister_with(path).recursive(true).await?;
+        while let Some(entry) = entries.next().await {
+            match entry {
+                Ok(entry) => {
+                    let metadata = entry.metadata();
+
+                    if metadata.is_file() {
+                        // Get actual file size using stat() since lister metadata.content_length() returns 0
+                        let size = match self.operator.stat(entry.path()).await {
+                            Ok(file_metadata) => file_metadata.content_length(),
+                            Err(_) => metadata.content_length(), // Fallback to original metadata
+                        };
+                        total_size += size;
+                    }
+                }
+                Err(e) => {
+                    error!("Error listing entry: {}", e);
+                    return Err(e.into());
+                }
+            }
+        }
+        Ok(total_size)
+    }
 }
 
 #[cfg(test)]
@@ -253,7 +274,6 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let temp_path = temp_dir.path().to_str().expect("Failed to get temp path");
         let storage = Storage::with_root(temp_path).expect("Failed to create storage");
-
         // Test path traversal attack - should fail
         let malicious_url = "pubky://../../etc/passwd";
         let result = storage.url_to_path(malicious_url);
