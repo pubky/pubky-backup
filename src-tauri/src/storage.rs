@@ -23,17 +23,37 @@ impl Storage {
         Ok(Storage { operator })
     }
 
-    /// Convert pubky URL to file path by stripping the "pubky://" prefix
+    /// Convert pubky URL to safe file path by stripping the "pubky://" prefix and sanitising
     fn url_to_path(&self, pubky_url: &str) -> Result<String> {
-        pubky_url
+        let path = pubky_url
             .strip_prefix("pubky://")
-            .map(|path| path.to_string())
-            .ok_or_else(|| anyhow::anyhow!("Invalid pubky URL format: {}", pubky_url))
+            .ok_or_else(|| anyhow::anyhow!("Invalid pubky URL format: {}", pubky_url))?;
+
+        let sanitized = Path::new(path)
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(name) => name.to_str().map(|s| s.to_string()),
+                _ => None, // Filter out "..", ".", and other non-normal components
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+
+        if sanitized.is_empty() {
+            return Err(anyhow::anyhow!("Invalid path in pubky URL: {}", pubky_url));
+        }
+
+        Ok(sanitized)
     }
 
     /// Write data to storage using pubky URL path
     pub async fn write(&self, pubky_url: &str, data: Vec<u8>) -> Result<()> {
-        let file_path = self.url_to_path(pubky_url)?;
+        let file_path = match self.url_to_path(pubky_url) {
+            Ok(path) => path,
+            Err(e) => {
+                let _ = self.write_error(pubky_url, &format!("Invalid URL path: {}", e)).await;
+                return Ok(());
+            }
+        };
         self.operator
             .write(&file_path, data)
             .await
@@ -43,7 +63,13 @@ impl Storage {
 
     /// Delete data from storage using pubky URL path
     pub async fn delete(&self, pubky_url: &str) -> Result<()> {
-        let file_path = self.url_to_path(pubky_url)?;
+        let file_path = match self.url_to_path(pubky_url) {
+            Ok(path) => path,
+            Err(e) => {
+                let _ = self.write_error(pubky_url, &format!("Invalid URL path: {}", e)).await;
+                return Ok(());
+            }
+        };
         self.operator
             .delete(&file_path)
             .await
@@ -54,7 +80,13 @@ impl Storage {
     /// Read data from storage using pubky URL path
     #[allow(dead_code)]
     pub async fn read(&self, pubky_url: &str) -> Result<Vec<u8>> {
-        let file_path = self.url_to_path(pubky_url)?;
+        let file_path = match self.url_to_path(pubky_url) {
+            Ok(path) => path,
+            Err(e) => {
+                let _ = self.write_error(pubky_url, &format!("Invalid URL path: {}", e)).await;
+                return Ok(Vec::new());
+            }
+        };
         let data = self
             .operator
             .read(&file_path)
@@ -95,24 +127,24 @@ impl Storage {
 
     /// Write error to error log file
     /// TODO: write_append mode?
-    pub async fn write_error(&self, pubky: &str, url: &str, error_msg: &str) -> Result<()> {
-        let error_log_path = format!("{}/error.log", pubky);
+    pub async fn write_error(&self, url: &str, error_msg: &str) -> Result<()> {
+        let error_log_path = "error.log";
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
         let log_entry = format!("[{}] Failed to fetch {}: {}\n", timestamp, url, error_msg);
 
         // Append to existing error log or create new one
-        let existing_content = match self.operator.read(&error_log_path).await {
+        let existing_content = match self.operator.read(error_log_path).await {
             Ok(data) => String::from_utf8_lossy(&data.to_vec()).to_string(),
             Err(_) => String::new(),
         };
 
         self.operator
             .write(
-                &error_log_path,
+                error_log_path,
                 format!("{}{}", existing_content, log_entry),
             )
             .await
-            .with_context(|| format!("Failed to write error log for {}", pubky))?;
+            .with_context(|| "Failed to write error log".to_string())?;
         Ok(())
     }
 

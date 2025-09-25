@@ -425,7 +425,7 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<Contr
         Err(e) => {
             error!("Sync events fetch failed: {}", e);
             storage
-                .write_error(pubky, &"/events/", &format!("Fetch failed: {}", e))
+                .write_error(&"/events/", &format!("Fetch failed: {}", e))
                 .await?;
             Err(e)
         }
@@ -453,7 +453,7 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str, storage: Arc<Storag
                     Err(e) => {
                         // Log fetch errors and continue processing other events
                         storage
-                            .write_error(pubky, &event_info.url, &format!("Fetch failed: {}", e))
+                            .write_error(&event_info.url, &format!("Fetch failed: {}", e))
                             .await?;
                         warn!("Failed to fetch data for {}: {}", event_info.url, e);
                     }
