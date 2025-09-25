@@ -419,9 +419,19 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str, storage: Arc<Storag
     for event_info in events {
         // Skip events for other pubkys
         // TODO: Filter server-side
-        if !event_info.url.starts_with(&format!("pubky://{}/", pubky)) {
+        let resource = match PubkyResource::from_str(&event_info.url) {
+            Ok(resource) => resource,
+            Err(e) => {
+                let _ = storage
+                    .write_error(&event_info.url, &format!("Invalid URL path: {}", e))
+                    .await;
+                continue;
+            }
+        };
+        if resource.owner.to_string() != pubky {
             continue;
         }
+
         match event_info.operation.as_str() {
             "PUT" => {
                 debug!("Processing PUT event for: {}", event_info.url);

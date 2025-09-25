@@ -85,7 +85,7 @@ pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse> {
 
     let client = crate::get_or_create_http_client()?;
     let url = format!(
-        "https://_pubky.{pubky}/events/?limit={}&cursor={}",
+        "pubky://{pubky}/events/?limit={}&cursor={}",
         EVENTS_LIMIT, cursor
     );
 

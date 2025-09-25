@@ -2,26 +2,52 @@ use anyhow::{Context, Result};
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
 use pubky::ResourcePath;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const DATA_DIR: &str = "../.pubky-backup";
+const DATA_DIR_NAME: &str = ".pubky-backup";
 const CURSOR_FILENAME: &str = "cursor";
+
+pub fn get_data_directory() -> Result<PathBuf> {
+    match dirs::home_dir() {
+        Some(home) => Ok(home.join(DATA_DIR_NAME)),
+        None => {
+            error!("Failed to find home directory, using current directory");
+            Ok(PathBuf::from(DATA_DIR_NAME))
+        }
+    }
+}
 
 pub struct Storage {
     operator: Operator,
+    data_dir: PathBuf,
 }
 
 impl Storage {
     pub fn new() -> Result<Self> {
-        Self::with_root(DATA_DIR)
+        let data_dir = get_data_directory()?;
+        // Ensure the directory exists
+        std::fs::create_dir_all(&data_dir)
+            .with_context(|| format!("Failed to create data directory: {:?}", data_dir))?;
+        Self::with_root(&data_dir.to_string_lossy())
+    }
+
+    // To be used later
+    #[allow(dead_code)]
+    pub fn new_with_path(data_dir: impl AsRef<Path>) -> Result<Self> {
+        let data_dir = data_dir.as_ref().join(DATA_DIR_NAME);
+        // Ensure the directory exists
+        std::fs::create_dir_all(&data_dir)
+            .with_context(|| format!("Failed to create data directory: {:?}", data_dir))?;
+        Self::with_root(&data_dir.to_string_lossy())
     }
 
     pub fn with_root(root_dir: &str) -> Result<Self> {
+        let data_dir = PathBuf::from(root_dir);
         let builder = Fs::default().root(root_dir);
         let operator = Operator::new(builder)?
             .layer(opendal::layers::LoggingLayer::default())
             .finish();
-        Ok(Storage { operator })
+        Ok(Storage { operator, data_dir })
     }
 
     /// Convert pubky URL to safe file path
@@ -141,7 +167,7 @@ impl Storage {
 
     /// Calculate the total size of data stored for a specific pubky
     pub fn calculate_pubky_size(&self, pubky: &str) -> u64 {
-        let pubky_path = Path::new(DATA_DIR).join(pubky);
+        let pubky_path = self.data_dir.join(pubky);
         if !pubky_path.exists() {
             return 0;
         }
