@@ -28,7 +28,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
-pubky = "0.6.0-rc.2"
+pubky = { git = "https://github.com/pubky/pubky-core", branch = "refactor/breaking-pubky-client" }
 opendal = { version = "0.54.0", features = ["services-fs"] }
 log = "0.4.28"
 env_logger = "0.11.8"

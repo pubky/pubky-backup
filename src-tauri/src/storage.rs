@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
+use pubky::ResourcePath;
 use std::path::Path;
 
 const DATA_DIR: &str = "../.pubky-backup";
@@ -23,26 +24,13 @@ impl Storage {
         Ok(Storage { operator })
     }
 
-    /// Convert pubky URL to safe file path by stripping the "pubky://" prefix and sanitising
+    /// Convert pubky URL to safe file path
     fn url_to_path(&self, pubky_url: &str) -> Result<String> {
         let path = pubky_url
             .strip_prefix("pubky://")
             .ok_or_else(|| anyhow::anyhow!("Invalid pubky URL format: {}", pubky_url))?;
-
-        let sanitized = Path::new(path)
-            .components()
-            .filter_map(|component| match component {
-                std::path::Component::Normal(name) => name.to_str().map(|s| s.to_string()),
-                _ => None, // Filter out "..", ".", and other non-normal components
-            })
-            .collect::<Vec<_>>()
-            .join("/");
-
-        if sanitized.is_empty() {
-            return Err(anyhow::anyhow!("Invalid path in pubky URL: {}", pubky_url));
-        }
-
-        Ok(sanitized)
+        // Parse into ResourcePath for sanitisation
+        Ok(ResourcePath::parse(path)?.as_str().to_owned())
     }
 
     /// Write data to storage using pubky URL path
@@ -50,7 +38,9 @@ impl Storage {
         let file_path = match self.url_to_path(pubky_url) {
             Ok(path) => path,
             Err(e) => {
-                let _ = self.write_error(pubky_url, &format!("Invalid URL path: {}", e)).await;
+                let _ = self
+                    .write_error(pubky_url, &format!("Invalid URL path: {}", e))
+                    .await;
                 return Ok(());
             }
         };
@@ -66,7 +56,9 @@ impl Storage {
         let file_path = match self.url_to_path(pubky_url) {
             Ok(path) => path,
             Err(e) => {
-                let _ = self.write_error(pubky_url, &format!("Invalid URL path: {}", e)).await;
+                let _ = self
+                    .write_error(pubky_url, &format!("Invalid URL path: {}", e))
+                    .await;
                 return Ok(());
             }
         };
@@ -83,7 +75,9 @@ impl Storage {
         let file_path = match self.url_to_path(pubky_url) {
             Ok(path) => path,
             Err(e) => {
-                let _ = self.write_error(pubky_url, &format!("Invalid URL path: {}", e)).await;
+                let _ = self
+                    .write_error(pubky_url, &format!("Invalid URL path: {}", e))
+                    .await;
                 return Ok(Vec::new());
             }
         };
@@ -139,10 +133,7 @@ impl Storage {
         };
 
         self.operator
-            .write(
-                error_log_path,
-                format!("{}{}", existing_content, log_entry),
-            )
+            .write(error_log_path, format!("{}{}", existing_content, log_entry))
             .await
             .with_context(|| "Failed to write error log".to_string())?;
         Ok(())
@@ -229,5 +220,17 @@ mod tests {
         // Verify the data no longer exists
         let read_after_delete = storage.operator.read(expected_path).await;
         assert!(read_after_delete.is_err());
+    }
+
+    #[test]
+    fn test_url_to_path_sanitisation() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path().to_str().expect("Failed to get temp path");
+        let storage = Storage::with_root(temp_path).expect("Failed to create storage");
+
+        // Test path traversal attack - should fail
+        let malicious_url = "pubky://../../etc/passwd";
+        let result = storage.url_to_path(malicious_url);
+        assert!(result.is_err(), "Path traversal URL should be rejected");
     }
 }

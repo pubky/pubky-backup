@@ -4,7 +4,7 @@ mod utils;
 
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
-use pubky::{global::global_client, Pkdns, PubkyDrive, PubkyHttpClient, PubkyPath, PublicKey};
+use pubky::{Pkdns, PubkyHttpClient, PubkyResource, PublicKey, PublicStorage};
 use serde::Serialize;
 
 use std::{
@@ -91,7 +91,6 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     data_dir_size: 0,
     backup_controller_error: None,
     storage: None,
-    pubky_drive: None,
     backup_control_tx: None,
     app_handle: None,
     http_client: None,
@@ -117,8 +116,6 @@ pub struct AppState {
     backup_controller_error: Option<String>,
     #[serde(skip)]
     storage: Option<Arc<Storage>>,
-    #[serde(skip)]
-    pubky_drive: Option<PubkyDrive>,
     #[serde(skip)]
     backup_control_tx: Option<broadcast::Sender<BackupControllerMessage>>,
     #[serde(skip)]
@@ -154,21 +151,6 @@ fn get_or_create_storage() -> Result<Arc<Storage>> {
     Ok(state.storage.clone().unwrap())
 }
 
-fn get_or_create_pubky_drive() -> Result<PubkyDrive> {
-    let mut state = APP_STATE
-        .lock()
-        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?;
-
-    if state.pubky_drive.is_none() {
-        let client =
-            global_client().map_err(|e| anyhow!("Failed to create pubky client: {}", e))?;
-        let drive = PubkyDrive::public_with_client(&client);
-        state.pubky_drive = Some(drive);
-    }
-
-    Ok(state.pubky_drive.clone().unwrap())
-}
-
 /// Take a pubky, verify and add to State ready for usage.
 #[tauri::command]
 async fn init_app_state(pubky_str: &str) -> Result<(), String> {
@@ -186,24 +168,24 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
         .map_err(|e| BackupAppError::InvalidPubkyFormat(e.to_string()))?;
 
     // Check pubky is discoverable
-    let client = get_or_create_http_client().map_err(BackupAppError::internal)?;
-    let homeserver_pubky_str = Pkdns::with_client(&client)
-        .get_homeserver(&pubky)
+    let homeserver_pubky_str = Pkdns::new()
+        .map_err(BackupAppError::internal)?
+        .get_homeserver_of(&pubky)
         .await
         .ok_or_else(|| BackupAppError::HomeserverNotFound)?;
 
     // Check Pubky has /pub/ data on Homeserver
-    let pubky_drive = get_or_create_pubky_drive().map_err(BackupAppError::internal)?;
+    let pubky_storage = PublicStorage::new().map_err(BackupAppError::internal)?;
 
-    let path = PubkyPath::new(Some(pubky.clone()), "/pub/").map_err(BackupAppError::internal)?;
+    let path = PubkyResource::new(pubky.clone(), "/pub/").map_err(BackupAppError::internal)?;
 
     // TODO: We should check the pub key has data with exists(), but currently incorrectly returns 401 (https://github.com/pubky/pubky-core/issues/236)
-    // if !pubky_drive.exists(path.clone()).await.map_err(|e| format!("Internal error: {}", e))? {
+    // if !pubky_storage.exists(path.clone()).await.map_err(|e| format!("Internal error: {}", e))? {
     //     return Err(format!("Failed to find data for pubky"));
     // }
 
     // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
-    if let Err(e) = pubky_drive.get(path).await {
+    if let Err(e) = pubky_storage.get(path).await {
         error!("Failed to get pubky data: {}", e);
         return Err(BackupAppError::DataNotFound.into());
     }
@@ -484,7 +466,8 @@ async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>> {
     }
 
     let response = match retry_with_backoff(|| async {
-        get_or_create_pubky_drive()?
+        PublicStorage::new()
+            .map_err(BackupAppError::internal)?
             .get(url)
             .await
             .map_err(|e| anyhow!("{}", e))

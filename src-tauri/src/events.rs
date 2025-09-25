@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use log::warn;
-use reqwest::{self, Method};
+use pubky::Method;
 use serde::Deserialize;
 
 const EVENTS_LIMIT: u32 = 1000;
