@@ -176,8 +176,7 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     // }
 
     // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
-    if let Err(e) = pubky_storage.get(path).await {
-        error!("Failed to get pubky data: {}", e);
+    if let Err(_) = pubky_storage.get(path).await {
         return Err(BackupAppError::DataNotFound.into());
     }
     info!("Pubky is valid for Backup: {}", pubky);
@@ -196,6 +195,23 @@ async fn fetch_state() -> Result<AppState, String> {
     match APP_STATE.lock() {
         Ok(state) => Ok(state.clone()),
         Err(_) => Err(BackupAppError::lock_failed().into()),
+    }
+}
+
+/// Get list of previously used pubky keys that have data stored
+#[tauri::command]
+async fn get_previous_pubky_keys() -> Result<Vec<String>, String> {
+    let storage = match get_or_create_storage() {
+        Ok(storage) => storage,
+        Err(e) => {
+            return Err(BackupAppError::internal(e).into());
+        }
+    };
+
+    // List directories in the data directory to find existing pubky keys
+    match storage.list_pubky_directories().await {
+        Ok(keys) => Ok(keys),
+        Err(e) => Err(BackupAppError::internal(e).into()),
     }
 }
 
@@ -606,6 +622,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             init_app_state,
             fetch_state,
+            get_previous_pubky_keys,
             backup_controller_begin,
             backup_controller_close,
             force_sync_now

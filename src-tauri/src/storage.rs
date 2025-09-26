@@ -2,8 +2,11 @@ use anyhow::{Context, Result};
 use futures_lite::StreamExt;
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
-use pubky::ResourcePath;
-use std::path::{Path, PathBuf};
+use pubky::{PublicKey, ResourcePath};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 const DATA_DIR_NAME: &str = ".pubky-backup";
 const CURSOR_FILENAME: &str = "cursor";
@@ -180,6 +183,18 @@ impl Storage {
                 0
             }
         }
+    }
+
+    /// List directories in the storage root to find previously backed-up public keys
+    pub async fn list_pubky_directories(&self) -> Result<Vec<String>> {
+        let mut keys = Vec::new();
+        for entry in self.operator.list("").await? {
+            let path = entry.path();
+            if entry.metadata().is_dir() && PublicKey::from_str(path).is_ok() {
+                keys.push(path.trim_end_matches('/').to_string());
+            }
+        }
+        Ok(keys)
     }
 
     /// Recursively calculate directory size

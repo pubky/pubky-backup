@@ -19,6 +19,7 @@ export class GreetForm {
   async init() {
     this.bindEvents()
     await this.checkDevMode()
+    await this.loadPreviousKeys()
   }
 
   bindEvents() {
@@ -76,6 +77,41 @@ export class GreetForm {
       }
     } catch (error) {
       console.error('Error checking dev mode:', error)
+    }
+  }
+
+  async loadPreviousKeys() {
+    const pubkyInput = document.getElementById('pubky-input')
+
+    try {
+      const previousKeys = await invoke('get_previous_pubky_keys')
+      const datalist = document.getElementById('previous-keys')
+
+      // Clear existing options
+      datalist.innerHTML = ''
+
+      if (previousKeys && previousKeys.length > 0) {
+        previousKeys.forEach(key => {
+          const option = document.createElement('option')
+          option.value = key
+          datalist.appendChild(option)
+        })
+
+        if (pubkyInput.value === '') {
+          pubkyInput.placeholder = 'Select previous key or enter new one...'
+        }
+
+        console.log(`Loaded ${previousKeys.length} previous keys`)
+      } else {
+        // No previous keys found, display example key
+        pubkyInput.placeholder = 'g1b6wp8bhhxt...'
+      }
+    } catch (error) {
+      console.error('Error loading previous keys:', error)
+      // If we can't load previous keys just use the default placeholder
+      if (pubkyInput.value === '') {
+        pubkyInput.placeholder = 'g1b6wp8bhhxt...'
+      }
     }
   }
 }
