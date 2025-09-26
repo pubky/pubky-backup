@@ -595,12 +595,10 @@ pub fn run() {
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "show" => {
                         let windows = app.webview_windows();
-                        windows
-                            .values()
-                            .next()
-                            .expect("sorry, no window found")
-                            .set_focus()
-                            .expect("can't Bring Window to Focus");
+                        if let Some(window) = windows.values().next() {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                     }
                     "hide" => {
                         let windows = app.webview_windows();
