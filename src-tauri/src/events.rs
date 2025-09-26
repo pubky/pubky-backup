@@ -1,3 +1,4 @@
+use crate::BackupAppError;
 use anyhow::{anyhow, Result};
 use log::warn;
 use pubky::Method;
@@ -77,24 +78,32 @@ impl EventsResponse {
 pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse> {
     if crate::APP_STATE
         .lock()
-        .map_err(|_| anyhow!("Failed to acquire app state lock"))?
+        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?
         .developer_mode
     {
         return get_mock_events_response(cursor);
     }
 
-    let client = crate::get_or_create_http_client()?;
-    let url = format!(
-        "pubky://{pubky}/events/?limit={}&cursor={}",
-        EVENTS_LIMIT, cursor
-    );
+    let base_url = format!("pubky://{}/events/", pubky);
+    let url = reqwest::Url::parse_with_params(
+        &base_url,
+        &[
+            ("limit", EVENTS_LIMIT.to_string()),
+            ("cursor", cursor.to_string()),
+        ],
+    )
+    .map_err(|e| anyhow!("Failed to build URL: {}", e))?;
 
-    let response = crate::retry_with_backoff(|| async {
-        client
-            .request(Method::GET, &url)
-            .send()
-            .await
-            .map_err(|e| anyhow!("Failed to fetch events data for {}: {}", url, e))
+    let response = crate::retry_with_backoff(|| {
+        let url_str = url.to_string();
+        async move {
+            let client = pubky::global_client().map_err(BackupAppError::internal)?;
+            client
+                .request(Method::GET, &url_str)
+                .send()
+                .await
+                .map_err(|e| anyhow!("Failed to fetch events data for {}: {}", url_str, e))
+        }
     })
     .await?;
 

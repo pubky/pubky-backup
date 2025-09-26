@@ -34,12 +34,21 @@ where
                     }
                 }
 
-                return Ok(response);
+                // Check if response is successful
+                if response.status().is_success() {
+                    return Ok(response);
+                } else {
+                    return Err(anyhow!(
+                        "Request to {} failed with status: {}",
+                        response.url().as_str(),
+                        response.status()
+                    ));
+                }
             }
             Err(e) => {
                 let error_msg = format!("{}", e);
 
-                // Extract URL from error message for better logging
+                // Try find url context for the error message
                 let url_info = if let Some(start) = error_msg.find("https://") {
                     let url_part = &error_msg[start..];
                     if let Some(end) = url_part.find(' ') {

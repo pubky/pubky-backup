@@ -10,6 +10,7 @@ use std::{
 
 const DATA_DIR_NAME: &str = ".pubky-backup";
 const CURSOR_FILENAME: &str = "cursor";
+const ERROR_LOG_FILNAME: &str = "error.log";
 
 pub fn get_data_directory() -> Result<PathBuf> {
     match dirs::home_dir() {
@@ -150,18 +151,20 @@ impl Storage {
     /// Write error to error log file
     /// TODO: write_append mode?
     pub async fn write_error(&self, url: &str, error_msg: &str) -> Result<()> {
-        let error_log_path = "error.log";
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
         let log_entry = format!("[{}] Failed to fetch {}: {}\n", timestamp, url, error_msg);
 
         // Append to existing error log or create new one
-        let existing_content = match self.operator.read(error_log_path).await {
+        let existing_content = match self.operator.read(ERROR_LOG_FILNAME).await {
             Ok(data) => String::from_utf8_lossy(&data.to_vec()).to_string(),
             Err(_) => String::new(),
         };
 
         self.operator
-            .write(error_log_path, format!("{}{}", existing_content, log_entry))
+            .write(
+                ERROR_LOG_FILNAME,
+                format!("{}{}", existing_content, log_entry),
+            )
             .await
             .with_context(|| "Failed to write error log".to_string())?;
         Ok(())
