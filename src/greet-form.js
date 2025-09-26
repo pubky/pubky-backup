@@ -97,10 +97,6 @@ export class GreetForm {
           datalist.appendChild(option)
         })
 
-        if (pubkyInput.value === '') {
-          pubkyInput.placeholder = 'Select previous key or enter new one...'
-        }
-
         console.log(`Loaded ${previousKeys.length} previous keys`)
       } else {
         // No previous keys found, display example key

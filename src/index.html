@@ -9,11 +9,12 @@
     <!-- Startup Screen -->
     <div id="startup-screen" class="screen">
       <main class="container">
-        <div id="startup-dev-indicator" class="dev-indicator hidden">
-          <span>🔧 Developer Mode</span>
+        <div class="header-box box">
+          <div id="startup-dev-indicator" class="dev-indicator hidden">
+            <span>🔧 Developer Mode</span>
+          </div>
         </div>
-        <h1>Pubky Backup</h1>
-        <div id="startup-form" class="form-box">
+        <div id="startup-form" class="form-box box">
           <p>Insert your Pubky public key:</p>
           <input
             id="pubky-input"
@@ -25,7 +26,10 @@
           <datalist id="previous-keys">
             <!-- Options populated dynamically -->
           </datalist>
-          <button id="continue-btn" class="standard-btn">Continue to App <span id="continue-spinner" class="spinner hidden">◐</span></button>
+          <div>
+            <!-- Add spinner to both sides to centre label - Sorry.-->
+            <button id="continue-btn" class="button-container standard-btn"><span class="spinner" style="visibility: hidden;">◐</span>Continue<span id="continue-spinner" class="spinner hidden">◐</span></button>
+          </div>
         </div>
       </main>
     </div>
@@ -33,12 +37,14 @@
     <!-- Main App Screen -->
     <div id="app-screen" class="screen hidden">
       <main class="container">
-        <div id="dev-indicator" class="dev-indicator hidden">
-          <span>🔧 Developer Mode</span>
+        <div class="header-box box">
+          <button id="back-btn" class="back-btn">Back</button>
+          <div id="dev-indicator" class="dev-indicator hidden">
+            <span>🔧 Developer Mode</span>
+          </div>
         </div>
-        <button id="back-btn" class="back-btn">Back</button>
-        <div id="backup-header" class="form-box hidden">
-          <h2>Pubky: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
+        <div id="main-form" class="form-box box hidden">
+          <h2>Public Key: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
           <h2>Homeserver: <span id="homeserver-display"></span> <button id="copy-homeserver" class="copy-btn" title="Copy full homeserver">📋</button></h2>
           <div id="sync-status" class="sync-status">
             <span id="status-text">Synced</span>
@@ -46,7 +52,7 @@
             <span id="status-tick" class="tick hidden">✓</span>
           </div>
           <div id="backup-size" class="backup-size">Current Backup size: <span id="backup-size-value">--</span></div>
-          <div id="sync-controls" class="sync-controls">
+          <div id="button-container" class="button-container">
             <div id="countdown-display" class="countdown">Next sync in: <span id="countdown-timer">--</span></div>
             <button id="force-sync-btn" class="standard-btn">Force sync Now</button>
           </div>

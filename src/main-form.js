@@ -68,7 +68,7 @@ export class MainForm {
       this.startCountdown()
     } catch (error) {
       console.error('Error loading initial state:', error)
-      document.getElementById('backup-header').classList.add('hidden')
+      document.getElementById('main-form').classList.add('hidden')
     }
   }
 
@@ -77,7 +77,7 @@ export class MainForm {
   }
 
   setHeader() {
-    const backupHeader = document.getElementById('backup-header')
+    const backupHeader = document.getElementById('main-form')
     const pubkyDisplay = document.getElementById('pubky-display')
     const homeserverDisplay = document.getElementById('homeserver-display')
     if (this.pubky && this.homeserver) {
@@ -154,7 +154,7 @@ export class MainForm {
     const statusSpinner = document.getElementById('status-spinner')
     const statusTick = document.getElementById('status-tick')
     const syncStatus = document.getElementById('sync-status')
-    const syncControls = document.getElementById('sync-controls')
+    const syncControls = document.getElementById('button-container')
 
     if (this.isSyncing) {
       statusText.textContent = 'Syncing...'

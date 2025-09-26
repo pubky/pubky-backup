@@ -15,26 +15,32 @@
 }
 
 .container {
-  margin: 0 auto;
-  padding: 2em 1em;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
   align-items: center;
   text-align: center;
-  max-width: 600px;
-  min-height: 100vh;
+  position: relative;
 }
 
 h1 {
   text-align: center;
 }
 
-input,
-button {
-  border-radius: 8px;
+input {
   border: 1px solid transparent;
-  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  color: #0f0f0f;
+  background-color: #ffffff;
+  transition: border-color 0.25s;
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
+  padding: 0.8em 1em;
+}
+
+button {
+  border: 1px solid transparent;
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
@@ -56,30 +62,34 @@ button:active {
   background-color: #e8e8e8;
 }
 
-input,
-button {
-  outline: none;
-}
-
 .screen {
   width: 100%;
-  height: 100vh;
+  height: auto;
 }
 
 .hidden {
   display: none !important;
 }
 
-.standard-btn {
+.spinner.hidden {
+  visibility: hidden !important;
+  display: inline-block !important;
+}
+
+.box .standard-btn {
   background-color: #646cff;
   color: white;
-  border: none;
+  /* border: 1px solid #646cff; */
   padding: 0.8em 1.2em;
   font-size: 1em;
   font-weight: 500;
   border-radius: 6px;
   cursor: pointer;
-  min-width: 120px;
+  min-width: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
 }
 .standard-btn:hover {
   background-color: #535bf2;
@@ -89,34 +99,46 @@ button {
 }
 
 
+.box {
+  background-color: #f6f6f6;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  max-width: 600px;
+  text-align: center;
+  box-sizing: border-box;
+  padding: 0;
+}
+
+.box * {
+  box-sizing: border-box;
+  margin: 0.1em;
+}
+
+.header-box {
+  display: flex;
+  height: auto;
+  min-height: 1em;
+  text-align: left;
+  background-color: transparent;
+  border: none;
+  align-self: flex-start;
+  margin: 0em 1em 0.5em 1em;
+}
 
 .dev-indicator {
-  position: fixed;
-  top: 10px;
-  right: 10px;
   background-color: #ff6b35;
   color: white;
-  padding: 0.5em 1em;
   border-radius: 6px;
   font-size: 0.85em;
   font-weight: 600;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
 }
 
 .back-btn {
-  position: fixed;
-  top: 10px;
-  left: 10px;
   background-color: #646cff;
   color: white;
-  padding: 0.5em 1em;
   border-radius: 6px;
   font-size: 0.85em;
   font-weight: 600;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
-  border: none;
   cursor: pointer;
 }
 
@@ -124,34 +146,24 @@ button {
   background-color: #535bf2;
 }
 
-.form-box {
-  margin: 0.5em auto;
-  padding: 1.5em;
-  background-color: #f0f0f0;
-  border-radius: 8px;
-  border: 1px solid #ddd;
-  max-width: 600px;
-  text-align: center;
-  box-sizing: border-box;
-}
 
-.form-box * {
-  box-sizing: border-box;
+.form-box {
+  width: 350px;
+  height: 250px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
 }
 
 .form-box .sync-status,
-.form-box .sync-controls,
+.form-box .button-container,
 .form-box h2 {
   align-items: center;
-  min-height: 2.5em;
 }
 
-.form-box > * {
-  margin: 1em 0;
-}
 
 .form-box h2 {
-  margin: 0.5em 0;
   font-size: 1em;
   display: flex;
   align-items: center;
@@ -159,39 +171,25 @@ button {
   gap: 0.5em;
 }
 
-.form-box p {
-  margin: 0;
-}
-
 .form-box input {
-  margin: 1em 0;
   max-width: 100%;
   width: min(300px, 100%);
-  text-align: center;
+  text-align: left;
 }
 
 .form-box button {
-  margin: 1em 0 0 0;
   max-width: 100%;
 }
 
 .form-box .copy-btn {
-  margin: 0;
-  align-self: center;
-}
-
-.form-box .standard-btn {
-  margin: 0;
   align-self: center;
 }
 
 .copy-btn {
-  padding: 0.3em 0.5em;
   font-size: 0.8em;
   min-width: auto;
   border: 1px solid #ccc;
   background-color: #fff;
-  margin-left: 0.5em;
 }
 
 .copy-btn:hover {
@@ -200,15 +198,11 @@ button {
 }
 
 .sync-status {
-  margin-top: 1em;
-  padding: 0.8em 1em;
   border-radius: 6px;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-weight: 400;
   gap: 0.5em;
   transition: all 0.3s ease;
+  padding: 0.5em
 }
 
 .sync-status.synced {
@@ -235,13 +229,13 @@ button {
   display: inline-block;
 }
 
-.sync-controls {
-  margin-top: 1em;
+.button-container {
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: center;
   gap: 1em;
+  margin-top: 0.5em;
 }
 
 .backup-size {
