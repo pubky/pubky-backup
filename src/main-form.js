@@ -54,8 +54,7 @@ export class MainForm {
 
   async loadStateOnInit() {
     try {
-      const stateMsg = await invoke('fetch_state')
-      const data = JSON.parse(stateMsg)
+      const data = await invoke('fetch_state')
       this.pubky = data.pubky
       this.homeserver = data.homeserver
       this.developerMode = data.developer_mode
@@ -114,8 +113,7 @@ export class MainForm {
 
   async fetchAndUpdateStatus() {
     try {
-      const stateMsg = await invoke('fetch_state')
-      const data = JSON.parse(stateMsg)
+      const data = await invoke('fetch_state')
       const newIsSyncing = data.is_syncing
       const newNextSyncTime = data.next_sync_time
       const newDataSize = data.data_dir_size || 0

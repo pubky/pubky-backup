@@ -67,8 +67,7 @@ export class GreetForm {
 
   async checkDevMode() {
     try {
-      const stateMsg = await invoke('fetch_state')
-      const data = JSON.parse(stateMsg)
+      const data = await invoke('fetch_state')
       const devIndicator = document.getElementById('startup-dev-indicator')
 
       if (data.developer_mode && devIndicator) {

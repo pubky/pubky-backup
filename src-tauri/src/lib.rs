@@ -89,7 +89,7 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
 
 /// AppState is Tauri's Rust back-end State.
 /// Here we provide an interface for the front-end and manage other application tasks (eg. The Backup task)
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct AppState {
     /// This session's pubky
     pubky: Option<String>,
@@ -190,12 +190,11 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Serialise data in State for usage in front-end
+/// Fetch application state for usage in front-end
 #[tauri::command]
-async fn fetch_state() -> Result<String, String> {
+async fn fetch_state() -> Result<AppState, String> {
     match APP_STATE.lock() {
-        Ok(state) => serde_json::to_string(&*state)
-            .map_err(|e| BackupAppError::internal(anyhow!("Serialisation error: {}", e)).into()),
+        Ok(state) => Ok(state.clone()),
         Err(_) => Err(BackupAppError::lock_failed().into()),
     }
 }
