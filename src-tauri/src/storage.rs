@@ -99,7 +99,7 @@ impl Storage {
     }
 
     /// Read data from storage using pubky URL path
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn read(&self, pubky_url: &str) -> Result<Vec<u8>> {
         let file_path = match self.url_to_path(pubky_url) {
             Ok(path) => path,
@@ -167,6 +167,8 @@ impl Storage {
             )
             .await
             .with_context(|| "Failed to write error log".to_string())?;
+
+        error!("{}", log_entry);
         Ok(())
     }
 

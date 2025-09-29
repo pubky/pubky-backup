@@ -4,7 +4,7 @@ mod utils;
 
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
-use pubky::{Pkdns, PubkyHttpClient, PubkyResource, PublicKey, PublicStorage};
+use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
 use serde::Serialize;
 
 use std::{
@@ -84,7 +84,6 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     storage: None,
     backup_control_tx: None,
     app_handle: None,
-    http_client: None,
 });
 
 /// AppState is Tauri's Rust back-end State.
@@ -111,22 +110,6 @@ pub struct AppState {
     backup_control_tx: Option<broadcast::Sender<BackupControllerMessage>>,
     #[serde(skip)]
     app_handle: Option<AppHandle>,
-    #[serde(skip)]
-    http_client: Option<PubkyHttpClient>,
-}
-
-pub fn get_or_create_http_client() -> Result<PubkyHttpClient> {
-    let mut state = APP_STATE
-        .lock()
-        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?;
-
-    if state.http_client.is_none() {
-        let client =
-            PubkyHttpClient::new().map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
-        state.http_client = Some(client);
-    }
-
-    Ok(state.http_client.as_ref().unwrap().clone())
 }
 
 fn get_or_create_storage() -> Result<Arc<Storage>> {

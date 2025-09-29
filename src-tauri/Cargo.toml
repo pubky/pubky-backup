@@ -26,9 +26,9 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false }
 tokio = { version = "1", features = ["full"] }
-pubky = { git = "https://github.com/pubky/pubky-core", branch = "refactor/breaking-pubky-client" }
+pubky = "0.6.0-rc.4"
 opendal = { version = "0.54.0", features = ["services-fs"] }
 log = "0.4.28"
 env_logger = "0.11.8"
@@ -37,6 +37,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 futures-lite = "2.6.1"
 thiserror = "2.0.16"
+url = "2.5.7"
 
 [dev-dependencies]
 tempfile = "3.0"
