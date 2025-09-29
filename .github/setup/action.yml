@@ -1,0 +1,45 @@
+name: Shared Setup
+
+description: "Install Rust, checkout code and install dependencies."
+
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Cache Cargo Dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Install System Dependencies
+      # Tauri prerequisites - https://v2.tauri.app/start/prerequisites/#linux
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          curl \
+          wget \
+          file \
+          libxdo-dev \
+          libssl-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          libwebkit2gtk-4.1-dev
+      shell: bash
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: 1.89
+        profile: minimal
+        components: clippy, rustfmt
+        override: true
+

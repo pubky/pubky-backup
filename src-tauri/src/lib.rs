@@ -159,7 +159,7 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     // }
 
     // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
-    if let Err(_) = pubky_storage.get(path).await {
+    if (pubky_storage.get(path).await).is_err() {
         return Err(BackupAppError::DataNotFound.into());
     }
     info!("Pubky is valid for Backup: {}", pubky);
@@ -367,7 +367,7 @@ async fn backup_controller(
 /// Process one batch of sync events
 /// Returns Ok(Continue) if more events are available, Ok(Break) if sync is complete, Err on failure
 async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<ControlFlow<(), ()>> {
-    let cursor = storage.read_cursor(&pubky).await?;
+    let cursor = storage.read_cursor(pubky).await?;
 
     match fetch_events(&cursor, pubky).await {
         Ok(events_response) => {
@@ -397,7 +397,7 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<Contr
         Err(e) => {
             error!("Sync events fetch failed: {}", e);
             storage
-                .write_error(&"/events/", &format!("Fetch failed: {}", e))
+                .write_error("/events/", &format!("Fetch failed: {}", e))
                 .await?;
             Err(e)
         }
@@ -501,7 +501,7 @@ fn get_mock_data_for_url(url: &str) -> Vec<u8> {
     if url.contains("/profile") {
         r#"{"name":"Mock User","bio":"This is mock profile data for development","avatar":"https://example.com/avatar.jpg"}"#.as_bytes().to_vec()
     } else if url.contains("/posts/") {
-        let post_id = url.split('/').last().unwrap_or("unknown");
+        let post_id = url.split('/').next_back().unwrap_or("unknown");
         format!(r#"{{"id":"{}","content":"This is mock post content for {}","timestamp":"2024-01-01T12:00:00Z","author":"Mock User"}}"#, post_id, post_id).as_bytes().to_vec()
     } else if url.contains("/follows") {
         r#"{"following":["pubky1","pubky2","pubky3"],"followers":["pubky4","pubky5"]}"#
@@ -637,10 +637,10 @@ mod tests {
         let storage =
             Arc::new(Storage::with_root(temp_path).expect("Failed to create test storage"));
 
-        let test_pubky = "test_pubky_123";
+        let test_pubky = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
         let test_url_1 = format!("pubky://{}/pub/posts/001", test_pubky);
         let test_url_2 = format!("pubky://{}/pub/profile", test_pubky);
-        let other_pubky_url = format!("pubky://other_pubky/pub/posts/001");
+        let other_pubky_url = "pubky://other_pubky/pub/posts/001".to_string();
 
         let events = vec![
             EventInfo {
