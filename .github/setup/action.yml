@@ -2,13 +2,16 @@ name: Shared Setup
 
 description: "Install Rust, checkout code and install dependencies."
 
+inputs:
+  rust-version:
+    description: 'Rust toolchain version'
+    required: false
+    default: '1.89'
+
 
 runs:
   using: "composite"
   steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
-
     - name: Cache Cargo Dependencies
       uses: actions/cache@v4
       with:
@@ -38,7 +41,7 @@ runs:
     - name: Install Rust
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: 1.89
+        toolchain: ${{ inputs.rust-version }}
         profile: minimal
         components: clippy, rustfmt
         override: true

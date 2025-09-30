@@ -27,8 +27,13 @@ cargo tauri dev -- -- --developer
 For executable build:
 
 ```
-cd src && npm run build
-cargo tauri bundle --bundles deb,app,dmg
+cargo tauri build
+```
+
+## Bundle
+
+```
+cargo tauri build --bundles deb,rpm,appimage
 ```
 
 ### Deb

@@ -1,0 +1,55 @@
+name: Build Artifacts
+
+on:
+  # This workflow is triggered every time a push is made to the main branch.
+  # Aka when a PR is merged.
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: "Build Release Bundles"
+    runs-on: ubuntu-latest
+    steps:
+        # Setup the environment
+      - uses: actions/checkout@v4      
+      - name: Setup Environment
+        uses: ./.github/setup
+        with:
+          rust-version: stable
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "2.8.4" --locked
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Extract version info from tauri.conf.json
+        id: tauri-info
+        run: |
+          PRODUCT_NAME=$(jq -r '.productName' src-tauri/tauri.conf.json)
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          echo "PRODUCT_NAME=${PRODUCT_NAME}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=${PRODUCT_NAME}-v${VERSION}-linux-amd64" >> $GITHUB_ENV
+
+      - name: Build Tauri App
+        run: cargo tauri build
+      - name: Gzip artifacts
+        run: |
+          cd src-tauri/target/release/
+          tar -czf "${ARTIFACT_NAME}.tar.gz" "$PRODUCT_NAME"
+      # Upload to Github
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: src-tauri/target/release/${{ env.ARTIFACT_NAME }}.tar.gz
+          if-no-files-found: error
+          overwrite: true
+
+    
