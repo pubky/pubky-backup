@@ -1,15 +1,17 @@
-name: Build Artifacts
+name: Build and Release
 
 on:
-  # This workflow is triggered every time a push is made to the main branch.
-  # Aka when a PR is merged.
   push:
     branches: [main]
+    tags:
+      - 'v*'
 
 jobs:
   build:
     name: "Build Release Bundles"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
         # Setup the environment
       - uses: actions/checkout@v4      
@@ -17,7 +19,6 @@ jobs:
         uses: ./.github/setup
         with:
           rust-version: stable
-
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "2.8.4" --locked
       - name: Setup Node.js
@@ -37,19 +38,23 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
           echo "ARTIFACT_NAME=${PRODUCT_NAME}-v${VERSION}-linux-amd64" >> $GITHUB_ENV
 
+      # Build and zip
       - name: Build Tauri App
         run: cargo tauri build
       - name: Gzip artifacts
         run: |
           cd src-tauri/target/release/
           tar -czf "${ARTIFACT_NAME}.tar.gz" "$PRODUCT_NAME"
-      # Upload to Github
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: src-tauri/target/release/${{ env.ARTIFACT_NAME }}.tar.gz
-          if-no-files-found: error
-          overwrite: true
 
-    
+      # If tag then create release
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: github.ref_type == 'tag'
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: ${{ env.PRODUCT_NAME }} v${{ env.VERSION }}
+          files: src-tauri/target/release/${{ env.ARTIFACT_NAME }}.tar.gz
+          generate_release_notes: true
+
