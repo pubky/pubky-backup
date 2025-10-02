@@ -2,13 +2,12 @@ name: 'Build and Release'
 
 on:
   push:
-    branches: [main, github_workflows_macos_targets]
+    branches: [main]
     tags:
       - 'v*'
 
 # This workflow will trigger a build on each push to the main branch 
 # And will create a release and upload built assets upon tag
-
 jobs:
   build:
     permissions:
@@ -60,7 +59,7 @@ jobs:
           VERSION=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # This step does most of the build and bundling work
+      # This step does the build and bundling work
       - uses: tauri-apps/tauri-action@v0.5.23
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
