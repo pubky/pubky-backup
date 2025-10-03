@@ -285,6 +285,27 @@ async fn force_sync_now() -> Result<(), String> {
     }
 }
 
+/// Get the data directory path as a string
+#[tauri::command]
+async fn get_data_dir_path() -> Result<String, String> {
+    storage::get_data_directory()
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|e| BackupAppError::internal(e).into())
+}
+
+/// Open the data directory in the system file manager
+#[tauri::command]
+async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let data_dir = storage::get_data_directory().map_err(|e| BackupAppError::internal(e))?;
+
+    app_handle
+        .opener()
+        .open_path(data_dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| BackupAppError::internal(anyhow!("Failed to open directory: {}", e)).into())
+}
+
 /// Main backup task controller:
 ///     1) Take a Public Key
 ///     2) Fetch and store all public data
@@ -633,7 +654,9 @@ pub fn run() {
             get_last_pubky,
             backup_controller_begin,
             backup_controller_close,
-            force_sync_now
+            force_sync_now,
+            get_data_dir_path,
+            open_data_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

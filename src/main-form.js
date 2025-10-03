@@ -2,15 +2,16 @@ import { invoke } from "@tauri-apps/api/core";
 
 export class MainForm {
   constructor() {
-    this.pubky = null;
-    this.homeserver = null;
-    this.developerMode = false;
-    this.isSyncing = false;
-    this.nextSyncTime = 0;
-    this.dataSize = 0;
-    this.backupControllerError = null;
-    this.statusInterval = null;
-    this.countdownInterval = null;
+    this.pubky = null
+    this.homeserver = null
+    this.developerMode = false
+    this.isSyncing = false
+    this.nextSyncTime = 0
+    this.dataSize = 0
+    this.dataDirPath = null
+    this.backupControllerError = null
+    this.statusInterval = null
+    this.countdownInterval = null
   }
 
   init() {
@@ -48,32 +49,41 @@ export class MainForm {
     });
 
     // Force sync button
-    document
-      .getElementById("force-sync-btn")
-      .addEventListener("click", async () => {
-        try {
-          await invoke("force_sync_now");
-          console.log("Force sync triggered");
-        } catch (error) {
-          console.error("Force sync failed:", error);
-        }
-      });
+    document.getElementById('force-sync-btn').addEventListener('click', async () => {
+      try {
+        await invoke('force_sync_now')
+        console.log('Force sync triggered')
+      } catch (error) {
+        console.error('Force sync failed:', error)
+      }
+    })
+
+    // Open data directory button
+    document.getElementById('open-data-dir').addEventListener('click', async () => {
+      try {
+        await invoke('open_data_dir')
+        console.log('Data directory opened')
+      } catch (error) {
+        console.error('Failed to open data directory:', error)
+      }
+    })
   }
 
   async loadStateOnInit() {
     try {
-      const data = await invoke("fetch_state");
-      this.pubky = data.pubky;
-      this.homeserver = data.homeserver;
-      this.developerMode = data.developer_mode;
-      this.isSyncing = data.is_syncing;
-      this.nextSyncTime = data.next_sync_time;
-      this.dataSize = data.data_dir_size || 0;
-      this.backupControllerError = data.backup_controller_error;
-      this.setHeader();
-      this.updateSyncStatus();
-      this.updateBackupSize();
-      this.startCountdown();
+      const data = await invoke('fetch_state')
+      this.pubky = data.pubky
+      this.homeserver = data.homeserver
+      this.developerMode = data.developer_mode
+      this.isSyncing = data.is_syncing
+      this.nextSyncTime = data.next_sync_time
+      this.dataSize = data.data_dir_size || 0
+      this.backupControllerError = data.backup_controller_error
+      this.setHeader()
+      this.updateSyncStatus()
+      this.updateBackupSize()
+      this.loadDataDirPath()
+      this.startCountdown()
     } catch (error) {
       console.error("Error loading initial state:", error);
       document.getElementById("main-form").classList.add("hidden");
@@ -184,6 +194,22 @@ export class MainForm {
   updateBackupSize() {
     const backupSizeValue = document.getElementById("backup-size-value");
     backupSizeValue.textContent = this.formatFileSize(this.dataSize);
+  }
+
+  async loadDataDirPath() {
+    try {
+      this.dataDirPath = await invoke('get_data_dir_path')
+      const dataDirValue = document.getElementById('data-dir-value')
+      if (this.dataDirPath) {
+        dataDirValue.textContent = this.dataDirPath
+      } else {
+        dataDirValue.textContent = '--'
+      }
+    } catch (error) {
+      console.error('Error loading data directory path:', error)
+      const dataDirValue = document.getElementById('data-dir-value')
+      dataDirValue.textContent = 'Error'
+    }
   }
 
   formatFileSize(bytes) {
