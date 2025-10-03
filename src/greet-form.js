@@ -1,112 +1,112 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from "@tauri-apps/api/core";
 
 export class GreetForm {
   constructor(onSuccess) {
-    this.onSuccess = onSuccess
+    this.onSuccess = onSuccess;
   }
 
   resetContinueButton() {
-    const continueBtn = document.getElementById('continue-btn')
-    const spinner = document.getElementById('continue-spinner')
+    const continueBtn = document.getElementById("continue-btn");
+    const spinner = document.getElementById("continue-spinner");
     if (continueBtn) {
-      continueBtn.disabled = false
+      continueBtn.disabled = false;
     }
     if (spinner) {
-      spinner.classList.add('hidden')
+      spinner.classList.add("hidden");
     }
   }
 
   async init() {
-    this.bindEvents()
-    await this.checkDevMode()
-    await this.loadPreviousKeys()
+    this.bindEvents();
+    await this.checkDevMode();
+    await this.loadPreviousKeys();
   }
 
   bindEvents() {
-    const continueBtn = document.getElementById('continue-btn')
-    const pubkyInput = document.getElementById('pubky-input')
+    const continueBtn = document.getElementById("continue-btn");
+    const pubkyInput = document.getElementById("pubky-input");
 
     // Clear placeholder on focus or input
-    pubkyInput.addEventListener('focus', () => {
-      pubkyInput.placeholder = ''
-    })
+    pubkyInput.addEventListener("focus", () => {
+      pubkyInput.placeholder = "";
+    });
 
-    pubkyInput.addEventListener('input', () => {
-      pubkyInput.placeholder = ''
-    })
+    pubkyInput.addEventListener("input", () => {
+      pubkyInput.placeholder = "";
+    });
 
-    continueBtn.addEventListener('click', async (e) => {
-      e.preventDefault()
-      const pubkyValue = pubkyInput.value.trim()
+    continueBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const pubkyValue = pubkyInput.value.trim();
 
       // Show loading state - show spinner
-      continueBtn.disabled = true
-      const spinner = document.getElementById('continue-spinner')
+      continueBtn.disabled = true;
+      const spinner = document.getElementById("continue-spinner");
       if (spinner) {
-        spinner.classList.remove('hidden')
+        spinner.classList.remove("hidden");
       }
 
       try {
-        await invoke('init_app_state', { pubkyStr: pubkyValue })
+        await invoke("init_app_state", { pubkyStr: pubkyValue });
 
         // Start backup task when transitioning to main form
-        await invoke('backup_controller_begin')
+        await invoke("backup_controller_begin");
 
-        this.onSuccess()
+        this.onSuccess();
 
         // Remove spinner after transitioning
-        this.resetContinueButton()
+        this.resetContinueButton();
       } catch (error) {
-        console.error('Internal Error:', error)
-        alert(`Error: ${error}`)
+        console.error("Internal Error:", error);
+        alert(`Error: ${error}`);
 
         // Restore button state on error
-        this.resetContinueButton()
+        this.resetContinueButton();
       }
-    })
+    });
   }
 
   async checkDevMode() {
     try {
-      const data = await invoke('fetch_state')
-      const devIndicator = document.getElementById('startup-dev-indicator')
+      const data = await invoke("fetch_state");
+      const devIndicator = document.getElementById("startup-dev-indicator");
 
       if (data.developer_mode && devIndicator) {
-        devIndicator.classList.remove('hidden')
-        console.log('Developer mode is enabled')
+        devIndicator.classList.remove("hidden");
+        console.log("Developer mode is enabled");
       }
     } catch (error) {
-      console.error('Error checking dev mode:', error)
+      console.error("Error checking dev mode:", error);
     }
   }
 
   async loadPreviousKeys() {
-    const pubkyInput = document.getElementById('pubky-input')
+    const pubkyInput = document.getElementById("pubky-input");
 
     try {
-      const previousKeys = await invoke('get_previous_pubky_keys')
-      const datalist = document.getElementById('previous-keys')
+      const previousKeys = await invoke("get_previous_pubky_keys");
+      const datalist = document.getElementById("previous-keys");
 
       // Clear existing options
-      datalist.innerHTML = ''
+      datalist.innerHTML = "";
 
       if (previousKeys && previousKeys.length > 0) {
-        previousKeys.forEach(key => {
-          const option = document.createElement('option')
-          option.value = key
-          datalist.appendChild(option)
-        })
+        previousKeys.forEach((key) => {
+          const option = document.createElement("option");
+          option.value = key;
+          datalist.appendChild(option);
+        });
 
-        console.log(`Loaded ${previousKeys.length} previous keys`)
+        console.log(`Loaded ${previousKeys.length} previous keys`);
       } else {
         // No previous keys found, display example key
-        pubkyInput.placeholder = 'g1b6wp8bhhxt...'
+        pubkyInput.placeholder = "g1b6wp8bhhxt...";
       }
     } catch (error) {
-      console.error('Error loading previous keys:', error)
+      console.error("Error loading previous keys:", error);
       // If we can't load previous keys just use the default placeholder
-      if (pubkyInput.value === '') {
-        pubkyInput.placeholder = 'g1b6wp8bhhxt...'
+      if (pubkyInput.value === "") {
+        pubkyInput.placeholder = "g1b6wp8bhhxt...";
       }
     }
   }

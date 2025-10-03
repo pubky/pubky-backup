@@ -98,7 +98,6 @@ button:active {
   background-color: #4c4bdb;
 }
 
-
 .box {
   background-color: #f6f6f6;
   border-radius: 8px;
@@ -146,7 +145,6 @@ button:active {
   background-color: #535bf2;
 }
 
-
 .form-box {
   width: 350px;
   height: 250px;
@@ -161,7 +159,6 @@ button:active {
 .form-box h2 {
   align-items: center;
 }
-
 
 .form-box h2 {
   font-size: 1em;
@@ -202,7 +199,7 @@ button:active {
   font-weight: 400;
   gap: 0.5em;
   transition: all 0.3s ease;
-  padding: 0.5em
+  padding: 0.5em;
 }
 
 .sync-status.synced {
@@ -251,7 +248,6 @@ button:active {
   color: #666;
   font-weight: 500;
 }
-
 
 @keyframes spin {
   from {
@@ -323,5 +319,4 @@ button:active {
   .countdown {
     color: #aaa;
   }
-
 }

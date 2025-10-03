@@ -68,20 +68,19 @@ where
                 };
 
                 // Handle HTTP transport errors - retry with standard delay
-                if error_msg.contains("HTTP transport error")
+                if (error_msg.contains("HTTP transport error")
                     || error_msg.contains("error sending request")
                     || error_msg.to_lowercase().contains("connection")
-                    || error_msg.to_lowercase().contains("network")
+                    || error_msg.to_lowercase().contains("network"))
+                    && attempt < MAX_RETRIES
                 {
-                    if attempt < MAX_RETRIES {
-                        warn!(
-                            "Request to {} failed on attempt {} with transport error: {}, retrying...",
-                            url_info, attempt, e
-                        );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                        last_error = Some(e);
-                        continue;
-                    }
+                    warn!(
+                        "Request to {} failed on attempt {} with transport error: {}, retrying...",
+                        url_info, attempt, e
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    last_error = Some(e);
+                    continue;
                 }
 
                 // For other errors, don't retry

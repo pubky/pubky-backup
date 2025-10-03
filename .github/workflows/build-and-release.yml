@@ -1,0 +1,122 @@
+name: 'Build and Release'
+
+on:
+  push:
+    branches: 
+      - main
+    tags:
+      - 'v*'
+
+# This workflow will trigger a build on each push to the main branch 
+# And will create a release and upload built assets upon tag
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+          # TODO: We do not have arm64 runners. This must be manually built via cross-compile
+          # - platform: 'ubuntu-22.04-arm64'
+          #   args: ''
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
+          targets: ${{ (matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin') || '' }}
+
+      - name: Install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04' # This must match the platform value defined above.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # Use the git tag as-is (e.g., v0.1.0)
+            VERSION="${{ github.ref_name }}"
+          else
+            # Fallback to Cargo.toml for non-tag builds (add 'v' prefix)
+            VERSION="v$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and bundle Tauri App
+        uses: tauri-apps/tauri-action@v0.5.23
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+
+      - name: Rename Linux artifacts
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: cp src-tauri/target/release/bundle/appimage/*.AppImage pubky-backup-${{ steps.version.outputs.version }}-linux-amd64.AppImage
+
+      - name: Rename Windows artifacts
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: cp src-tauri/target/release/bundle/msi/*.msi pubky-backup-${{ steps.version.outputs.version }}-windows-amd64.msi
+
+      - name: Rename macOS artifacts
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          if [[ "${{ matrix.args }}" == *"aarch64"* ]]; then
+            cp src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz pubky-backup-${{ steps.version.outputs.version }}-macos-arm64.app.tar.gz
+          else
+            cp src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz pubky-backup-${{ steps.version.outputs.version }}-macos-amd64.app.tar.gz
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-${{ matrix.args != '' && matrix.args || 'default' }}
+          path: pubky-backup-*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          files: artifacts/**/pubky-backup-*
+          generate_release_notes: true
+          draft: true
