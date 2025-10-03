@@ -2,6 +2,7 @@
 
 A basic multi-platform desktop application which takes a `pubky` and downloads all of it's files to a local directory.
 
+The idea is for this to be a lightweight background process which continually keeps a Pubky User's local backup in-sync with it's published data. 
 
 ## Development
 
@@ -10,6 +11,7 @@ Run development server:
 ```
 cargo tauri dev
 ```
+
 
 ### Development mode
 
@@ -32,20 +34,20 @@ cargo tauri build
 
 ## Bundle
 
-```
-cargo tauri build --bundles deb,rpm,appimage
-```
+We choose to bundle the following package formats for their portability and ease-of-use:  
 
-### Deb
+- `AppImage` for Linux
+- `app` for MacOS
+- `msi` for Windowns
 
-Install:
-```
-sudo dpkg -i */pubky-backup/src-tauri/target/release/bundle/deb/pubky-backup_0.1.0_amd64.deb
-```
-
-Run: 
-```
-pubky-backup
-```
+These are configured in `tauri.conf.json`.
 
 
+# Release Github Workflow
+
+Application Build and Github Release pipelines are triggered upon tag creation.
+
+
+---
+
+May the power ⚡ be with you. Powered by [pkarr](https://github.com/pubky/pkarr).

@@ -2,13 +2,10 @@ name: 'Build and Release'
 
 on:
   push:
-    branches: 
-      - main
     tags:
       - 'v*'
 
-# This workflow will trigger a build on each push to the main branch 
-# And will create a release and upload built assets upon tag
+# This workflow will trigger on tags to build and create a release
 jobs:
   build:
     strategy:
@@ -21,7 +18,7 @@ jobs:
             args: '--target x86_64-apple-darwin'
           - platform: 'ubuntu-22.04'
             args: ''
-          # TODO: We do not have arm64 runners. This must be manually built via cross-compile
+          # TODO: arm64 runners will become available once the repo is made public
           # - platform: 'ubuntu-22.04-arm64'
           #   args: ''
           - platform: 'windows-latest'

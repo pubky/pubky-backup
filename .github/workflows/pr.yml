@@ -23,8 +23,8 @@ jobs:
       - name: Build Project
         run: cd src-tauri && cargo build --verbose
 
-  rust-format:
-    name: Check Rust Format
+  formatting-and-tests:
+    name: Check formatting and run tests
     runs-on: ubuntu-latest
     needs: rust-build
     steps:
@@ -32,50 +32,26 @@ jobs:
       - name: Setup environment
         id: setup
         uses: ./.github/setup
+
       - name: Run Rustfmt (Code Formatting)
         run: cd src-tauri && cargo fmt --all -- --check
-
-  rust-clippy:
-    name: Check Clippy
-    runs-on: ubuntu-latest
-    needs: rust-build
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup environment
-        id: setup
-        uses: ./.github/setup
 
       - name: Run Clippy (Lint)
         run: cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings
 
-  rust-test:
-    name: Test Rust
-    runs-on: ubuntu-latest
-    needs: rust-build
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup environment
-        id: setup
-        uses: ./.github/setup
-      - name: Run Tests
+      - name: Run tests
         run: cd src-tauri && cargo test --verbose
-
-  js-format:
-    name: Check JS Code Format
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-
-      - name: Install dependencies
+  
+      - name: Install Node dependencies
         run: npm ci
-
+  
       - name: Check formatting
         run: npm run format:check
+
+
