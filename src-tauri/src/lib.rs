@@ -23,7 +23,6 @@ use tokio::sync::broadcast;
 use tokio::time;
 
 use crate::events::{fetch_events, EventInfo};
-use crate::storage::Storage;
 use crate::utils::retry_with_backoff;
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
@@ -105,20 +104,21 @@ pub struct AppState {
     /// Error message if backup controller failed, None if running normally
     backup_controller_error: Option<String>,
     #[serde(skip)]
-    storage: Option<Arc<Storage>>,
+    storage: Option<Arc<storage::AppStorage>>,
     #[serde(skip)]
     backup_control_tx: Option<broadcast::Sender<BackupControllerMessage>>,
     #[serde(skip)]
     app_handle: Option<AppHandle>,
 }
 
-fn get_or_create_storage() -> Result<Arc<Storage>> {
+fn get_or_create_storage() -> Result<Arc<storage::AppStorage>> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| anyhow!(BackupAppError::lock_failed()))?;
 
     if state.storage.is_none() {
-        let storage = Storage::new().map_err(|e| anyhow!("Failed to create storage: {}", e))?;
+        let storage =
+            storage::AppStorage::new().map_err(|e| anyhow!("Failed to create storage: {}", e))?;
         state.storage = Some(Arc::new(storage));
     }
 
@@ -288,9 +288,11 @@ async fn force_sync_now() -> Result<(), String> {
 /// Get the data directory path as a string
 #[tauri::command]
 async fn get_data_dir_path() -> Result<String, String> {
-    storage::get_data_directory()
-        .map(|path| path.to_string_lossy().to_string())
-        .map_err(|e| BackupAppError::internal(e).into())
+    let storage = get_or_create_storage().map_err(|e| BackupAppError::internal(e))?;
+    let backup_dir = storage
+        .get_backup_data_dir()
+        .map_err(|e| BackupAppError::internal(e))?;
+    Ok(backup_dir.to_string_lossy().to_string())
 }
 
 /// Open the data directory in the system file manager
@@ -298,11 +300,14 @@ async fn get_data_dir_path() -> Result<String, String> {
 async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
 
-    let data_dir = storage::get_data_directory().map_err(|e| BackupAppError::internal(e))?;
+    let storage = get_or_create_storage().map_err(|e| BackupAppError::internal(e))?;
+    let backup_dir = storage
+        .get_backup_data_dir()
+        .map_err(|e| BackupAppError::internal(e))?;
 
     app_handle
         .opener()
-        .open_path(data_dir.to_string_lossy().to_string(), None::<&str>)
+        .open_path(backup_dir.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| BackupAppError::internal(anyhow!("Failed to open directory: {}", e)).into())
 }
 
@@ -413,8 +418,11 @@ async fn backup_controller(
 
 /// Process one batch of sync events
 /// Returns Ok(Continue) if more events are available, Ok(Break) if sync is complete, Err on failure
-async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<ControlFlow<(), ()>> {
-    let cursor = storage.read_cursor(pubky).await?;
+async fn perform_sync_batch(
+    storage: &Arc<storage::AppStorage>,
+    pubky: &str,
+) -> Result<ControlFlow<(), ()>> {
+    let cursor = storage.read_cursor(&pubky).await?;
 
     match fetch_events(&cursor, pubky).await {
         Ok(events_response) => {
@@ -452,7 +460,11 @@ async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<Contr
 }
 
 /// Take a list of events and store the data of those which belong to a given pubky
-async fn process_events(events: Vec<EventInfo>, pubky: &str, storage: Arc<Storage>) -> Result<()> {
+async fn process_events(
+    events: Vec<EventInfo>,
+    pubky: &str,
+    storage: Arc<storage::AppStorage>,
+) -> Result<()> {
     for event_info in events {
         // Skip events for other pubkys
         // TODO: Filter server-side
@@ -683,9 +695,10 @@ mod tests {
         setup_test_app_state();
 
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let temp_path = temp_dir.path().to_str().expect("Failed to get temp path");
-        let storage =
-            Arc::new(Storage::with_root(temp_path).expect("Failed to create test storage"));
+        let storage = Arc::new(
+            storage::AppStorage::new_with_single_path(&temp_dir.path().to_path_buf())
+                .expect("Failed to create test storage"),
+        );
 
         let test_pubky = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
         let test_url_1 = format!("pubky://{}/pub/posts/001", test_pubky);
