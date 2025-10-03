@@ -17,9 +17,10 @@ export class GreetForm {
   }
 
   async init() {
-    this.bindEvents();
-    await this.checkDevMode();
-    await this.loadPreviousKeys();
+    this.bindEvents()
+    await this.checkDevMode()
+    await this.autoLoadLastPubky()
+    await this.loadPreviousKeys()
   }
 
   bindEvents() {
@@ -35,35 +36,35 @@ export class GreetForm {
       pubkyInput.placeholder = "";
     });
 
-    continueBtn.addEventListener("click", async (e) => {
-      e.preventDefault();
-      const pubkyValue = pubkyInput.value.trim();
+    continueBtn.addEventListener('click', async (e) => {
+      e.preventDefault()
+      const pubkyValue = pubkyInput.value.trim()
+      await this.initializeAndStart(pubkyValue)
+    })
+  }
 
-      // Show loading state - show spinner
-      continueBtn.disabled = true;
-      const spinner = document.getElementById("continue-spinner");
-      if (spinner) {
-        spinner.classList.remove("hidden");
-      }
+  // Load main-form, beginning backup process
+  async initializeAndStart(pubkyValue) {
+    const continueBtn = document.getElementById('continue-btn')
+    const spinner = document.getElementById('continue-spinner')
 
-      try {
-        await invoke("init_app_state", { pubkyStr: pubkyValue });
+    // Show loading spinner
+    continueBtn.disabled = true
+    if (spinner) {
+      spinner.classList.remove('hidden')
+    }
 
-        // Start backup task when transitioning to main form
-        await invoke("backup_controller_begin");
-
-        this.onSuccess();
-
-        // Remove spinner after transitioning
-        this.resetContinueButton();
-      } catch (error) {
-        console.error("Internal Error:", error);
-        alert(`Error: ${error}`);
-
-        // Restore button state on error
-        this.resetContinueButton();
-      }
-    });
+    try {
+      await invoke('init_app_state', { pubkyStr: pubkyValue })
+      await invoke('backup_controller_begin')
+      this.onSuccess()
+      this.resetContinueButton()
+    } catch (error) {
+      console.error('Internal Error:', error)
+      alert(`Error: ${error}`)
+      this.resetContinueButton()
+      throw error
+    }
   }
 
   async checkDevMode() {
@@ -80,6 +81,7 @@ export class GreetForm {
     }
   }
 
+  // Fetch list of keys previously used and provide as suggestions
   async loadPreviousKeys() {
     const pubkyInput = document.getElementById("pubky-input");
 
@@ -87,9 +89,7 @@ export class GreetForm {
       const previousKeys = await invoke("get_previous_pubky_keys");
       const datalist = document.getElementById("previous-keys");
 
-      // Clear existing options
-      datalist.innerHTML = "";
-
+      datalist.innerHTML = ''
       if (previousKeys && previousKeys.length > 0) {
         previousKeys.forEach((key) => {
           const option = document.createElement("option");
@@ -108,6 +108,26 @@ export class GreetForm {
       if (pubkyInput.value === "") {
         pubkyInput.placeholder = "g1b6wp8bhhxt...";
       }
+    }
+  }
+
+  // If a last_pubky exists then automatically move on to main-from
+  async autoLoadLastPubky() {
+    try {
+      const lastPubky = await invoke('get_last_pubky')
+      if (lastPubky) {
+        console.log('Auto-loading last used pubky:', lastPubky)
+        const pubkyInput = document.getElementById('pubky-input')
+        pubkyInput.value = lastPubky
+
+        try {
+          await this.initializeAndStart(lastPubky)
+        } catch (error) {
+          console.error('Internal Error:', error)
+        }
+      }
+    } catch (error) {
+      console.error('Error checking for last pubky:', error)
     }
   }
 }

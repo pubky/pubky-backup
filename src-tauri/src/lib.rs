@@ -128,7 +128,6 @@ fn get_or_create_storage() -> Result<Arc<Storage>> {
 /// Take a pubky, verify and add to State ready for usage.
 #[tauri::command]
 async fn init_app_state(pubky_str: &str) -> Result<(), String> {
-    // Check if developer mode is enabled and use mock data
     if let Ok(mut state) = APP_STATE.lock() {
         if state.developer_mode {
             state.pubky = Some("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y".to_string());
@@ -164,11 +163,22 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     }
     info!("Pubky is valid for Backup: {}", pubky);
 
-    let mut state = APP_STATE
-        .lock()
-        .map_err(|_| BackupAppError::lock_failed())?;
-    state.pubky = Some(pubky.to_string());
-    state.homeserver = Some(homeserver_pubky_str);
+    // scope block lock for implicit drop
+    {
+        let mut state = APP_STATE
+            .lock()
+            .map_err(|_| BackupAppError::lock_failed())?;
+        state.pubky = Some(pubky.to_string());
+        state.homeserver = Some(homeserver_pubky_str);
+    }
+
+    // Save the last used pubky to storage (non-critical operation)
+    get_or_create_storage()
+        .map_err(BackupAppError::internal)?
+        .write_last_pubky(pubky.to_string())
+        .await
+        .map_err(BackupAppError::internal)?;
+
     Ok(())
 }
 
@@ -194,6 +204,22 @@ async fn get_previous_pubky_keys() -> Result<Vec<String>, String> {
     // List directories in the data directory to find existing pubky keys
     match storage.list_pubky_directories().await {
         Ok(keys) => Ok(keys),
+        Err(e) => Err(BackupAppError::internal(e).into()),
+    }
+}
+
+/// Get the last used pubky from storage
+#[tauri::command]
+async fn get_last_pubky() -> Result<Option<String>, String> {
+    let storage = match get_or_create_storage() {
+        Ok(storage) => storage,
+        Err(e) => {
+            return Err(BackupAppError::internal(e).into());
+        }
+    };
+
+    match storage.read_last_pubky().await {
+        Ok(pubky) => Ok(pubky),
         Err(e) => Err(BackupAppError::internal(e).into()),
     }
 }
@@ -604,6 +630,7 @@ pub fn run() {
             init_app_state,
             fetch_state,
             get_previous_pubky_keys,
+            get_last_pubky,
             backup_controller_begin,
             backup_controller_close,
             force_sync_now

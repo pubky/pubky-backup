@@ -11,6 +11,7 @@ use std::{
 const DATA_DIR_NAME: &str = ".pubky-backup";
 const CURSOR_FILENAME: &str = "cursor";
 const ERROR_LOG_FILNAME: &str = "error.log";
+const LAST_PUBKY_FILENAME: &str = "last_pubky";
 
 pub fn get_data_directory() -> Result<PathBuf> {
     match dirs::home_dir() {
@@ -202,6 +203,24 @@ impl Storage {
         Ok(keys)
     }
 
+    pub async fn write_last_pubky(&self, pubky: String) -> Result<()> {
+        self.operator
+            .write(LAST_PUBKY_FILENAME, pubky.clone())
+            .await
+            .with_context(|| "Failed to write last used pubky")?;
+        Ok(())
+    }
+
+    pub async fn read_last_pubky(&self) -> Result<Option<String>> {
+        match self.operator.read(LAST_PUBKY_FILENAME).await {
+            Ok(data) => {
+                let pubky = String::from_utf8(data.to_vec())?;
+                Ok(Some(pubky))
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
     /// Recursively calculate directory size
     async fn calculate_dir_size_opendal(&self, path: &str) -> Result<u64> {
         let mut total_size = 0u64;
@@ -249,21 +268,29 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_cursor_read_write() {
+    async fn test_string_read_write_fns() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let temp_path = temp_dir.path().to_str().expect("Failed to get temp path");
         let storage = Storage::with_root(temp_path).expect("Failed to create storage");
+
+        // cursor read/write
         let test_cursor = "0033E867HX6FE";
         let test_pubky = "test_pubky";
-
         let write_result = storage
             .write_cursor(test_pubky, test_cursor.to_string())
             .await;
         assert!(write_result.is_ok());
-
         let read_result = storage.read_cursor(test_pubky).await;
         assert!(read_result.is_ok());
         assert_eq!(read_result.unwrap(), test_cursor);
+
+        // last_pubky read/write
+        let test_last_pubky = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y".to_string();
+        let write_result = storage.write_last_pubky(test_last_pubky.clone()).await;
+        assert!(write_result.is_ok());
+        let read_result = storage.read_last_pubky().await;
+        assert!(read_result.is_ok());
+        assert_eq!(read_result.unwrap(), Some(test_last_pubky));
     }
 
     #[tokio::test]
