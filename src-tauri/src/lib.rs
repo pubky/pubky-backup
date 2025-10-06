@@ -22,7 +22,7 @@ use tauri::{
 use tokio::sync::broadcast;
 use tokio::time;
 
-use crate::events::{fetch_events, EventInfo};
+use crate::events::{fetch_events, Event, Operation};
 use crate::utils::retry_with_backoff;
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
@@ -426,12 +426,12 @@ async fn perform_sync_batch(
 
     match fetch_events(&cursor, pubky).await {
         Ok(events_response) => {
-            let num_events = events_response.events.len();
+            let num_events = events_response.events().len();
             info!("Fetched {} events", num_events);
 
             if num_events > 0 {
                 // Process those events
-                process_events(events_response.events()?, pubky, storage.clone()).await?;
+                process_events(events_response.events(), pubky, storage.clone()).await?;
 
                 // Store new cursor
                 storage
@@ -461,51 +461,53 @@ async fn perform_sync_batch(
 
 /// Take a list of events and store the data of those which belong to a given pubky
 async fn process_events(
-    events: Vec<EventInfo>,
+    events: &[Event],
     pubky: &str,
     storage: Arc<storage::AppStorage>,
 ) -> Result<()> {
-    for event_info in events {
-        // Skip events for other pubkys
-        // TODO: Filter server-side
-        let resource = match PubkyResource::from_str(&event_info.url) {
-            Ok(resource) => resource,
-            Err(e) => {
-                let _ = storage
-                    .write_error(&event_info.url, &format!("Invalid URL path: {}", e))
-                    .await;
+    for event in events {
+        match event {
+            Event::Invalid { url, error } => {
+                // Log invalid events and continue
+                let _ = storage.write_error(url, error).await;
+                warn!("Invalid event: {} - {}", url, error);
                 continue;
             }
-        };
-        if resource.owner.to_string() != pubky {
-            continue;
-        }
+            Event::Valid {
+                operation,
+                url,
+                resource,
+            } => {
+                // Skip events for other pubkys
+                // TODO: Filter server-side
+                if resource.owner.to_string() != pubky {
+                    continue;
+                }
 
-        match event_info.operation.as_str() {
-            "PUT" => {
-                debug!("Processing PUT event for: {}", event_info.url);
-                match fetch_data_for_url(&event_info.url).await {
-                    Ok(data_vec) => {
-                        // Skip storing empty data (404 responses)
-                        if !data_vec.is_empty() {
-                            storage.write(&event_info.url, data_vec).await?;
+                match operation {
+                    Operation::Put => {
+                        debug!("Processing PUT event for: {}", url);
+                        match fetch_data_for_url(url).await {
+                            Ok(data_vec) => {
+                                // Skip storing empty data (404 responses)
+                                if !data_vec.is_empty() {
+                                    storage.write(url, data_vec).await?;
+                                }
+                            }
+                            Err(e) => {
+                                // Log fetch errors and continue processing other events
+                                storage
+                                    .write_error(url, &format!("Fetch failed: {}", e))
+                                    .await?;
+                                warn!("Failed to fetch data for {}: {}", url, e);
+                            }
                         }
                     }
-                    Err(e) => {
-                        // Log fetch errors and continue processing other events
-                        storage
-                            .write_error(&event_info.url, &format!("Fetch failed: {}", e))
-                            .await?;
-                        warn!("Failed to fetch data for {}: {}", event_info.url, e);
+                    Operation::Delete => {
+                        debug!("Processing DEL event for: {}", url);
+                        storage.delete(url).await?;
                     }
                 }
-            }
-            "DEL" => {
-                debug!("Processing DEL event for: {}", event_info.url);
-                storage.delete(&event_info.url).await?;
-            }
-            _ => {
-                return Err(anyhow!("Unknown event operation: {}", event_info.operation));
             }
         }
     }
@@ -677,7 +679,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::EventInfo;
     use std::sync::Once;
     use tempfile::TempDir;
 
@@ -701,53 +702,49 @@ mod tests {
         );
 
         let test_pubky = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
+        let other_pubky = "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo"; // Different valid pubky
         let test_url_1 = format!("pubky://{}/pub/posts/001", test_pubky);
         let test_url_2 = format!("pubky://{}/pub/profile", test_pubky);
-        let other_pubky_url = "pubky://other_pubky/pub/posts/001".to_string();
+        let other_pubky_url = format!("pubky://{}/pub/posts/001", other_pubky);
+        let invalid_url = "pubky://invalid/pub/posts/001".to_string();
+
+        fn make_valid_event(operation: Operation, url: String) -> Event {
+            let resource = PubkyResource::from_str(&url).expect("Test URL should be valid");
+            Event::Valid {
+                operation,
+                url,
+                resource,
+            }
+        }
 
         let events = vec![
-            EventInfo {
-                operation: "PUT".to_string(),
-                url: test_url_1.clone(),
-            },
-            EventInfo {
-                operation: "PUT".to_string(),
-                url: test_url_2.clone(),
-            },
-            EventInfo {
-                operation: "PUT".to_string(),
-                url: other_pubky_url.clone(), // This should be skipped (wrong pubky)
-            },
-            EventInfo {
-                operation: "DEL".to_string(),
-                url: test_url_1.clone(), // Delete the first URL
+            make_valid_event(Operation::Put, test_url_1.clone()),
+            make_valid_event(Operation::Put, test_url_2.clone()),
+            make_valid_event(Operation::Put, other_pubky_url.clone()), // This should be skipped (wrong pubky)
+            make_valid_event(Operation::Delete, test_url_1.clone()),   // Delete the first URL
+            Event::Invalid {
+                url: invalid_url.clone(),
+                error: "Invalid pubky".to_string(),
             },
         ];
 
-        let result = process_events(events, test_pubky, storage.clone()).await;
+        let result = process_events(&events, test_pubky, storage.clone()).await;
         assert!(result.is_ok(), "process_events should succeed");
 
         // The first URL should have been deleted, so it shouldn't exist
         let read_result_1 = storage.read(&test_url_1).await;
-        assert!(read_result_1.is_err());
+        assert!(read_result_1.is_err(), "First URL should be deleted");
+
         // The second URL should still exist (only PUT, no DEL)
         let read_result_2 = storage.read(&test_url_2).await;
-        assert!(read_result_2.is_ok());
+        assert!(read_result_2.is_ok(), "Second URL should exist");
+
         // The other pubky URL should not exist (was filtered out)
         let read_result_other = storage.read(&other_pubky_url).await;
-        assert!(read_result_other.is_err());
+        assert!(read_result_other.is_err(), "Other pubky URL should not exist");
 
-        // Test that unknown operations cause an error
-        let test_url_unknown = format!("pubky://{}/pub/unknown", test_pubky);
-        let unknown_events = vec![EventInfo {
-            operation: "UNKNOWN".to_string(),
-            url: test_url_unknown.clone(),
-        }];
-
-        let result = process_events(unknown_events, test_pubky, storage.clone()).await;
-        assert!(
-            result.is_err(),
-            "process_events should fail on unknown operation"
-        );
+        // The invalid URL should not exist (was logged as error)
+        let read_result_invalid = storage.read(&invalid_url).await;
+        assert!(read_result_invalid.is_err(), "Invalid URL should not exist");
     }
 }
