@@ -4,6 +4,21 @@ A basic multi-platform desktop application which takes a `pubky` and downloads a
 
 The idea is for this to be a lightweight background process which continually keeps a Pubky User's local backup in-sync with it's published data. 
 
+## Download and run
+
+You can find pre-built packages on the [release page](https://github.com/pubky/pubky-backup/releases).
+
+Once downloaded you'll need to set permissions for your OS to run these packages, Eg:
+
+#### Linux
+
+`chmod +x pubky-backup.AppImage`
+
+#### MacOS
+
+`xattr -dr com.apple.quarantine pubky-backup.app`
+
+
 ## Development
 
 Run development server:
