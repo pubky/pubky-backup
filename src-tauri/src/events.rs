@@ -15,7 +15,6 @@ pub enum Operation {
 pub enum Event {
     Valid {
         operation: Operation,
-        url: String,
         resource: PubkyResource,
     },
     Invalid {
@@ -49,7 +48,6 @@ impl Event {
         match PubkyResource::from_str(url_str) {
             Ok(resource) => Some(Event::Valid {
                 operation,
-                url: url_str.to_string(),
                 resource,
             }),
             Err(e) => Some(Event::Invalid {
@@ -145,7 +143,6 @@ fn get_mock_events_response(cursor: &str) -> Result<EventsResponse> {
         let resource = PubkyResource::from_str(&url).expect("Mock URL should be valid");
         Event::Valid {
             operation,
-            url,
             resource,
         }
     }
@@ -222,11 +219,13 @@ mod tests {
         match event {
             Event::Valid {
                 operation,
-                url,
                 resource,
             } => {
                 assert_eq!(operation, Operation::Put);
-                assert_eq!(url, "pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001");
+                assert_eq!(
+                    resource.to_string(),
+                    "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001"
+                );
                 assert_eq!(
                     resource.owner.to_string(),
                     "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y"
@@ -241,11 +240,13 @@ mod tests {
         match event {
             Event::Valid {
                 operation,
-                url,
                 resource,
             } => {
                 assert_eq!(operation, Operation::Delete);
-                assert_eq!(url, "pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/profile");
+                assert_eq!(
+                    resource.to_string(),
+                    "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/profile"
+                );
                 assert_eq!(
                     resource.owner.to_string(),
                     "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y"
@@ -260,7 +261,10 @@ mod tests {
         match event {
             Event::Invalid { url, error } => {
                 assert_eq!(url, "pubky://invalid_pubky/pub/posts/001");
-                assert!(error.contains("Invalid URL"), "Error should mention invalid URL");
+                assert!(
+                    error.contains("Invalid URL"),
+                    "Error should mention invalid URL"
+                );
             }
             Event::Valid { .. } => panic!("Invalid URL should create Invalid event"),
         }
@@ -271,24 +275,29 @@ PUT pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/002
 DEL pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/003
 cursor: 0033E867HX6FE"#;
 
-        let events_response = EventsResponse::from_response(response).expect("Should parse response");
+        let events_response =
+            EventsResponse::from_response(response).expect("Should parse response");
         assert_eq!(events_response.cursor, "0033E867HX6FE");
         assert_eq!(events_response.events().len(), 3);
         assert!(matches!(events_response.events()[0], Event::Valid { .. }));
         assert!(matches!(events_response.events()[2], Event::Valid { .. }));
         // Response with empty cursor value
         let response = "PUT pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001\ncursor: ";
-        let events_response = EventsResponse::from_response(response).expect("Should parse response");
+        let events_response =
+            EventsResponse::from_response(response).expect("Should parse response");
         assert_eq!(events_response.cursor, "");
         assert_eq!(events_response.events().len(), 1);
         // Response without cursor
-        let response = r#"PUT pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001"#;
-        let events_response = EventsResponse::from_response(response).expect("Should parse response");
+        let response =
+            r#"PUT pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001"#;
+        let events_response =
+            EventsResponse::from_response(response).expect("Should parse response");
         assert_eq!(events_response.cursor, "");
         assert_eq!(events_response.events().len(), 1);
         // Response with only cursor
         let response = "cursor: 0033E867HX6FE";
-        let events_response = EventsResponse::from_response(response).expect("Should parse cursor-only response");
+        let events_response =
+            EventsResponse::from_response(response).expect("Should parse cursor-only response");
         assert_eq!(events_response.cursor, "0033E867HX6FE");
         assert_eq!(events_response.events().len(), 0);
     }
@@ -296,14 +305,16 @@ cursor: 0033E867HX6FE"#;
     #[test]
     fn test_parse_invalid_operation() {
         // INVALID doesn't start with PUT or DEL, so it returns Event::Invalid
-        let line = "INVALID pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001";
+        let line =
+            "INVALID pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001";
         let event = Event::parse(line);
         assert!(
             matches!(event, Some(Event::Invalid { .. })),
             "Unknown operations should return Event::Invalid"
         );
         // PUTTTT begins with PUT but is invalid
-        let line = "PUTTTT pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001";
+        let line =
+            "PUTTTT pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001";
         let event = Event::parse(line);
         assert!(
             matches!(event, Some(Event::Invalid { .. })),
@@ -327,7 +338,6 @@ cursor: 0033E867HX6FE"#;
         );
     }
 
-
     #[test]
     fn test_events_response_with_invalid_events() {
         let response = r#"PUT pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/001
@@ -335,7 +345,8 @@ PUT pubky://invalid_pubky/pub/posts/002
 DEL pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/posts/003
 cursor: ABC123"#;
 
-        let events_response = EventsResponse::from_response(response).expect("Should parse response");
+        let events_response =
+            EventsResponse::from_response(response).expect("Should parse response");
         assert_eq!(events_response.cursor, "ABC123");
         assert_eq!(events_response.events().len(), 3);
 
@@ -354,6 +365,4 @@ cursor: ABC123"#;
         // Third event should be valid
         assert!(matches!(events_response.events()[2], Event::Valid { .. }));
     }
-
-
 }

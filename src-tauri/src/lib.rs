@@ -475,7 +475,6 @@ async fn process_events(
             }
             Event::Valid {
                 operation,
-                url,
                 resource,
             } => {
                 // Skip events for other pubkys
@@ -486,26 +485,28 @@ async fn process_events(
 
                 match operation {
                     Operation::Put => {
-                        debug!("Processing PUT event for: {}", url);
-                        match fetch_data_for_url(url).await {
+                        debug!("Processing PUT event for: {}", resource);
+                        match fetch_pubky_resource_data(resource).await {
                             Ok(data_vec) => {
                                 // Skip storing empty data (404 responses)
                                 if !data_vec.is_empty() {
-                                    storage.write(url, data_vec).await?;
+                                    storage.write(resource, data_vec).await?;
                                 }
                             }
                             Err(e) => {
                                 // Log fetch errors and continue processing other events
                                 storage
-                                    .write_error(url, &format!("Fetch failed: {}", e))
+                                    .write_error(
+                                        &resource.to_string(),
+                                        &format!("Fetch failed: {}", e),
+                                    )
                                     .await?;
-                                warn!("Failed to fetch data for {}: {}", url, e);
                             }
                         }
                     }
                     Operation::Delete => {
-                        debug!("Processing DEL event for: {}", url);
-                        storage.delete(url).await?;
+                        debug!("Processing DEL event for: {}", resource);
+                        storage.delete(resource).await?;
                     }
                 }
             }
@@ -517,19 +518,19 @@ async fn process_events(
 
 /// Fetch data for a URL, either from network or mock data
 /// TODO: Check if retry logic built-in to PubkyHttpClient
-async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>> {
+async fn fetch_pubky_resource_data(resource: &PubkyResource) -> Result<Vec<u8>> {
     if crate::APP_STATE
         .lock()
         .map_err(|_| anyhow!(BackupAppError::lock_failed()))?
         .developer_mode
     {
-        return Ok(get_mock_data_for_url(url));
+        return Ok(get_mock_data_for_url(&resource.to_string()));
     }
 
     let response = match retry_with_backoff(|| async {
         PublicStorage::new()
             .map_err(BackupAppError::internal)?
-            .get(url)
+            .get(resource)
             .await
             .map_err(|e| anyhow!("{}", e))
     })
@@ -540,17 +541,17 @@ async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>> {
             // TODO: Is it correct that 404s are returned as Error rather than Ok response with status = 404?
             let error_str = e.to_string();
             if error_str.contains("404") || error_str.to_lowercase().contains("not found") {
-                info!("404 response: Returning empty data for {}", url);
+                info!("404 response: Returning empty data for {}", resource);
                 return Ok(Vec::new());
             }
-            return Err(anyhow!("Failed to fetch data for {}: {}", url, e));
+            return Err(anyhow!("Failed to fetch data for {}: {}", resource, e));
         }
     };
 
     let data = response
         .bytes()
         .await
-        .map_err(|e| anyhow!("Failed to read response bytes for {}: {}", url, e))?;
+        .map_err(|e| anyhow!("Failed to read response bytes for {}: {}", resource, e))?;
 
     let data_vec = data.to_vec();
     debug!("Successfully fetched data: {} bytes", data_vec.len());
@@ -712,10 +713,13 @@ mod tests {
             let resource = PubkyResource::from_str(&url).expect("Test URL should be valid");
             Event::Valid {
                 operation,
-                url,
                 resource,
             }
         }
+
+        let test_resource_1 = PubkyResource::from_str(&test_url_1).unwrap();
+        let test_resource_2 = PubkyResource::from_str(&test_url_2).unwrap();
+        let other_resource = PubkyResource::from_str(&other_pubky_url).unwrap();
 
         let events = vec![
             make_valid_event(Operation::Put, test_url_1.clone()),
@@ -732,19 +736,18 @@ mod tests {
         assert!(result.is_ok(), "process_events should succeed");
 
         // The first URL should have been deleted, so it shouldn't exist
-        let read_result_1 = storage.read(&test_url_1).await;
+        let read_result_1 = storage.read(&test_resource_1).await;
         assert!(read_result_1.is_err(), "First URL should be deleted");
 
         // The second URL should still exist (only PUT, no DEL)
-        let read_result_2 = storage.read(&test_url_2).await;
+        let read_result_2 = storage.read(&test_resource_2).await;
         assert!(read_result_2.is_ok(), "Second URL should exist");
 
         // The other pubky URL should not exist (was filtered out)
-        let read_result_other = storage.read(&other_pubky_url).await;
-        assert!(read_result_other.is_err(), "Other pubky URL should not exist");
-
-        // The invalid URL should not exist (was logged as error)
-        let read_result_invalid = storage.read(&invalid_url).await;
-        assert!(read_result_invalid.is_err(), "Invalid URL should not exist");
+        let read_result_other = storage.read(&other_resource).await;
+        assert!(
+            read_result_other.is_err(),
+            "Other pubky URL should not exist"
+        );
     }
 }

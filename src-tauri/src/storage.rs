@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use futures_lite::StreamExt;
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
-use pubky::{PublicKey, ResourcePath};
+use pubky::{PubkyResource, PublicKey};
 use std::{path::PathBuf, str::FromStr};
 
 const APP_DATA_DIR_NAME: &str = ".pubky-backup";
@@ -173,33 +173,24 @@ impl BackupDataStorage {
         }
     }
 
-    /// Convert pubky URL to safe file path
-    fn url_to_path(&self, pubky_url: &str) -> Result<String> {
-        let path = pubky_url
-            .strip_prefix("pubky://")
-            .ok_or_else(|| anyhow::anyhow!("Invalid pubky URL format: {}", pubky_url))?;
-        // Parse into ResourcePath for sanitisation
-        Ok(ResourcePath::parse(path)?.as_str().to_owned())
-    }
-
-    /// Write data to backup storage using pubky URL path
-    pub async fn write(&self, pubky_url: &str, data: Vec<u8>) -> Result<String> {
-        let file_path = self.url_to_path(pubky_url)?;
+    /// Write data to backup storage using PubkyResource path
+    pub async fn write(&self, resource: &PubkyResource, data: Vec<u8>) -> Result<String> {
+        let file_path = resource.to_string();
         self.0.write(&file_path, data).await?;
         Ok(file_path)
     }
 
-    /// Delete data from backup storage using pubky URL path
-    pub async fn delete(&self, pubky_url: &str) -> Result<String> {
-        let file_path = self.url_to_path(pubky_url)?;
+    /// Delete data from backup storage using PubkyResource path
+    pub async fn delete(&self, resource: &PubkyResource) -> Result<String> {
+        let file_path = resource.to_string();
         self.0.delete(&file_path).await?;
         Ok(file_path)
     }
 
-    /// Read data from backup storage using pubky URL path
+    /// Read data from backup storage using PubkyResource path
     #[cfg(test)]
-    pub async fn read(&self, pubky_url: &str) -> Result<Vec<u8>> {
-        let file_path = self.url_to_path(pubky_url)?;
+    pub async fn read(&self, resource: &PubkyResource) -> Result<Vec<u8>> {
+        let file_path = resource.to_string();
         self.0.read(&file_path).await
     }
 
@@ -301,36 +292,36 @@ impl AppStorage {
         })
     }
 
-    /// Write data to backup storage using pubky URL path
-    pub async fn write(&self, pubky_url: &str, data: Vec<u8>) -> Result<()> {
-        match self.backup_data.write(pubky_url, data).await {
+    /// Write data to backup storage using PubkyResource path
+    pub async fn write(&self, resource: &PubkyResource, data: Vec<u8>) -> Result<()> {
+        match self.backup_data.write(resource, data).await {
             Ok(_) => Ok(()),
             Err(e) => {
                 self.app_data
-                    .write_error(pubky_url, &format!("Invalid URL path: {}", e))
+                    .write_error(&resource.to_string(), &format!("Failed to write: {}", e))
                     .await?;
                 Ok(())
             }
         }
     }
 
-    /// Delete data from backup storage using pubky URL path
-    pub async fn delete(&self, pubky_url: &str) -> Result<()> {
-        match self.backup_data.delete(pubky_url).await {
+    /// Delete data from backup storage using PubkyResource path
+    pub async fn delete(&self, resource: &PubkyResource) -> Result<()> {
+        match self.backup_data.delete(resource).await {
             Ok(_) => Ok(()),
             Err(e) => {
                 self.app_data
-                    .write_error(pubky_url, &format!("Invalid URL path: {}", e))
+                    .write_error(&resource.to_string(), &format!("Failed to delete: {}", e))
                     .await?;
                 Ok(())
             }
         }
     }
 
-    /// Read data from backup storage using pubky URL path
+    /// Read data from backup storage using PubkyResource path
     #[cfg(test)]
-    pub async fn read(&self, pubky_url: &str) -> Result<Vec<u8>> {
-        self.backup_data.read(pubky_url).await
+    pub async fn read(&self, resource: &PubkyResource) -> Result<Vec<u8>> {
+        self.backup_data.read(resource).await
     }
 
     /// Write cursor to track backup progress
@@ -385,23 +376,25 @@ mod tests {
         let storage = BackupDataStorage::new(&temp_dir.path().to_path_buf())
             .expect("Failed to create storage");
 
-        let test_url = "pubky://test_pubky/pub/pubky.app/test/file.txt";
+        let test_url = "pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/pubky.app/test/file.txt";
+        let test_resource = PubkyResource::from_str(test_url).expect("Valid URL");
         let test_data = b"Hello, world!".to_vec();
+
         // Test write
-        let write_result = storage.write(test_url, test_data.clone()).await;
+        let write_result = storage.write(&test_resource, test_data.clone()).await;
         assert!(write_result.is_ok());
 
         // Test read
-        let read_result = storage.read(test_url).await;
+        let read_result = storage.read(&test_resource).await;
         assert!(read_result.is_ok());
         assert_eq!(read_result.unwrap(), test_data);
 
         // Test delete
-        let delete_result = storage.delete(test_url).await;
+        let delete_result = storage.delete(&test_resource).await;
         assert!(delete_result.is_ok());
 
         // Verify the data no longer exists
-        let read_after_delete = storage.read(test_url).await;
+        let read_after_delete = storage.read(&test_resource).await;
         assert!(read_after_delete.is_err());
     }
 
@@ -435,11 +428,12 @@ mod tests {
         let storage = AppStorage::new_with_single_path(&temp_dir.path().to_path_buf())
             .expect("Failed to create storage");
         let test_url = "pubky://68rkfi1d78baobycj6w4b7dga43o8qtnuhubban5at6qywrieb5y/pub/pubky.app/posts/0033E8XNPVSTG";
+        let test_resource = PubkyResource::from_str(test_url).expect("Valid URL");
         let test_data = b"Hello, world!".to_vec();
         let expected_path = "68rkfi1d78baobycj6w4b7dga43o8qtnuhubban5at6qywrieb5y/pub/pubky.app/posts/0033E8XNPVSTG";
 
         // Test write
-        let write_result = storage.write(test_url, test_data.clone()).await;
+        let write_result = storage.write(&test_resource, test_data.clone()).await;
         assert!(write_result.is_ok());
 
         // Verify the data was written to the correct path
@@ -448,7 +442,7 @@ mod tests {
         assert_eq!(read_result.unwrap(), test_data);
 
         // Test delete
-        let delete_result = storage.delete(test_url).await;
+        let delete_result = storage.delete(&test_resource).await;
         assert!(delete_result.is_ok());
 
         // Verify the data no longer exists
@@ -457,13 +451,13 @@ mod tests {
     }
 
     #[test]
-    fn test_url_to_path_sanitisation() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let storage = BackupDataStorage::new(&temp_dir.path().to_path_buf())
-            .expect("Failed to create storage");
-        // Test path traversal attack - should fail
+    fn test_path_sanitisation() {
+        // Test that PubkyResource parsing rejects malicious URLs
         let malicious_url = "pubky://../../etc/passwd";
-        let result = storage.url_to_path(malicious_url);
-        assert!(result.is_err(), "Path traversal URL should be rejected");
+        let result = PubkyResource::from_str(malicious_url);
+        assert!(
+            result.is_err(),
+            "Path traversal URL should be rejected by PubkyResource"
+        );
     }
 }
