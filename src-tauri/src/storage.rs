@@ -376,8 +376,11 @@ mod tests {
         let storage = BackupDataStorage::new(&temp_dir.path().to_path_buf())
             .expect("Failed to create storage");
 
-        let test_url = "pubky://g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y/pub/pubky.app/test/file.txt";
-        let test_resource = PubkyResource::from_str(test_url).expect("Valid URL");
+        let test_url = format!(
+            "pubky://{}/pub/pubky.app/test/file.txt",
+            crate::DEV_MODE_PUBKY
+        );
+        let test_resource = PubkyResource::from_str(&test_url).expect("Valid URL");
         let test_data = b"Hello, world!".to_vec();
 
         // Test write

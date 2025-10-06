@@ -27,6 +27,9 @@ use crate::utils::retry_with_backoff;
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
 
+/// Developer mode mock pubky (for testing without real pubky)
+const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
+
 /// Custom error types. Only these should be exposed to the front-end.
 #[derive(thiserror::Error, Debug)]
 pub enum BackupAppError {
@@ -130,9 +133,8 @@ fn get_or_create_storage() -> Result<Arc<storage::AppStorage>> {
 async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     if let Ok(mut state) = APP_STATE.lock() {
         if state.developer_mode {
-            state.pubky = Some("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y".to_string());
-            state.homeserver =
-                Some("ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy".to_string());
+            state.pubky = Some(DEV_MODE_PUBKY.to_string());
+            state.homeserver = Some(DEV_MODE_PUBKY.to_string());
             return Ok(());
         }
     }
@@ -702,7 +704,7 @@ mod tests {
                 .expect("Failed to create test storage"),
         );
 
-        let test_pubky = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
+        let test_pubky = crate::DEV_MODE_PUBKY;
         let other_pubky = "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo"; // Different valid pubky
         let test_url_1 = format!("pubky://{}/pub/posts/001", test_pubky);
         let test_url_2 = format!("pubky://{}/pub/profile", test_pubky);
