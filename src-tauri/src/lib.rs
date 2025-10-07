@@ -5,7 +5,7 @@ mod utils;
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use std::{
     env,
@@ -90,12 +90,12 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
 
 /// AppState is Tauri's Rust back-end State.
 /// Here we provide an interface for the front-end and manage other application tasks (eg. The Backup task)
-#[derive(Serialize, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     /// This session's pubky
-    pubky: Option<String>,
+    pubky: Option<PublicKey>,
     /// This session's pubky's homeserver. Stored only for displaying in GUI.
-    homeserver: Option<String>,
+    homeserver: Option<PublicKey>,
     /// Dev mode is for working on the front-end - doesnt make network calls and populates with mock data.
     developer_mode: bool,
     /// Current sync status
@@ -106,12 +106,30 @@ pub struct AppState {
     data_dir_size: u64,
     /// Error message if backup controller failed, None if running normally
     backup_controller_error: Option<String>,
-    #[serde(skip)]
     storage: Option<Arc<storage::AppStorage>>,
-    #[serde(skip)]
     backup_control_tx: Option<broadcast::Sender<BackupControllerMessage>>,
-    #[serde(skip)]
     app_handle: Option<AppHandle>,
+}
+
+impl Serialize for AppState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("AppState", 7)?;
+        state.serialize_field("pubky", &self.pubky.as_ref().map(|pk| pk.to_string()))?;
+        state.serialize_field(
+            "homeserver",
+            &self.homeserver.as_ref().map(|pk| pk.to_string()),
+        )?;
+        state.serialize_field("developer_mode", &self.developer_mode)?;
+        state.serialize_field("is_syncing", &self.is_syncing)?;
+        state.serialize_field("next_sync_time", &self.next_sync_time)?;
+        state.serialize_field("data_dir_size", &self.data_dir_size)?;
+        state.serialize_field("backup_controller_error", &self.backup_controller_error)?;
+        state.end()
+    }
 }
 
 fn get_or_create_storage() -> Result<Arc<storage::AppStorage>> {
@@ -133,8 +151,11 @@ fn get_or_create_storage() -> Result<Arc<storage::AppStorage>> {
 async fn init_app_state(pubky_str: &str) -> Result<(), String> {
     if let Ok(mut state) = APP_STATE.lock() {
         if state.developer_mode {
-            state.pubky = Some(DEV_MODE_PUBKY.to_string());
-            state.homeserver = Some(DEV_MODE_PUBKY.to_string());
+            let dev_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode pubky is valid");
+            let dev_homeserver =
+                PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode homeserver is valid");
+            state.pubky = Some(dev_pubky);
+            state.homeserver = Some(dev_homeserver);
             return Ok(());
         }
     }
@@ -148,6 +169,8 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
         .get_homeserver_of(&pubky)
         .await
         .ok_or_else(|| BackupAppError::HomeserverNotFound)?;
+    let homeserver_pubky = PublicKey::from_str(&homeserver_pubky_str)
+        .map_err(|e| BackupAppError::InvalidPubkyFormat(e.to_string()))?;
 
     // Check Pubky has /pub/ data on Homeserver
     let pubky_storage = PublicStorage::new().map_err(BackupAppError::internal)?;
@@ -323,7 +346,7 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), String> {
 ///
 /// TODO: De-couple from AppState. Ie remove state read and writes from this logic
 async fn backup_controller(
-    pubky: String,
+    pubky: PublicKey,
     mut control_rx: Option<broadcast::Receiver<BackupControllerMessage>>,
 ) {
     let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
@@ -422,9 +445,9 @@ async fn backup_controller(
 /// Returns Ok(Continue) if more events are available, Ok(Break) if sync is complete, Err on failure
 async fn perform_sync_batch(
     storage: &Arc<storage::AppStorage>,
-    pubky: &str,
+    pubky: &PublicKey,
 ) -> Result<ControlFlow<(), ()>> {
-    let cursor = storage.read_cursor(&pubky).await?;
+    let cursor = storage.read_cursor(pubky).await?;
 
     match fetch_events(&cursor, pubky).await {
         Ok(events_response) => {
@@ -464,7 +487,7 @@ async fn perform_sync_batch(
 /// Take a list of events and store the data of those which belong to a given pubky
 async fn process_events(
     events: &[Event],
-    pubky: &str,
+    pubky: &PublicKey,
     storage: Arc<storage::AppStorage>,
 ) -> Result<()> {
     for event in events {
@@ -481,7 +504,7 @@ async fn process_events(
             } => {
                 // Skip events for other pubkys
                 // TODO: Filter server-side
-                if resource.owner.to_string() != pubky {
+                if &resource.owner != pubky {
                     continue;
                 }
 
@@ -518,15 +541,14 @@ async fn process_events(
     Ok(())
 }
 
-/// Fetch data for a URL, either from network or mock data
-/// TODO: Check if retry logic built-in to PubkyHttpClient
+/// Fetch data from a PubkyResource url
 async fn fetch_pubky_resource_data(resource: &PubkyResource) -> Result<Vec<u8>> {
     if crate::APP_STATE
         .lock()
         .map_err(|_| anyhow!(BackupAppError::lock_failed()))?
         .developer_mode
     {
-        return Ok(get_mock_data_for_url(&resource.to_string()));
+        return Ok(get_mock_pubky_resource_data(&resource.to_string()));
     }
 
     let response = match retry_with_backoff(|| async {
@@ -561,7 +583,7 @@ async fn fetch_pubky_resource_data(resource: &PubkyResource) -> Result<Vec<u8>> 
 }
 
 /// Generate mock data for a given pubky URL in developer mode
-fn get_mock_data_for_url(url: &str) -> Vec<u8> {
+fn get_mock_pubky_resource_data(url: &str) -> Vec<u8> {
     if url.contains("/profile") {
         r#"{"name":"Mock User","bio":"This is mock profile data for development","avatar":"https://example.com/avatar.jpg"}"#.as_bytes().to_vec()
     } else if url.contains("/posts/") {
@@ -636,7 +658,6 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::with_id("main")
                 .menu(&menu)
-                // TODO: Create logo
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("pubky-backup")
                 .on_menu_event(move |app, event| match event.id.as_ref() {
@@ -704,7 +725,7 @@ mod tests {
                 .expect("Failed to create test storage"),
         );
 
-        let test_pubky = crate::DEV_MODE_PUBKY;
+        let test_pubky = PublicKey::from_str(crate::DEV_MODE_PUBKY).unwrap();
         let other_pubky = "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo"; // Different valid pubky
         let test_url_1 = format!("pubky://{}/pub/posts/001", test_pubky);
         let test_url_2 = format!("pubky://{}/pub/profile", test_pubky);
@@ -734,7 +755,7 @@ mod tests {
             },
         ];
 
-        let result = process_events(&events, test_pubky, storage.clone()).await;
+        let result = process_events(&events, &test_pubky, storage.clone()).await;
         assert!(result.is_ok(), "process_events should succeed");
 
         // The first URL should have been deleted, so it shouldn't exist

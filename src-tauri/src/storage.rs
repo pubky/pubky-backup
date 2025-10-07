@@ -143,10 +143,10 @@ impl BackupDataStorage {
     }
 
     /// Write cursor to track backup progress for a pubky
-    pub async fn write_cursor(&self, pubky: &str, cursor_value: String) -> Result<()> {
+    pub async fn write_cursor(&self, pubky: &PublicKey, cursor_value: String) -> Result<()> {
         self.0
             .write(
-                &format!("{}/{}", pubky, CURSOR_FILENAME),
+                &format!("{}/{}", pubky.to_string(), CURSOR_FILENAME),
                 cursor_value.clone(),
             )
             .await?;
@@ -155,8 +155,12 @@ impl BackupDataStorage {
     }
 
     /// Read existing or create new cursor for a pubky
-    pub async fn read_cursor(&self, pubky: &str) -> Result<String> {
-        match self.0.read(&format!("{}/{}", pubky, CURSOR_FILENAME)).await {
+    pub async fn read_cursor(&self, pubky: &PublicKey) -> Result<String> {
+        match self
+            .0
+            .read(&format!("{}/{}", pubky.to_string(), CURSOR_FILENAME))
+            .await
+        {
             Ok(cursor_data) => {
                 let cursor_string = String::from_utf8(cursor_data)?;
                 Ok(cursor_string)
@@ -165,9 +169,11 @@ impl BackupDataStorage {
                 // TODO:In this case check if data exists. If so then something has gone wrong and we will start backup from the top.
                 info!("Cursor file not found, creating empty cursor file");
                 self.0
-                    .write(&format!("{}/{}", pubky, CURSOR_FILENAME), "")
+                    .write(&format!("{}/{}", pubky.to_string(), CURSOR_FILENAME), "")
                     .await
-                    .with_context(|| format!("Failed to create cursor file for {}", pubky))?;
+                    .with_context(|| {
+                        format!("Failed to create cursor file for {}", pubky.to_string())
+                    })?;
                 Ok(String::new())
             }
         }
@@ -195,18 +201,18 @@ impl BackupDataStorage {
     }
 
     /// Calculate the total size of data stored for a specific pubky in backup storage
-    pub async fn calculate_pubky_size(&self, pubky: &str) -> u64 {
+    pub async fn calculate_pubky_size(&self, pubky: &PublicKey) -> u64 {
         // Ensure path ends with / for directory listing
-        let path = if pubky.ends_with('/') {
-            pubky.to_string()
-        } else {
-            format!("{}/", pubky)
-        };
+        let path = format!("{}/", pubky.to_string());
 
         match self.calculate_dir_size(&path).await {
             Ok(size) => size,
             Err(e) => {
-                error!("Failed to calculate data size for pubky {}: {}", pubky, e);
+                error!(
+                    "Failed to calculate data size for pubky {}: {}",
+                    pubky.to_string(),
+                    e
+                );
                 0
             }
         }
@@ -266,7 +272,7 @@ impl BackupDataStorage {
 }
 
 /// Application-specific storage that manages both app data and backup data
-/// This struct bubbles db errors up apart from invalid URLS which are logged into error.log.
+/// We write data write()/delete() errors to error.log and continue processing. All other errors are bubbled up to caller.
 /// Currently both app data and backup data are stored in the same root directory.
 pub struct AppStorage {
     /// Application's data Eg error.log
@@ -325,12 +331,12 @@ impl AppStorage {
     }
 
     /// Write cursor to track backup progress
-    pub async fn write_cursor(&self, pubky: &str, cursor_value: String) -> Result<()> {
+    pub async fn write_cursor(&self, pubky: &PublicKey, cursor_value: String) -> Result<()> {
         self.backup_data.write_cursor(pubky, cursor_value).await
     }
 
     /// Read cursor for backup progress
-    pub async fn read_cursor(&self, pubky: &str) -> Result<String> {
+    pub async fn read_cursor(&self, pubky: &PublicKey) -> Result<String> {
         self.backup_data.read_cursor(pubky).await
     }
 
@@ -340,7 +346,7 @@ impl AppStorage {
     }
 
     /// Calculate the total size of data stored for a specific pubky in backup storage
-    pub async fn calculate_pubky_size(&self, pubky: &str) -> u64 {
+    pub async fn calculate_pubky_size(&self, pubky: &PublicKey) -> u64 {
         self.backup_data.calculate_pubky_size(pubky).await
     }
 
@@ -407,12 +413,14 @@ mod tests {
         let storage = AppStorage::new_with_single_path(&temp_dir.path().to_path_buf())
             .expect("Failed to create storage");
         let test_cursor = "0033E867HX6FE";
-        let test_pubky = "test_pubky";
+        let test_pubky = PublicKey::from_str(crate::DEV_MODE_PUBKY).expect("Valid pubky");
+
         let write_result = storage
-            .write_cursor(test_pubky, test_cursor.to_string())
+            .write_cursor(&test_pubky, test_cursor.to_string())
             .await;
         assert!(write_result.is_ok());
-        let read_result = storage.read_cursor(test_pubky).await;
+
+        let read_result = storage.read_cursor(&test_pubky).await;
         assert!(read_result.is_ok());
         assert_eq!(read_result.unwrap(), test_cursor);
 
@@ -434,20 +442,16 @@ mod tests {
         let test_resource = PubkyResource::from_str(test_url).expect("Valid URL");
         let test_data = b"Hello, world!".to_vec();
         let expected_path = "68rkfi1d78baobycj6w4b7dga43o8qtnuhubban5at6qywrieb5y/pub/pubky.app/posts/0033E8XNPVSTG";
-
         // Test write
         let write_result = storage.write(&test_resource, test_data.clone()).await;
         assert!(write_result.is_ok());
-
         // Verify the data was written to the correct path
         let read_result = storage.backup_data.0.read(expected_path).await;
         assert!(read_result.is_ok());
         assert_eq!(read_result.unwrap(), test_data);
-
         // Test delete
         let delete_result = storage.delete(&test_resource).await;
         assert!(delete_result.is_ok());
-
         // Verify the data no longer exists
         let read_after_delete = storage.backup_data.0.read(expected_path).await;
         assert!(read_after_delete.is_err());

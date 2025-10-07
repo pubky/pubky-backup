@@ -1,6 +1,6 @@
 use crate::BackupAppError;
 use anyhow::{anyhow, Result};
-use pubky::{Method, PubkyResource};
+use pubky::{Method, PubkyResource, PublicKey};
 use std::str::FromStr;
 
 const EVENTS_LIMIT: u32 = 1000;
@@ -95,7 +95,7 @@ impl EventsResponse {
 
 /// Fetch event list from given cursor
 /// This fetches all events for all pubkys currently
-pub async fn fetch_events(cursor: &str, pubky: &str) -> Result<EventsResponse> {
+pub async fn fetch_events(cursor: &str, pubky: &PublicKey) -> Result<EventsResponse> {
     if crate::APP_STATE
         .lock()
         .map_err(|_| anyhow!(BackupAppError::lock_failed()))?
