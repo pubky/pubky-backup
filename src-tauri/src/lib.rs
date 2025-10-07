@@ -41,6 +41,19 @@ pub enum BackupAppError {
     DataNotFound,
     #[error("Invalid pubky format: {0}")]
     InvalidPubkyFormat(String),
+    #[error("Storage error: {0}")]
+    Storage(#[from] storage::StorageError),
+    #[error("Events error: {0}")]
+    Events(#[from] events::EventsError),
+}
+
+impl Serialize for BackupAppError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
 }
 
 impl BackupAppError {
@@ -50,12 +63,6 @@ impl BackupAppError {
 
     pub fn lock_failed() -> Self {
         Self::Internal(anyhow::anyhow!("Failed to acquire lock"))
-    }
-}
-
-impl From<BackupAppError> for String {
-    fn from(err: BackupAppError) -> String {
-        err.to_string()
     }
 }
 
@@ -132,14 +139,13 @@ impl Serialize for AppState {
     }
 }
 
-fn get_or_create_storage() -> Result<Arc<storage::AppStorage>> {
+fn get_or_create_storage() -> Result<Arc<storage::AppStorage>, BackupAppError> {
     let mut state = APP_STATE
         .lock()
-        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?;
+        .map_err(|_| BackupAppError::lock_failed())?;
 
     if state.storage.is_none() {
-        let storage =
-            storage::AppStorage::new().map_err(|e| anyhow!("Failed to create storage: {}", e))?;
+        let storage = storage::AppStorage::new()?;
         state.storage = Some(Arc::new(storage));
     }
 
@@ -184,7 +190,7 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
 
     // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
     if (pubky_storage.get(path).await).is_err() {
-        return Err(BackupAppError::DataNotFound.into());
+        return Err(BackupAppError::DataNotFound);
     }
     info!("Pubky is valid for Backup: {}", pubky);
 
@@ -209,27 +215,27 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
 
 /// Fetch application state for usage in front-end
 #[tauri::command]
-async fn fetch_state() -> Result<AppState, String> {
+async fn fetch_state() -> Result<AppState, BackupAppError> {
     match APP_STATE.lock() {
         Ok(state) => Ok(state.clone()),
-        Err(_) => Err(BackupAppError::lock_failed().into()),
+        Err(_) => Err(BackupAppError::lock_failed()),
     }
 }
 
 /// Get list of previously used pubky keys that have data stored
 #[tauri::command]
-async fn get_previous_pubky_keys() -> Result<Vec<String>, String> {
+async fn get_previous_pubky_keys() -> Result<Vec<String>, BackupAppError> {
     let storage = match get_or_create_storage() {
         Ok(storage) => storage,
         Err(e) => {
-            return Err(BackupAppError::internal(e).into());
+            return Err(BackupAppError::internal(e));
         }
     };
 
     // List directories in the data directory to find existing pubky keys
     match storage.list_pubky_directories().await {
         Ok(keys) => Ok(keys),
-        Err(e) => Err(BackupAppError::internal(e).into()),
+        Err(e) => Err(BackupAppError::internal(e)),
     }
 }
 
@@ -252,7 +258,7 @@ async fn get_last_pubky() -> Result<Option<String>, String> {
 /// Spawn task for downloads and polling.
 /// To be called by front-end upon entering main screen.
 #[tauri::command]
-async fn backup_controller_begin() -> Result<(), String> {
+async fn backup_controller_begin() -> Result<(), BackupAppError> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
@@ -273,7 +279,7 @@ async fn backup_controller_begin() -> Result<(), String> {
 /// Send backup controller task Cancel message.
 /// To be controlled by front-end on exiting main screen.
 #[tauri::command]
-async fn backup_controller_close() -> Result<(), String> {
+async fn backup_controller_close() -> Result<(), BackupAppError> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
@@ -284,13 +290,15 @@ async fn backup_controller_close() -> Result<(), String> {
         debug!("Backup controller task stop signal sent");
         Ok(())
     } else {
-        Err(BackupAppError::internal(anyhow!("No Backup controller task running")).into())
+        Err(BackupAppError::internal(anyhow!(
+            "No Backup controller task running"
+        )))
     }
 }
 
 /// Send backup controller task ForceSync message.
 #[tauri::command]
-async fn force_sync_now() -> Result<(), String> {
+async fn force_sync_now() -> Result<(), BackupAppError> {
     let state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
@@ -301,39 +309,41 @@ async fn force_sync_now() -> Result<(), String> {
                 debug!("Force sync signal sent");
                 Ok(())
             }
-            Err(_) => {
-                Err(BackupAppError::internal(anyhow!("Failed to send force sync signal")).into())
-            }
+            Err(_) => Err(BackupAppError::internal(anyhow!(
+                "Failed to send force sync signal"
+            ))),
         }
     } else {
-        Err(BackupAppError::internal(anyhow!("No Backup controller task running")).into())
+        Err(BackupAppError::internal(anyhow!(
+            "No Backup controller task running"
+        )))
     }
 }
 
 /// Get the data directory path as a string
 #[tauri::command]
-async fn get_data_dir_path() -> Result<String, String> {
-    let storage = get_or_create_storage().map_err(|e| BackupAppError::internal(e))?;
+async fn get_data_dir_path() -> Result<String, BackupAppError> {
+    let storage = get_or_create_storage().map_err(BackupAppError::internal)?;
     let backup_dir = storage
         .get_backup_data_dir()
-        .map_err(|e| BackupAppError::internal(e))?;
+        .map_err(BackupAppError::internal)?;
     Ok(backup_dir.to_string_lossy().to_string())
 }
 
 /// Open the data directory in the system file manager
 #[tauri::command]
-async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), String> {
+async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppError> {
     use tauri_plugin_opener::OpenerExt;
 
-    let storage = get_or_create_storage().map_err(|e| BackupAppError::internal(e))?;
+    let storage = get_or_create_storage().map_err(BackupAppError::internal)?;
     let backup_dir = storage
         .get_backup_data_dir()
-        .map_err(|e| BackupAppError::internal(e))?;
+        .map_err(BackupAppError::internal)?;
 
     app_handle
         .opener()
         .open_path(backup_dir.to_string_lossy().to_string(), None::<&str>)
-        .map_err(|e| BackupAppError::internal(anyhow!("Failed to open directory: {}", e)).into())
+        .map_err(BackupAppError::internal)
 }
 
 /// Main backup task controller:
@@ -446,41 +456,50 @@ async fn backup_controller(
 async fn perform_sync_batch(
     storage: &Arc<storage::AppStorage>,
     pubky: &PublicKey,
-) -> Result<ControlFlow<(), ()>> {
+) -> Result<ControlFlow<(), ()>, BackupAppError> {
     let cursor = storage.read_cursor(pubky).await?;
 
-    match fetch_events(&cursor, pubky).await {
-        Ok(events_response) => {
-            let num_events = events_response.events().len();
-            info!("Fetched {} events", num_events);
-
-            if num_events > 0 {
-                // Process those events
-                process_events(events_response.events(), pubky, storage.clone()).await?;
-
-                // Store new cursor
+    // Check if developer mode is enabled - use mock events if so
+    let events_response = if APP_STATE
+        .lock()
+        .map_err(|_| BackupAppError::lock_failed())?
+        .developer_mode
+    {
+        events::get_mock_events_response(&cursor)?
+    } else {
+        match fetch_events(&cursor, pubky).await {
+            Ok(response) => response,
+            Err(e) => {
+                error!("Sync events fetch failed: {}", e);
                 storage
-                    .write_cursor(pubky, events_response.cursor.clone())
+                    .write_error("/events/", &format!("Fetch failed: {}", e))
                     .await?;
-
-                // Calculate and store the data-dir size for this pubky after a batch processed
-                let size = storage.calculate_pubky_size(pubky).await;
-                if let Ok(mut state) = APP_STATE.lock() {
-                    state.data_dir_size = size;
-                }
-
-                Ok(ControlFlow::Continue(()))
-            } else {
-                Ok(ControlFlow::Break(()))
+                return Err(e.into());
             }
         }
-        Err(e) => {
-            error!("Sync events fetch failed: {}", e);
-            storage
-                .write_error("/events/", &format!("Fetch failed: {}", e))
-                .await?;
-            Err(e)
+    };
+
+    let num_events = events_response.events().len();
+    info!("Fetched {} events", num_events);
+
+    if num_events > 0 {
+        // Process those events
+        process_events(events_response.events(), pubky, storage.clone()).await?;
+
+        // Store new cursor
+        storage
+            .write_cursor(pubky, events_response.cursor.clone())
+            .await?;
+
+        // Calculate and store the data-dir size for this pubky after a batch processed
+        let size = storage.calculate_pubky_size(pubky).await;
+        if let Ok(mut state) = APP_STATE.lock() {
+            state.data_dir_size = size;
         }
+
+        Ok(ControlFlow::Continue(()))
+    } else {
+        Ok(ControlFlow::Break(()))
     }
 }
 
@@ -489,7 +508,7 @@ async fn process_events(
     events: &[Event],
     pubky: &PublicKey,
     storage: Arc<storage::AppStorage>,
-) -> Result<()> {
+) -> Result<(), BackupAppError> {
     for event in events {
         match event {
             Event::Invalid { url, error } => {
@@ -542,10 +561,10 @@ async fn process_events(
 }
 
 /// Fetch data from a PubkyResource url
-async fn fetch_pubky_resource_data(resource: &PubkyResource) -> Result<Vec<u8>> {
+async fn fetch_pubky_resource_data(resource: &PubkyResource) -> Result<Vec<u8>, BackupAppError> {
     if crate::APP_STATE
         .lock()
-        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?
+        .map_err(|_| BackupAppError::lock_failed())?
         .developer_mode
     {
         return Ok(get_mock_pubky_resource_data(&resource.to_string()));
@@ -568,14 +587,21 @@ async fn fetch_pubky_resource_data(resource: &PubkyResource) -> Result<Vec<u8>> 
                 info!("404 response: Returning empty data for {}", resource);
                 return Ok(Vec::new());
             }
-            return Err(anyhow!("Failed to fetch data for {}: {}", resource, e));
+            return Err(BackupAppError::internal(anyhow!(
+                "Failed to fetch data for {}: {}",
+                resource,
+                e
+            )));
         }
     };
 
-    let data = response
-        .bytes()
-        .await
-        .map_err(|e| anyhow!("Failed to read response bytes for {}: {}", resource, e))?;
+    let data = response.bytes().await.map_err(|e| {
+        BackupAppError::internal(anyhow!(
+            "Failed to read response bytes for {}: {}",
+            resource,
+            e
+        ))
+    })?;
 
     let data_vec = data.to_vec();
     debug!("Successfully fetched data: {} bytes", data_vec.len());

@@ -1,7 +1,16 @@
 use crate::BackupAppError;
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 use pubky::{Method, PubkyResource, PublicKey};
 use std::str::FromStr;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum EventsError {
+    #[error("Failed to fetch events: {0}")]
+    FetchFailed(String),
+    #[error("Invalid response: {0}")]
+    InvalidResponse(String),
+}
 
 const EVENTS_LIMIT: u32 = 1000;
 
@@ -66,11 +75,11 @@ pub struct EventsResponse {
 
 impl EventsResponse {
     /// Parse events response from API
-    pub fn from_response(response: &str) -> Result<Self> {
+    pub fn from_response(response: &str) -> Result<Self, EventsError> {
         let lines: Vec<&str> = response.split('\n').collect();
 
         if lines.is_empty() {
-            return Err(anyhow!("Empty response"));
+            return Err(EventsError::InvalidResponse("Empty response".to_string()));
         }
 
         let mut events = Vec::new();
@@ -95,15 +104,7 @@ impl EventsResponse {
 
 /// Fetch event list from given cursor
 /// This fetches all events for all pubkys currently
-pub async fn fetch_events(cursor: &str, pubky: &PublicKey) -> Result<EventsResponse> {
-    if crate::APP_STATE
-        .lock()
-        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?
-        .developer_mode
-    {
-        return get_mock_events_response(cursor);
-    }
-
+pub async fn fetch_events(cursor: &str, pubky: &PublicKey) -> Result<EventsResponse, EventsError> {
     let base_url = format!("pubky://{}/events/", pubky);
     let url = reqwest::Url::parse_with_params(
         &base_url,
@@ -112,7 +113,7 @@ pub async fn fetch_events(cursor: &str, pubky: &PublicKey) -> Result<EventsRespo
             ("cursor", cursor.to_string()),
         ],
     )
-    .map_err(|e| anyhow!("Failed to build URL: {}", e))?;
+    .map_err(|e| EventsError::InvalidResponse(format!("Failed to build URL: {}", e)))?;
 
     let response = crate::retry_with_backoff(|| {
         let url_str = url.to_string();
@@ -125,18 +126,18 @@ pub async fn fetch_events(cursor: &str, pubky: &PublicKey) -> Result<EventsRespo
                 .map_err(|e| anyhow!("Failed to fetch events data for {}: {}", url_str, e))
         }
     })
-    .await?;
+    .await
+    .map_err(|e| EventsError::FetchFailed(e.to_string()))?;
 
-    let text = response
-        .text()
-        .await
-        .map_err(|e| anyhow!("Failed to read response: {}", e))?;
+    let text = response.text().await.map_err(|e| {
+        EventsError::InvalidResponse(format!("Failed to read response text: {}", e))
+    })?;
 
     EventsResponse::from_response(&text)
 }
 
 /// Generate mock events response for developer mode
-fn get_mock_events_response(cursor: &str) -> Result<EventsResponse> {
+pub fn get_mock_events_response(cursor: &str) -> Result<EventsResponse, EventsError> {
     let mock_pubky = crate::DEV_MODE_PUBKY;
 
     fn make_valid_event(operation: Operation, url: String) -> Event {
