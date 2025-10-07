@@ -160,21 +160,18 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
     }
     info!("Pubky is valid for Backup: {}", pubky);
 
-    // scope block lock for implicit drop
-    {
-        let mut state = APP_STATE
-            .lock()
-            .map_err(|_| BackupAppError::lock_failed())?;
-        state.pubky = Some(pubky);
-        state.homeserver = Some(homeserver_pubky);
-    }
-
-    // Save the last used pubky to storage (non-critical operation)
+    // Save the last used pubky to storage
     get_or_create_storage()
         .map_err(BackupAppError::internal)?
-        .write_last_pubky(pubky.to_string())
+        .write_last_pubky(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
+
+    let mut state = APP_STATE
+        .lock()
+        .map_err(|_| BackupAppError::lock_failed())?;
+    state.pubky = Some(pubky);
+    state.homeserver = Some(homeserver_pubky);
 
     Ok(())
 }
@@ -216,7 +213,8 @@ async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
     };
 
     match storage.read_last_pubky().await {
-        Ok(pubky) => Ok(pubky),
+        Ok(Some(pubky)) => Ok(Some(pubky.to_string())),
+        Ok(None) => Ok(None),
         Err(e) => Err(BackupAppError::internal(e)),
     }
 }

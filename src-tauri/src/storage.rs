@@ -1,4 +1,4 @@
-use crate::error::StorageError;
+use crate::error::{OperationFailedError, StorageError};
 use futures_lite::StreamExt;
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
@@ -33,7 +33,7 @@ impl Storage {
             StorageError::DirectoryCreation(format!("{}: {}", data_dir.display(), e))
         })?;
 
-        let builder = Fs::default().root(&data_dir.to_string_lossy().to_string());
+        let builder = Fs::default().root(data_dir.to_string_lossy().as_ref());
         let operator = Operator::new(builder)?
             .layer(opendal::layers::LoggingLayer::default())
             .finish();
@@ -44,36 +44,35 @@ impl Storage {
         self.operator
             .write(file_path, data.into())
             .await
-            .map_err(|e| StorageError::OperationFailed {
-                operation: "write".to_string(),
-                path: file_path.to_string(),
-                source: e,
+            .map_err(|e| {
+                StorageError::OperationFailed(Box::new(OperationFailedError {
+                    operation: "write".to_string(),
+                    path: file_path.to_string(),
+                    source: e,
+                }))
             })?;
         Ok(())
     }
 
     async fn read(&self, file_path: &str) -> Result<Vec<u8>, StorageError> {
-        let data =
-            self.operator
-                .read(file_path)
-                .await
-                .map_err(|e| StorageError::OperationFailed {
-                    operation: "read".to_string(),
-                    path: file_path.to_string(),
-                    source: e,
-                })?;
+        let data = self.operator.read(file_path).await.map_err(|e| {
+            StorageError::OperationFailed(Box::new(OperationFailedError {
+                operation: "read".to_string(),
+                path: file_path.to_string(),
+                source: e,
+            }))
+        })?;
         Ok(data.to_vec())
     }
 
     async fn delete(&self, file_path: &str) -> Result<(), StorageError> {
-        self.operator
-            .delete(file_path)
-            .await
-            .map_err(|e| StorageError::OperationFailed {
+        self.operator.delete(file_path).await.map_err(|e| {
+            StorageError::OperationFailed(Box::new(OperationFailedError {
                 operation: "delete".to_string(),
                 path: file_path.to_string(),
                 source: e,
-            })?;
+            }))
+        })?;
         Ok(())
     }
 
@@ -127,18 +126,18 @@ impl AppDataStorage {
         Ok(())
     }
 
-    pub async fn write_last_pubky(&self, pubky: String) -> Result<()> {
-        self.0
-            .write(LAST_PUBKY_FILENAME, pubky.clone())
-            .await
-            .with_context(|| "Failed to write last used pubky")?;
+    pub async fn write_last_pubky(&self, pubky: &PublicKey) -> Result<(), StorageError> {
+        let pubky_str = pubky.to_string();
+        self.0.write(LAST_PUBKY_FILENAME, pubky_str.clone()).await?;
+        debug!("Last pubky value written: {}", pubky_str);
         Ok(())
     }
 
-    pub async fn read_last_pubky(&self) -> Result<Option<String>> {
+    pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
         match self.0.read(LAST_PUBKY_FILENAME).await {
             Ok(data) => {
-                let pubky = String::from_utf8(data.to_vec())?;
+                let pubky = PublicKey::from_str(&String::from_utf8(data.to_vec())?)
+                    .map_err(|e| StorageError::Internal(e.into()))?;
                 Ok(Some(pubky))
             }
             Err(_) => Ok(None),
@@ -162,7 +161,7 @@ impl BackupDataStorage {
     ) -> Result<(), StorageError> {
         self.0
             .write(
-                &format!("{}/{}", pubky.to_string(), CURSOR_FILENAME),
+                &format!("{}/{}", pubky, CURSOR_FILENAME),
                 cursor_value.clone(),
             )
             .await?;
@@ -172,11 +171,7 @@ impl BackupDataStorage {
 
     /// Read existing or create new cursor for a pubky
     pub async fn read_cursor(&self, pubky: &PublicKey) -> Result<String, StorageError> {
-        match self
-            .0
-            .read(&format!("{}/{}", pubky.to_string(), CURSOR_FILENAME))
-            .await
-        {
+        match self.0.read(&format!("{}/{}", pubky, CURSOR_FILENAME)).await {
             Ok(cursor_data) => {
                 let cursor_string = String::from_utf8(cursor_data)?;
                 Ok(cursor_string)
@@ -185,7 +180,7 @@ impl BackupDataStorage {
                 // TODO:In this case check if data exists. If so then something has gone wrong and we will start backup from the top.
                 info!("Cursor file not found, creating empty cursor file");
                 self.0
-                    .write(&format!("{}/{}", pubky.to_string(), CURSOR_FILENAME), "")
+                    .write(&format!("{}/{}", pubky, CURSOR_FILENAME), "")
                     .await?;
                 Ok(String::new())
             }
@@ -220,16 +215,12 @@ impl BackupDataStorage {
     /// Calculate the total size of data stored for a specific pubky in backup storage
     pub async fn calculate_pubky_size(&self, pubky: &PublicKey) -> u64 {
         // Ensure path ends with / for directory listing
-        let path = format!("{}/", pubky.to_string());
+        let path = format!("{}/", pubky);
 
         match self.calculate_dir_size(&path).await {
             Ok(size) => size,
             Err(e) => {
-                error!(
-                    "Failed to calculate data size for pubky {}: {}",
-                    pubky.to_string(),
-                    e
-                );
+                error!("Failed to calculate data size for pubky {}: {}", pubky, e);
                 0
             }
         }
@@ -248,7 +239,7 @@ impl BackupDataStorage {
     }
 
     /// Recursively calculate directory size
-    async fn calculate_dir_size(&self, path: &str) -> Result<u64> {
+    async fn calculate_dir_size(&self, path: &str) -> Result<u64, StorageError> {
         let mut total_size = 0u64;
 
         // Check if directory exists first
@@ -382,12 +373,12 @@ impl AppStorage {
     }
 
     /// Write last used pubky to app data storage
-    pub async fn write_last_pubky(&self, pubky: String) -> Result<()> {
+    pub async fn write_last_pubky(&self, pubky: &PublicKey) -> Result<(), StorageError> {
         self.app_data.write_last_pubky(pubky).await
     }
 
     /// Read last used pubky from app data storage
-    pub async fn read_last_pubky(&self) -> Result<Option<String>> {
+    pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
         self.app_data.read_last_pubky().await
     }
 }
@@ -425,29 +416,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cursor_read_write() {
+    async fn test_app_data_read_write() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let storage = AppStorage::new_with_single_path(&temp_dir.path().to_path_buf())
             .expect("Failed to create storage");
         let test_cursor = "0033E867HX6FE";
         let test_pubky = PublicKey::from_str(crate::DEV_MODE_PUBKY).expect("Valid pubky");
-
+        // cursor read/write
         let write_result = storage
             .write_cursor(&test_pubky, test_cursor.to_string())
             .await;
         assert!(write_result.is_ok());
-
         let read_result = storage.read_cursor(&test_pubky).await;
         assert!(read_result.is_ok());
         assert_eq!(read_result.unwrap(), test_cursor);
-
         // last_pubky read/write
-        let test_last_pubky = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y".to_string();
-        let write_result = storage.write_last_pubky(test_last_pubky.clone()).await;
+        let write_result = storage.write_last_pubky(&test_pubky).await;
         assert!(write_result.is_ok());
         let read_result = storage.read_last_pubky().await;
         assert!(read_result.is_ok());
-        assert_eq!(read_result.unwrap(), Some(test_last_pubky));
+        assert_eq!(read_result.unwrap(), Some(test_pubky));
     }
 
     #[tokio::test]
