@@ -1,27 +1,9 @@
+use crate::error::StorageError;
 use futures_lite::StreamExt;
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
 use pubky::{PubkyResource, PublicKey};
 use std::{path::PathBuf, str::FromStr};
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum StorageError {
-    #[error("Data not found: {0}")]
-    DataNotFound(String),
-    #[error("OpenDAL error: {0}")]
-    OpenDalError(#[from] opendal::Error),
-    #[error("Invalid UTF-8: {0}")]
-    InvalidUtf8(#[from] std::string::FromUtf8Error),
-    #[error("Failed to create directory: {0}")]
-    DirectoryCreation(String),
-    #[error("Failed to {operation} {path}: {source}")]
-    OperationFailed {
-        operation: String,
-        path: String,
-        source: opendal::Error,
-    },
-}
 
 const APP_DATA_DIR_NAME: &str = ".pubky-backup";
 const CURSOR_FILENAME: &str = "cursor";

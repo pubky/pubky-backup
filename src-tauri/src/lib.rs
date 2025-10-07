@@ -1,3 +1,4 @@
+mod error;
 mod events;
 mod storage;
 mod utils;
@@ -22,6 +23,7 @@ use tauri::{
 use tokio::sync::broadcast;
 use tokio::time;
 
+use crate::error::BackupAppError;
 use crate::events::{fetch_events, Event, Operation};
 use crate::utils::retry_with_backoff;
 
@@ -29,42 +31,6 @@ const SYNC_INTERVAL_SECONDS: u64 = 30;
 
 /// Developer mode mock pubky (for testing without real pubky)
 const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
-
-/// Custom error types. Only these should be exposed to the front-end.
-#[derive(thiserror::Error, Debug)]
-pub enum BackupAppError {
-    #[error("Internal error: {0}")]
-    Internal(#[from] anyhow::Error),
-    #[error("Failed to find Homeserver for pubky")]
-    HomeserverNotFound,
-    #[error("Failed to find data for pubky")]
-    DataNotFound,
-    #[error("Invalid pubky format: {0}")]
-    InvalidPubkyFormat(String),
-    #[error("Storage error: {0}")]
-    Storage(#[from] storage::StorageError),
-    #[error("Events error: {0}")]
-    Events(#[from] events::EventsError),
-}
-
-impl Serialize for BackupAppError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-impl BackupAppError {
-    pub fn internal<E: Into<anyhow::Error>>(err: E) -> Self {
-        Self::Internal(err.into())
-    }
-
-    pub fn lock_failed() -> Self {
-        Self::Internal(anyhow::anyhow!("Failed to acquire lock"))
-    }
-}
 
 #[derive(Debug, Clone)]
 enum BackupControllerMessage {
@@ -154,7 +120,7 @@ fn get_or_create_storage() -> Result<Arc<storage::AppStorage>, BackupAppError> {
 
 /// Take a pubky, verify and add to State ready for usage.
 #[tauri::command]
-async fn init_app_state(pubky_str: &str) -> Result<(), String> {
+async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
     if let Ok(mut state) = APP_STATE.lock() {
         if state.developer_mode {
             let dev_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode pubky is valid");
@@ -199,8 +165,8 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
         let mut state = APP_STATE
             .lock()
             .map_err(|_| BackupAppError::lock_failed())?;
-        state.pubky = Some(pubky.to_string());
-        state.homeserver = Some(homeserver_pubky_str);
+        state.pubky = Some(pubky);
+        state.homeserver = Some(homeserver_pubky);
     }
 
     // Save the last used pubky to storage (non-critical operation)
@@ -241,17 +207,17 @@ async fn get_previous_pubky_keys() -> Result<Vec<String>, BackupAppError> {
 
 /// Get the last used pubky from storage
 #[tauri::command]
-async fn get_last_pubky() -> Result<Option<String>, String> {
+async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
     let storage = match get_or_create_storage() {
         Ok(storage) => storage,
         Err(e) => {
-            return Err(BackupAppError::internal(e).into());
+            return Err(BackupAppError::internal(e));
         }
     };
 
     match storage.read_last_pubky().await {
         Ok(pubky) => Ok(pubky),
-        Err(e) => Err(BackupAppError::internal(e).into()),
+        Err(e) => Err(BackupAppError::internal(e)),
     }
 }
 

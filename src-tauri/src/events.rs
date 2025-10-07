@@ -1,16 +1,7 @@
-use crate::BackupAppError;
+use crate::error::{BackupAppError, EventsError};
 use anyhow::anyhow;
 use pubky::{Method, PubkyResource, PublicKey};
 use std::str::FromStr;
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum EventsError {
-    #[error("Failed to fetch events: {0}")]
-    FetchFailed(String),
-    #[error("Invalid response: {0}")]
-    InvalidResponse(String),
-}
 
 const EVENTS_LIMIT: u32 = 1000;
 
