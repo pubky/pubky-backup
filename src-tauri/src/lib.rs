@@ -1,11 +1,12 @@
+mod error;
 mod events;
 mod storage;
 mod utils;
 
-use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
 use serde::Serialize;
+use serde_with::{serde_as, DisplayFromStr};
 
 use std::{
     env,
@@ -22,40 +23,14 @@ use tauri::{
 use tokio::sync::broadcast;
 use tokio::time;
 
-use crate::events::{fetch_events, EventInfo};
-use crate::storage::Storage;
+use crate::error::BackupAppError;
+use crate::events::{fetch_events, Event, Operation};
 use crate::utils::retry_with_backoff;
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
 
-/// Custom error types. Only these should be exposed to the front-end.
-#[derive(thiserror::Error, Debug)]
-pub enum BackupAppError {
-    #[error("Internal error: {0}")]
-    Internal(#[from] anyhow::Error),
-    #[error("Failed to find Homeserver for pubky")]
-    HomeserverNotFound,
-    #[error("Failed to find data for pubky")]
-    DataNotFound,
-    #[error("Invalid pubky format: {0}")]
-    InvalidPubkyFormat(String),
-}
-
-impl BackupAppError {
-    pub fn internal<E: Into<anyhow::Error>>(err: E) -> Self {
-        Self::Internal(err.into())
-    }
-
-    pub fn lock_failed() -> Self {
-        Self::Internal(anyhow::anyhow!("Failed to acquire lock"))
-    }
-}
-
-impl From<BackupAppError> for String {
-    fn from(err: BackupAppError) -> String {
-        err.to_string()
-    }
-}
+/// Developer mode mock pubky (for testing without real pubky)
+const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
 
 #[derive(Debug, Clone)]
 enum BackupControllerMessage {
@@ -88,12 +63,15 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
 
 /// AppState is Tauri's Rust back-end State.
 /// Here we provide an interface for the front-end and manage other application tasks (eg. The Backup task)
-#[derive(Serialize, Clone)]
+#[serde_as]
+#[derive(Clone, Serialize)]
 pub struct AppState {
     /// This session's pubky
-    pubky: Option<String>,
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    pubky: Option<PublicKey>,
     /// This session's pubky's homeserver. Stored only for displaying in GUI.
-    homeserver: Option<String>,
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    homeserver: Option<PublicKey>,
     /// Dev mode is for working on the front-end - doesnt make network calls and populates with mock data.
     developer_mode: bool,
     /// Current sync status
@@ -105,20 +83,20 @@ pub struct AppState {
     /// Error message if backup controller failed, None if running normally
     backup_controller_error: Option<String>,
     #[serde(skip)]
-    storage: Option<Arc<Storage>>,
+    storage: Option<Arc<storage::AppStorage>>,
     #[serde(skip)]
     backup_control_tx: Option<broadcast::Sender<BackupControllerMessage>>,
     #[serde(skip)]
     app_handle: Option<AppHandle>,
 }
 
-fn get_or_create_storage() -> Result<Arc<Storage>> {
+fn get_or_create_storage() -> Result<Arc<storage::AppStorage>, BackupAppError> {
     let mut state = APP_STATE
         .lock()
-        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?;
+        .map_err(|_| BackupAppError::lock_failed())?;
 
     if state.storage.is_none() {
-        let storage = Storage::new().map_err(|e| anyhow!("Failed to create storage: {}", e))?;
+        let storage = storage::AppStorage::new()?;
         state.storage = Some(Arc::new(storage));
     }
 
@@ -127,12 +105,14 @@ fn get_or_create_storage() -> Result<Arc<Storage>> {
 
 /// Take a pubky, verify and add to State ready for usage.
 #[tauri::command]
-async fn init_app_state(pubky_str: &str) -> Result<(), String> {
+async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
     if let Ok(mut state) = APP_STATE.lock() {
         if state.developer_mode {
-            state.pubky = Some("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y".to_string());
-            state.homeserver =
-                Some("ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy".to_string());
+            let dev_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode pubky is valid");
+            let dev_homeserver =
+                PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode homeserver is valid");
+            state.pubky = Some(dev_pubky);
+            state.homeserver = Some(dev_homeserver);
             return Ok(());
         }
     }
@@ -146,6 +126,8 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
         .get_homeserver_of(&pubky)
         .await
         .ok_or_else(|| BackupAppError::HomeserverNotFound)?;
+    let homeserver_pubky = PublicKey::from_str(&homeserver_pubky_str)
+        .map_err(|e| BackupAppError::InvalidPubkyFormat(e.to_string()))?;
 
     // Check Pubky has /pub/ data on Homeserver
     let pubky_storage = PublicStorage::new().map_err(BackupAppError::internal)?;
@@ -159,75 +141,73 @@ async fn init_app_state(pubky_str: &str) -> Result<(), String> {
 
     // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
     if (pubky_storage.get(path).await).is_err() {
-        return Err(BackupAppError::DataNotFound.into());
+        return Err(BackupAppError::DataNotFound);
     }
     info!("Pubky is valid for Backup: {}", pubky);
 
-    // scope block lock for implicit drop
-    {
-        let mut state = APP_STATE
-            .lock()
-            .map_err(|_| BackupAppError::lock_failed())?;
-        state.pubky = Some(pubky.to_string());
-        state.homeserver = Some(homeserver_pubky_str);
-    }
-
-    // Save the last used pubky to storage (non-critical operation)
+    // Save the last used pubky to storage
     get_or_create_storage()
         .map_err(BackupAppError::internal)?
-        .write_last_pubky(pubky.to_string())
+        .write_last_pubky(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
+
+    let mut state = APP_STATE
+        .lock()
+        .map_err(|_| BackupAppError::lock_failed())?;
+    state.pubky = Some(pubky);
+    state.homeserver = Some(homeserver_pubky);
 
     Ok(())
 }
 
 /// Fetch application state for usage in front-end
 #[tauri::command]
-async fn fetch_state() -> Result<AppState, String> {
+async fn fetch_state() -> Result<AppState, BackupAppError> {
     match APP_STATE.lock() {
         Ok(state) => Ok(state.clone()),
-        Err(_) => Err(BackupAppError::lock_failed().into()),
+        Err(_) => Err(BackupAppError::lock_failed()),
     }
 }
 
 /// Get list of previously used pubky keys that have data stored
 #[tauri::command]
-async fn get_previous_pubky_keys() -> Result<Vec<String>, String> {
+async fn get_previous_pubky_keys() -> Result<Vec<String>, BackupAppError> {
     let storage = match get_or_create_storage() {
         Ok(storage) => storage,
         Err(e) => {
-            return Err(BackupAppError::internal(e).into());
+            return Err(BackupAppError::internal(e));
         }
     };
 
     // List directories in the data directory to find existing pubky keys
     match storage.list_pubky_directories().await {
         Ok(keys) => Ok(keys),
-        Err(e) => Err(BackupAppError::internal(e).into()),
+        Err(e) => Err(BackupAppError::internal(e)),
     }
 }
 
 /// Get the last used pubky from storage
 #[tauri::command]
-async fn get_last_pubky() -> Result<Option<String>, String> {
+async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
     let storage = match get_or_create_storage() {
         Ok(storage) => storage,
         Err(e) => {
-            return Err(BackupAppError::internal(e).into());
+            return Err(BackupAppError::internal(e));
         }
     };
 
     match storage.read_last_pubky().await {
-        Ok(pubky) => Ok(pubky),
-        Err(e) => Err(BackupAppError::internal(e).into()),
+        Ok(Some(pubky)) => Ok(Some(pubky.to_string())),
+        Ok(None) => Ok(None),
+        Err(e) => Err(BackupAppError::internal(e)),
     }
 }
 
 /// Spawn task for downloads and polling.
 /// To be called by front-end upon entering main screen.
 #[tauri::command]
-async fn backup_controller_begin() -> Result<(), String> {
+async fn backup_controller_begin() -> Result<(), BackupAppError> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
@@ -235,7 +215,7 @@ async fn backup_controller_begin() -> Result<(), String> {
     let pubky = state
         .pubky
         .clone()
-        .ok_or_else(|| BackupAppError::internal(anyhow!("Pubky not available in AppState")))?;
+        .ok_or_else(|| BackupAppError::internal("Pubky not available in AppState"))?;
 
     let (backup_control_tx, backup_control_rx) = broadcast::channel(5);
     state.backup_control_tx = Some(backup_control_tx);
@@ -248,7 +228,7 @@ async fn backup_controller_begin() -> Result<(), String> {
 /// Send backup controller task Cancel message.
 /// To be controlled by front-end on exiting main screen.
 #[tauri::command]
-async fn backup_controller_close() -> Result<(), String> {
+async fn backup_controller_close() -> Result<(), BackupAppError> {
     let mut state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
@@ -259,13 +239,15 @@ async fn backup_controller_close() -> Result<(), String> {
         debug!("Backup controller task stop signal sent");
         Ok(())
     } else {
-        Err(BackupAppError::internal(anyhow!("No Backup controller task running")).into())
+        Err(BackupAppError::internal(
+            "No Backup controller task running",
+        ))
     }
 }
 
 /// Send backup controller task ForceSync message.
 #[tauri::command]
-async fn force_sync_now() -> Result<(), String> {
+async fn force_sync_now() -> Result<(), BackupAppError> {
     let state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
@@ -276,13 +258,39 @@ async fn force_sync_now() -> Result<(), String> {
                 debug!("Force sync signal sent");
                 Ok(())
             }
-            Err(_) => {
-                Err(BackupAppError::internal(anyhow!("Failed to send force sync signal")).into())
-            }
+            Err(_) => Err(BackupAppError::internal("Failed to send force sync signal")),
         }
     } else {
-        Err(BackupAppError::internal(anyhow!("No Backup controller task running")).into())
+        Err(BackupAppError::internal(
+            "No Backup controller task running",
+        ))
     }
+}
+
+/// Get the data directory path as a string
+#[tauri::command]
+async fn get_data_dir_path() -> Result<String, BackupAppError> {
+    let storage = get_or_create_storage().map_err(BackupAppError::internal)?;
+    let backup_dir = storage
+        .get_backup_data_dir()
+        .map_err(BackupAppError::internal)?;
+    Ok(backup_dir.to_string_lossy().to_string())
+}
+
+/// Open the data directory in the system file manager
+#[tauri::command]
+async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppError> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let storage = get_or_create_storage().map_err(BackupAppError::internal)?;
+    let backup_dir = storage
+        .get_backup_data_dir()
+        .map_err(BackupAppError::internal)?;
+
+    app_handle
+        .opener()
+        .open_path(backup_dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(BackupAppError::internal)
 }
 
 /// Main backup task controller:
@@ -295,7 +303,7 @@ async fn force_sync_now() -> Result<(), String> {
 ///
 /// TODO: De-couple from AppState. Ie remove state read and writes from this logic
 async fn backup_controller(
-    pubky: String,
+    pubky: PublicKey,
     mut control_rx: Option<broadcast::Receiver<BackupControllerMessage>>,
 ) {
     let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
@@ -392,87 +400,106 @@ async fn backup_controller(
 
 /// Process one batch of sync events
 /// Returns Ok(Continue) if more events are available, Ok(Break) if sync is complete, Err on failure
-async fn perform_sync_batch(storage: &Arc<Storage>, pubky: &str) -> Result<ControlFlow<(), ()>> {
+async fn perform_sync_batch(
+    storage: &Arc<storage::AppStorage>,
+    pubky: &PublicKey,
+) -> Result<ControlFlow<(), ()>, BackupAppError> {
     let cursor = storage.read_cursor(pubky).await?;
 
-    match fetch_events(&cursor, pubky).await {
-        Ok(events_response) => {
-            let num_events = events_response.events.len();
-            info!("Fetched {} events", num_events);
-
-            if num_events > 0 {
-                // Process those events
-                process_events(events_response.events()?, pubky, storage.clone()).await?;
-
-                // Store new cursor
+    // Check if developer mode is enabled - use mock events if so
+    let events_response = if APP_STATE
+        .lock()
+        .map_err(|_| BackupAppError::lock_failed())?
+        .developer_mode
+    {
+        events::get_mock_events_response(&cursor)?
+    } else {
+        match fetch_events(&cursor, pubky).await {
+            Ok(response) => response,
+            Err(e) => {
+                error!("Sync events fetch failed: {}", e);
                 storage
-                    .write_cursor(pubky, events_response.cursor.clone())
+                    .write_error("/events/", &format!("Fetch failed: {}", e))
                     .await?;
-
-                // Calculate and store the data-dir size for this pubky after a batch processed
-                let size = storage.calculate_pubky_size(pubky).await;
-                if let Ok(mut state) = APP_STATE.lock() {
-                    state.data_dir_size = size;
-                }
-
-                Ok(ControlFlow::Continue(()))
-            } else {
-                Ok(ControlFlow::Break(()))
+                return Err(e.into());
             }
         }
-        Err(e) => {
-            error!("Sync events fetch failed: {}", e);
-            storage
-                .write_error("/events/", &format!("Fetch failed: {}", e))
-                .await?;
-            Err(e)
+    };
+
+    let num_events = events_response.events().len();
+    info!("Fetched {} events", num_events);
+
+    if num_events > 0 {
+        // Process those events
+        process_events(events_response.events(), pubky, storage.clone()).await?;
+
+        // Store new cursor
+        storage
+            .write_cursor(pubky, events_response.cursor.clone())
+            .await?;
+
+        // Calculate and store the data-dir size for this pubky after a batch processed
+        let size = storage.calculate_pubky_size(pubky).await;
+        if let Ok(mut state) = APP_STATE.lock() {
+            state.data_dir_size = size;
         }
+
+        Ok(ControlFlow::Continue(()))
+    } else {
+        Ok(ControlFlow::Break(()))
     }
 }
 
 /// Take a list of events and store the data of those which belong to a given pubky
-async fn process_events(events: Vec<EventInfo>, pubky: &str, storage: Arc<Storage>) -> Result<()> {
-    for event_info in events {
-        // Skip events for other pubkys
-        // TODO: Filter server-side
-        let resource = match PubkyResource::from_str(&event_info.url) {
-            Ok(resource) => resource,
-            Err(e) => {
-                let _ = storage
-                    .write_error(&event_info.url, &format!("Invalid URL path: {}", e))
-                    .await;
+async fn process_events(
+    events: &[Event],
+    pubky: &PublicKey,
+    storage: Arc<storage::AppStorage>,
+) -> Result<(), BackupAppError> {
+    for event in events {
+        match event {
+            Event::Invalid { url, error } => {
+                // Log invalid events and continue
+                let _ = storage.write_error(url, error).await;
+                warn!("Invalid event: {} - {}", url, error);
                 continue;
             }
-        };
-        if resource.owner.to_string() != pubky {
-            continue;
-        }
+            Event::Valid {
+                operation,
+                resource,
+            } => {
+                // Skip events for other pubkys
+                // TODO: Filter server-side
+                if &resource.owner != pubky {
+                    continue;
+                }
 
-        match event_info.operation.as_str() {
-            "PUT" => {
-                debug!("Processing PUT event for: {}", event_info.url);
-                match fetch_data_for_url(&event_info.url).await {
-                    Ok(data_vec) => {
-                        // Skip storing empty data (404 responses)
-                        if !data_vec.is_empty() {
-                            storage.write(&event_info.url, data_vec).await?;
+                match operation {
+                    Operation::Put => {
+                        debug!("Processing PUT event for: {}", resource);
+                        match fetch_pubky_resource_data(resource).await {
+                            Ok(data_vec) => {
+                                // Skip storing empty data (404 responses)
+                                if !data_vec.is_empty() {
+                                    storage.write(resource, data_vec).await?;
+                                }
+                            }
+                            Err(e) => {
+                                // Log fetch errors and continue processing other events
+                                storage
+                                    .write_error(
+                                        &resource.to_string(),
+                                        &format!("Fetch failed: {}", e),
+                                    )
+                                    .await?;
+                            }
                         }
                     }
-                    Err(e) => {
-                        // Log fetch errors and continue processing other events
-                        storage
-                            .write_error(&event_info.url, &format!("Fetch failed: {}", e))
-                            .await?;
-                        warn!("Failed to fetch data for {}: {}", event_info.url, e);
+                    Operation::Delete => {
+                        debug!("Processing DEL event for: {}", resource);
+                        storage.delete(resource).await?;
                     }
                 }
-            }
-            "DEL" => {
-                debug!("Processing DEL event for: {}", event_info.url);
-                storage.delete(&event_info.url).await?;
-            }
-            _ => {
-                return Err(anyhow!("Unknown event operation: {}", event_info.operation));
             }
         }
     }
@@ -480,42 +507,45 @@ async fn process_events(events: Vec<EventInfo>, pubky: &str, storage: Arc<Storag
     Ok(())
 }
 
-/// Fetch data for a URL, either from network or mock data
-/// TODO: Check if retry logic built-in to PubkyHttpClient
-async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>> {
+/// Fetch data from a PubkyResource url
+async fn fetch_pubky_resource_data(resource: &PubkyResource) -> Result<Vec<u8>, BackupAppError> {
     if crate::APP_STATE
         .lock()
-        .map_err(|_| anyhow!(BackupAppError::lock_failed()))?
+        .map_err(|_| BackupAppError::lock_failed())?
         .developer_mode
     {
-        return Ok(get_mock_data_for_url(url));
+        return Ok(get_mock_pubky_resource_data(&resource.to_string()));
     }
 
     let response = match retry_with_backoff(|| async {
         PublicStorage::new()
-            .map_err(BackupAppError::internal)?
-            .get(url)
+            .map_err(|e| format!("Failed to create PublicStorage: {}", e))?
+            .get(resource)
             .await
-            .map_err(|e| anyhow!("{}", e))
+            .map_err(|e| format!("{}", e))
     })
     .await
     {
         Ok(response) => response,
         Err(e) => {
             // TODO: Is it correct that 404s are returned as Error rather than Ok response with status = 404?
-            let error_str = e.to_string();
-            if error_str.contains("404") || error_str.to_lowercase().contains("not found") {
-                info!("404 response: Returning empty data for {}", url);
+            if e.contains("404") || e.to_lowercase().contains("not found") {
+                info!("404 response: Returning empty data for {}", resource);
                 return Ok(Vec::new());
             }
-            return Err(anyhow!("Failed to fetch data for {}: {}", url, e));
+            return Err(BackupAppError::internal(format!(
+                "Failed to fetch data for {}: {}",
+                resource, e
+            )));
         }
     };
 
-    let data = response
-        .bytes()
-        .await
-        .map_err(|e| anyhow!("Failed to read response bytes for {}: {}", url, e))?;
+    let data = response.bytes().await.map_err(|e| {
+        BackupAppError::internal(format!(
+            "Failed to read response bytes for {}: {}",
+            resource, e
+        ))
+    })?;
 
     let data_vec = data.to_vec();
     debug!("Successfully fetched data: {} bytes", data_vec.len());
@@ -523,7 +553,7 @@ async fn fetch_data_for_url(url: &str) -> Result<Vec<u8>> {
 }
 
 /// Generate mock data for a given pubky URL in developer mode
-fn get_mock_data_for_url(url: &str) -> Vec<u8> {
+fn get_mock_pubky_resource_data(url: &str) -> Vec<u8> {
     if url.contains("/profile") {
         r#"{"name":"Mock User","bio":"This is mock profile data for development","avatar":"https://example.com/avatar.jpg"}"#.as_bytes().to_vec()
     } else if url.contains("/posts/") {
@@ -598,7 +628,6 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::with_id("main")
                 .menu(&menu)
-                // TODO: Create logo
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("pubky-backup")
                 .on_menu_event(move |app, event| match event.id.as_ref() {
@@ -633,7 +662,9 @@ pub fn run() {
             get_last_pubky,
             backup_controller_begin,
             backup_controller_close,
-            force_sync_now
+            force_sync_now,
+            get_data_dir_path,
+            open_data_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -642,7 +673,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::EventInfo;
     use std::sync::Once;
     use tempfile::TempDir;
 
@@ -660,58 +690,57 @@ mod tests {
         setup_test_app_state();
 
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let temp_path = temp_dir.path().to_str().expect("Failed to get temp path");
-        let storage =
-            Arc::new(Storage::with_root(temp_path).expect("Failed to create test storage"));
+        let storage = Arc::new(
+            storage::AppStorage::new_with_single_path(&temp_dir.path().to_path_buf())
+                .expect("Failed to create test storage"),
+        );
 
-        let test_pubky = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
+        let test_pubky = PublicKey::from_str(crate::DEV_MODE_PUBKY).unwrap();
+        let other_pubky = "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo"; // Different valid pubky
         let test_url_1 = format!("pubky://{}/pub/posts/001", test_pubky);
         let test_url_2 = format!("pubky://{}/pub/profile", test_pubky);
-        let other_pubky_url = "pubky://other_pubky/pub/posts/001".to_string();
+        let other_pubky_url = format!("pubky://{}/pub/posts/001", other_pubky);
+        let invalid_url = "pubky://invalid/pub/posts/001".to_string();
+
+        fn make_valid_event(operation: Operation, url: String) -> Event {
+            let resource = PubkyResource::from_str(&url).expect("Test URL should be valid");
+            Event::Valid {
+                operation,
+                resource,
+            }
+        }
+
+        let test_resource_1 = PubkyResource::from_str(&test_url_1).unwrap();
+        let test_resource_2 = PubkyResource::from_str(&test_url_2).unwrap();
+        let other_resource = PubkyResource::from_str(&other_pubky_url).unwrap();
 
         let events = vec![
-            EventInfo {
-                operation: "PUT".to_string(),
-                url: test_url_1.clone(),
-            },
-            EventInfo {
-                operation: "PUT".to_string(),
-                url: test_url_2.clone(),
-            },
-            EventInfo {
-                operation: "PUT".to_string(),
-                url: other_pubky_url.clone(), // This should be skipped (wrong pubky)
-            },
-            EventInfo {
-                operation: "DEL".to_string(),
-                url: test_url_1.clone(), // Delete the first URL
+            make_valid_event(Operation::Put, test_url_1.clone()),
+            make_valid_event(Operation::Put, test_url_2.clone()),
+            make_valid_event(Operation::Put, other_pubky_url.clone()), // This should be skipped (wrong pubky)
+            make_valid_event(Operation::Delete, test_url_1.clone()),   // Delete the first URL
+            Event::Invalid {
+                url: invalid_url.clone(),
+                error: "Invalid pubky".to_string(),
             },
         ];
 
-        let result = process_events(events, test_pubky, storage.clone()).await;
+        let result = process_events(&events, &test_pubky, storage.clone()).await;
         assert!(result.is_ok(), "process_events should succeed");
 
         // The first URL should have been deleted, so it shouldn't exist
-        let read_result_1 = storage.read(&test_url_1).await;
-        assert!(read_result_1.is_err());
+        let read_result_1 = storage.read(&test_resource_1).await;
+        assert!(read_result_1.is_err(), "First URL should be deleted");
+
         // The second URL should still exist (only PUT, no DEL)
-        let read_result_2 = storage.read(&test_url_2).await;
-        assert!(read_result_2.is_ok());
+        let read_result_2 = storage.read(&test_resource_2).await;
+        assert!(read_result_2.is_ok(), "Second URL should exist");
+
         // The other pubky URL should not exist (was filtered out)
-        let read_result_other = storage.read(&other_pubky_url).await;
-        assert!(read_result_other.is_err());
-
-        // Test that unknown operations cause an error
-        let test_url_unknown = format!("pubky://{}/pub/unknown", test_pubky);
-        let unknown_events = vec![EventInfo {
-            operation: "UNKNOWN".to_string(),
-            url: test_url_unknown.clone(),
-        }];
-
-        let result = process_events(unknown_events, test_pubky, storage.clone()).await;
+        let read_result_other = storage.read(&other_resource).await;
         assert!(
-            result.is_err(),
-            "process_events should fail on unknown operation"
+            read_result_other.is_err(),
+            "Other pubky URL should not exist"
         );
     }
 }

@@ -3691,7 +3691,6 @@ dependencies = [
 name = "pubky-backup"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "chrono",
  "dirs 5.0.1",
  "env_logger",
@@ -3702,6 +3701,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_with",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",

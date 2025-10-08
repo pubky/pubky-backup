@@ -8,6 +8,7 @@ export class MainForm {
     this.isSyncing = false;
     this.nextSyncTime = 0;
     this.dataSize = 0;
+    this.dataDirPath = null;
     this.backupControllerError = null;
     this.statusInterval = null;
     this.countdownInterval = null;
@@ -58,6 +59,18 @@ export class MainForm {
           console.error("Force sync failed:", error);
         }
       });
+
+    // Open data directory button
+    document
+      .getElementById("open-data-dir")
+      .addEventListener("click", async () => {
+        try {
+          await invoke("open_data_dir");
+          console.log("Data directory opened");
+        } catch (error) {
+          console.error("Failed to open data directory:", error);
+        }
+      });
   }
 
   async loadStateOnInit() {
@@ -73,6 +86,7 @@ export class MainForm {
       this.setHeader();
       this.updateSyncStatus();
       this.updateBackupSize();
+      this.loadDataDirPath();
       this.startCountdown();
     } catch (error) {
       console.error("Error loading initial state:", error);
@@ -184,6 +198,22 @@ export class MainForm {
   updateBackupSize() {
     const backupSizeValue = document.getElementById("backup-size-value");
     backupSizeValue.textContent = this.formatFileSize(this.dataSize);
+  }
+
+  async loadDataDirPath() {
+    try {
+      this.dataDirPath = await invoke("get_data_dir_path");
+      const dataDirValue = document.getElementById("data-dir-value");
+      if (this.dataDirPath) {
+        dataDirValue.textContent = this.dataDirPath;
+      } else {
+        dataDirValue.textContent = "--";
+      }
+    } catch (error) {
+      console.error("Error loading data directory path:", error);
+      const dataDirValue = document.getElementById("data-dir-value");
+      dataDirValue.textContent = "Error";
+    }
   }
 
   formatFileSize(bytes) {
