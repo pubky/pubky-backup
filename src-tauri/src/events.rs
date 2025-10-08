@@ -1,5 +1,4 @@
-use crate::error::{BackupAppError, EventsError};
-use anyhow::anyhow;
+use crate::error::EventsError;
 use pubky::{Method, PubkyResource, PublicKey};
 use std::str::FromStr;
 
@@ -109,16 +108,17 @@ pub async fn fetch_events(cursor: &str, pubky: &PublicKey) -> Result<EventsRespo
     let response = crate::retry_with_backoff(|| {
         let url_str = url.to_string();
         async move {
-            let client = pubky::global_client().map_err(BackupAppError::internal)?;
+            let client = pubky::global_client()
+                .map_err(|e| format!("Failed to get global client: {}", e))?;
             client
                 .request(Method::GET, &url_str)
                 .send()
                 .await
-                .map_err(|e| anyhow!("Failed to fetch events data for {}: {}", url_str, e))
+                .map_err(|e| format!("Failed to fetch events data for {}: {}", url_str, e))
         }
     })
     .await
-    .map_err(|e| EventsError::FetchFailed(e.to_string()))?;
+    .map_err(EventsError::FetchFailed)?;
 
     let text = response.text().await.map_err(|e| {
         EventsError::InvalidResponse(format!("Failed to read response text: {}", e))

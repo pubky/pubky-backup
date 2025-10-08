@@ -4,7 +4,7 @@ use serde::{Serialize, Serializer};
 #[derive(thiserror::Error, Debug)]
 pub enum BackupAppError {
     #[error("Internal error: {0}")]
-    Internal(#[from] anyhow::Error),
+    Internal(String),
     #[error("Failed to find Homeserver for pubky")]
     HomeserverNotFound,
     #[error("Failed to find data for pubky")]
@@ -27,19 +27,19 @@ impl Serialize for BackupAppError {
 }
 
 impl BackupAppError {
-    pub fn internal<E: Into<anyhow::Error>>(err: E) -> Self {
-        Self::Internal(err.into())
+    pub fn internal<E: std::fmt::Display>(err: E) -> Self {
+        Self::Internal(err.to_string())
     }
 
     pub fn lock_failed() -> Self {
-        Self::Internal(anyhow::anyhow!("Failed to acquire lock"))
+        Self::Internal("Failed to acquire lock".to_string())
     }
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum StorageError {
     #[error("Internal error: {0}")]
-    Internal(#[from] anyhow::Error),
+    Internal(String),
     #[error("OpenDAL error: {0}")]
     OpenDalError(#[from] opendal::Error),
     #[error("Invalid UTF-8: {0}")]

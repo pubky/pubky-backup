@@ -3,7 +3,6 @@ mod events;
 mod storage;
 mod utils;
 
-use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
 use serde::Serialize;
@@ -216,7 +215,7 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     let pubky = state
         .pubky
         .clone()
-        .ok_or_else(|| BackupAppError::internal(anyhow!("Pubky not available in AppState")))?;
+        .ok_or_else(|| BackupAppError::internal("Pubky not available in AppState"))?;
 
     let (backup_control_tx, backup_control_rx) = broadcast::channel(5);
     state.backup_control_tx = Some(backup_control_tx);
@@ -240,9 +239,9 @@ async fn backup_controller_close() -> Result<(), BackupAppError> {
         debug!("Backup controller task stop signal sent");
         Ok(())
     } else {
-        Err(BackupAppError::internal(anyhow!(
-            "No Backup controller task running"
-        )))
+        Err(BackupAppError::internal(
+            "No Backup controller task running",
+        ))
     }
 }
 
@@ -259,14 +258,12 @@ async fn force_sync_now() -> Result<(), BackupAppError> {
                 debug!("Force sync signal sent");
                 Ok(())
             }
-            Err(_) => Err(BackupAppError::internal(anyhow!(
-                "Failed to send force sync signal"
-            ))),
+            Err(_) => Err(BackupAppError::internal("Failed to send force sync signal")),
         }
     } else {
-        Err(BackupAppError::internal(anyhow!(
-            "No Backup controller task running"
-        )))
+        Err(BackupAppError::internal(
+            "No Backup controller task running",
+        ))
     }
 }
 
@@ -522,34 +519,31 @@ async fn fetch_pubky_resource_data(resource: &PubkyResource) -> Result<Vec<u8>, 
 
     let response = match retry_with_backoff(|| async {
         PublicStorage::new()
-            .map_err(BackupAppError::internal)?
+            .map_err(|e| format!("Failed to create PublicStorage: {}", e))?
             .get(resource)
             .await
-            .map_err(|e| anyhow!("{}", e))
+            .map_err(|e| format!("{}", e))
     })
     .await
     {
         Ok(response) => response,
         Err(e) => {
             // TODO: Is it correct that 404s are returned as Error rather than Ok response with status = 404?
-            let error_str = e.to_string();
-            if error_str.contains("404") || error_str.to_lowercase().contains("not found") {
+            if e.contains("404") || e.to_lowercase().contains("not found") {
                 info!("404 response: Returning empty data for {}", resource);
                 return Ok(Vec::new());
             }
-            return Err(BackupAppError::internal(anyhow!(
+            return Err(BackupAppError::internal(format!(
                 "Failed to fetch data for {}: {}",
-                resource,
-                e
+                resource, e
             )));
         }
     };
 
     let data = response.bytes().await.map_err(|e| {
-        BackupAppError::internal(anyhow!(
+        BackupAppError::internal(format!(
             "Failed to read response bytes for {}: {}",
-            resource,
-            e
+            resource, e
         ))
     })?;
 

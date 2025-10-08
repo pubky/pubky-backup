@@ -1,11 +1,10 @@
-use anyhow::anyhow;
 use log::warn;
 
 /// Retry utility function for reqwest HTTP operations
-pub async fn retry_with_backoff<F, Fut>(operation: F) -> Result<reqwest::Response, anyhow::Error>
+pub async fn retry_with_backoff<F, Fut>(operation: F) -> Result<reqwest::Response, String>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<reqwest::Response, anyhow::Error>>,
+    Fut: std::future::Future<Output = Result<reqwest::Response, String>>,
 {
     let mut last_error = None;
     const MAX_RETRIES: u32 = 3;
@@ -27,7 +26,7 @@ where
                             .await;
                         continue;
                     } else {
-                        return Err(anyhow!(
+                        return Err(format!(
                             "Rate limited after maximum retries for {}",
                             response.url().as_str()
                         ));
@@ -38,7 +37,7 @@ where
                 if response.status().is_success() {
                     return Ok(response);
                 } else {
-                    return Err(anyhow!(
+                    return Err(format!(
                         "Request to {} failed with status: {}",
                         response.url().as_str(),
                         response.status()
@@ -46,18 +45,16 @@ where
                 }
             }
             Err(e) => {
-                let error_msg = format!("{}", e);
-
                 // Try find url context for the error message
-                let url_info = if let Some(start) = error_msg.find("https://") {
-                    let url_part = &error_msg[start..];
+                let url_info = if let Some(start) = e.find("https://") {
+                    let url_part = &e[start..];
                     if let Some(end) = url_part.find(' ') {
                         &url_part[..end]
                     } else {
                         url_part
                     }
-                } else if let Some(start) = error_msg.find("pubky://") {
-                    let url_part = &error_msg[start..];
+                } else if let Some(start) = e.find("pubky://") {
+                    let url_part = &e[start..];
                     if let Some(end) = url_part.find(' ') {
                         &url_part[..end]
                     } else {
@@ -68,10 +65,10 @@ where
                 };
 
                 // Handle HTTP transport errors - retry with standard delay
-                if (error_msg.contains("HTTP transport error")
-                    || error_msg.contains("error sending request")
-                    || error_msg.to_lowercase().contains("connection")
-                    || error_msg.to_lowercase().contains("network"))
+                if (e.contains("HTTP transport error")
+                    || e.contains("error sending request")
+                    || e.to_lowercase().contains("connection")
+                    || e.to_lowercase().contains("network"))
                     && attempt < MAX_RETRIES
                 {
                     warn!(
@@ -90,5 +87,5 @@ where
     }
 
     // Return the last error if we exhausted retries
-    Err(last_error.unwrap_or_else(|| anyhow!("Unexpected error in retry loop")))
+    Err(last_error.unwrap_or_else(|| "Unexpected error in retry loop".to_string()))
 }

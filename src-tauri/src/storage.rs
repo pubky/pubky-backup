@@ -137,7 +137,7 @@ impl AppDataStorage {
         match self.0.read(LAST_PUBKY_FILENAME).await {
             Ok(data) => {
                 let pubky = PublicKey::from_str(&String::from_utf8(data.to_vec())?)
-                    .map_err(|e| StorageError::Internal(e.into()))?;
+                    .map_err(|e| StorageError::Internal(e.to_string()))?;
                 Ok(Some(pubky))
             }
             Err(_) => Ok(None),
