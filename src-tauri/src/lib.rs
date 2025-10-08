@@ -6,7 +6,8 @@ mod utils;
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
 use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
-use serde::{Serialize, Serializer};
+use serde::Serialize;
+use serde_with::{serde_as, DisplayFromStr};
 
 use std::{
     env,
@@ -63,11 +64,14 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
 
 /// AppState is Tauri's Rust back-end State.
 /// Here we provide an interface for the front-end and manage other application tasks (eg. The Backup task)
-#[derive(Clone)]
+#[serde_as]
+#[derive(Clone, Serialize)]
 pub struct AppState {
     /// This session's pubky
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pubky: Option<PublicKey>,
     /// This session's pubky's homeserver. Stored only for displaying in GUI.
+    #[serde_as(as = "Option<DisplayFromStr>")]
     homeserver: Option<PublicKey>,
     /// Dev mode is for working on the front-end - doesnt make network calls and populates with mock data.
     developer_mode: bool,
@@ -79,30 +83,12 @@ pub struct AppState {
     data_dir_size: u64,
     /// Error message if backup controller failed, None if running normally
     backup_controller_error: Option<String>,
+    #[serde(skip)]
     storage: Option<Arc<storage::AppStorage>>,
+    #[serde(skip)]
     backup_control_tx: Option<broadcast::Sender<BackupControllerMessage>>,
+    #[serde(skip)]
     app_handle: Option<AppHandle>,
-}
-
-impl Serialize for AppState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("AppState", 7)?;
-        state.serialize_field("pubky", &self.pubky.as_ref().map(|pk| pk.to_string()))?;
-        state.serialize_field(
-            "homeserver",
-            &self.homeserver.as_ref().map(|pk| pk.to_string()),
-        )?;
-        state.serialize_field("developer_mode", &self.developer_mode)?;
-        state.serialize_field("is_syncing", &self.is_syncing)?;
-        state.serialize_field("next_sync_time", &self.next_sync_time)?;
-        state.serialize_field("data_dir_size", &self.data_dir_size)?;
-        state.serialize_field("backup_controller_error", &self.backup_controller_error)?;
-        state.end()
-    }
 }
 
 fn get_or_create_storage() -> Result<Arc<storage::AppStorage>, BackupAppError> {
