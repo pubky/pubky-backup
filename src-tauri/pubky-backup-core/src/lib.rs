@@ -26,12 +26,12 @@ pub enum BackupControllerMessage {
 
 #[derive(Debug, Clone)]
 pub enum BackupStatus {
-    Syncing { data_dir_size: u64 },
+    Syncing,
     Idle,
     Error { message: String },
 }
 
-/// Main backup controller that manages the backup process
+/// Main backup controller which manages the backup process
 pub struct BackupController {
     pubky: PublicKey,
     storage: Arc<AppStorage>,
@@ -57,7 +57,12 @@ impl BackupController {
         }
     }
 
-    /// Run the backup controller loop
+    /// Main backup task controller:
+    ///     1) Take a Public Key
+    ///     2) Fetch and store all public data
+    ///
+    /// Currently spins up a single async task which pulls batches of /events/ and processes them immediately.
+    /// Once all events have been processed it polls for more events every SYNC_INTERVAL_SECONDS.
     pub async fn run(mut self) {
         let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
 
@@ -65,9 +70,7 @@ impl BackupController {
             tokio::select! {
                 _ = interval.tick() => {
 
-                    let data_dir_size = self.storage.calculate_pubky_size(&self.pubky).await;
-                    info!("Data size for {}: {} bytes", self.pubky, data_dir_size);
-                    self.send_status(BackupStatus::Syncing { data_dir_size });
+                    self.send_status(BackupStatus::Syncing);
 
                     match self.perform_sync_batch().await {
                         Ok(ControlFlow::Continue(())) => {

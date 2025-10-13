@@ -203,7 +203,9 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
         .clone()
         .ok_or_else(|| BackupAppError::internal("Pubky not available in AppState"))?;
 
-    let storage = state.storage.clone()
+    let storage = state
+        .storage
+        .clone()
         .ok_or_else(|| BackupAppError::internal("Storage not available in AppState"))?;
 
     let developer_mode = state.developer_mode;
@@ -214,10 +216,13 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     state.backup_control_tx = Some(backup_control_tx);
 
     // Spawn a task to listen for status updates
+    let storage_clone = storage.clone();
+    let pubky_clone = pubky.clone();
     tauri::async_runtime::spawn(async move {
         while let Ok(status) = status_rx.recv().await {
             match status {
-                BackupStatus::Syncing { data_dir_size } => {
+                BackupStatus::Syncing => {
+                    let data_dir_size = storage_clone.calculate_pubky_size(&pubky_clone).await;
                     if let Ok(mut state) = APP_STATE.lock() {
                         state.is_syncing = true;
                         state.data_dir_size = data_dir_size;
