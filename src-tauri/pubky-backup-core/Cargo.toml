@@ -1,0 +1,17 @@
+[package]
+name = "pubky-backup-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pubky = "0.6.0-rc.4"
+opendal = { version = "0.54.0", features = ["services-fs"] }
+log = "0.4.28"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+futures-lite = "2.6.1"
+thiserror = "2.0.16"
+url = "2.5.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false }

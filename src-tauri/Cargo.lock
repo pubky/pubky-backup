@@ -3691,14 +3691,10 @@ dependencies = [
 name = "pubky-backup"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "dirs 5.0.1",
  "env_logger",
- "futures-lite",
  "log",
- "opendal",
  "pubky",
- "reqwest",
+ "pubky-backup-core",
  "serde",
  "serde_json",
  "serde_with",
@@ -3706,6 +3702,22 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "tempfile",
+ "thiserror 2.0.16",
+ "tokio",
+]
+
+[[package]]
+name = "pubky-backup-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs 5.0.1",
+ "futures-lite",
+ "log",
+ "opendal",
+ "pubky",
+ "reqwest",
+ "serde",
  "thiserror 2.0.16",
  "tokio",
  "url",

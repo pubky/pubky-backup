@@ -1,0 +1,91 @@
+use log::warn;
+
+/// Retry utility function for reqwest HTTP operations
+pub async fn retry_with_backoff<F, Fut>(operation: F) -> Result<reqwest::Response, String>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<reqwest::Response, String>>,
+{
+    let mut last_error = None;
+    const MAX_RETRIES: u32 = 3;
+
+    for attempt in 1..=MAX_RETRIES {
+        match operation().await {
+            Ok(response) => {
+                // Handle rate limiting (429) - use exponential backoff
+                if response.status() == 429 {
+                    if attempt < MAX_RETRIES {
+                        let sleep_time = 2 * attempt;
+                        warn!(
+                            "Request to {} rate limited on attempt {}, sleeping for {} seconds",
+                            response.url().as_str(),
+                            attempt,
+                            sleep_time
+                        );
+                        tokio::time::sleep(tokio::time::Duration::from_secs(sleep_time.into()))
+                            .await;
+                        continue;
+                    } else {
+                        return Err(format!(
+                            "Rate limited after maximum retries for {}",
+                            response.url().as_str()
+                        ));
+                    }
+                }
+
+                // Check if response is successful
+                if response.status().is_success() {
+                    return Ok(response);
+                } else {
+                    return Err(format!(
+                        "Request to {} failed with status: {}",
+                        response.url().as_str(),
+                        response.status()
+                    ));
+                }
+            }
+            Err(e) => {
+                // Try find url context for the error message
+                let url_info = if let Some(start) = e.find("https://") {
+                    let url_part = &e[start..];
+                    if let Some(end) = url_part.find(' ') {
+                        &url_part[..end]
+                    } else {
+                        url_part
+                    }
+                } else if let Some(start) = e.find("pubky://") {
+                    let url_part = &e[start..];
+                    if let Some(end) = url_part.find(' ') {
+                        &url_part[..end]
+                    } else {
+                        url_part
+                    }
+                } else {
+                    "unknown URL"
+                };
+
+                // Handle HTTP transport errors - retry with standard delay
+                if (e.contains("HTTP transport error")
+                    || e.contains("error sending request")
+                    || e.to_lowercase().contains("connection")
+                    || e.to_lowercase().contains("network"))
+                    && attempt < MAX_RETRIES
+                {
+                    warn!(
+                        "Request to {} failed on attempt {} with transport error: {}, retrying...",
+                        url_info, attempt, e
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    last_error = Some(e);
+                    continue;
+                }
+
+                // For other errors, don't retry
+                return Err(e);
+            }
+        }
+    }
+
+    // Return the last error if we exhausted retries
+    Err(last_error.unwrap_or_else(|| "Unexpected error in retry loop".to_string()))
+}
