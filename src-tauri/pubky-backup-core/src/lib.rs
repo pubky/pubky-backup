@@ -250,10 +250,16 @@ impl BackupController {
         } else {
             match events::fetch_events(&cursor, &self.pubky).await {
                 Ok(response) => response,
+                Err(crate::EventsError::FetchFailed(msg)) => {
+                    error!("Sync events fetch failed: {}", msg);
+                    // Treat network fetch failures as recoverable - retry on next sync interval
+                    return Ok(ControlFlow::Break(()));
+                }
                 Err(e) => {
-                    error!("Sync events fetch failed: {}", e);
+                    // Other errors (e.g., InvalidResponse) are critical
+                    error!("Critical sync error: {}", e);
                     self.storage
-                        .write_error("/events/", &format!("Fetch failed: {}", e))
+                        .write_error("/events/", &format!("Critical error: {}", e))
                         .await?;
                     return Err(e.into());
                 }
