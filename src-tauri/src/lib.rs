@@ -18,7 +18,9 @@ use tauri::{
 use tokio::sync::broadcast;
 
 use crate::error::BackupAppError;
-use pubky_backup_core::{AppStorage, BackupController, BackupControllerMessage, BackupStatus};
+use pubky_backup_core::{
+    AppStorage, BackupController, BackupControllerMessage, BackupControllerStatus,
+};
 
 /// Developer mode mock pubky (for testing without real pubky)
 const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
@@ -221,7 +223,7 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     tauri::async_runtime::spawn(async move {
         while let Ok(status) = status_rx.recv().await {
             match status {
-                BackupStatus::Syncing => {
+                BackupControllerStatus::Syncing => {
                     let data_dir_size = storage_clone.calculate_pubky_size(&pubky_clone).await;
                     if let Ok(mut state) = APP_STATE.lock() {
                         state.is_syncing = true;
@@ -229,14 +231,14 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
                         update_tray_icon(&state);
                     }
                 }
-                BackupStatus::Idle => {
+                BackupControllerStatus::Idle => {
                     if let Ok(mut state) = APP_STATE.lock() {
                         state.is_syncing = false;
                         state.next_sync_time = next_sync_time();
                         update_tray_icon(&state);
                     }
                 }
-                BackupStatus::Error { message } => {
+                BackupControllerStatus::Error { message } => {
                     if let Ok(mut state) = APP_STATE.lock() {
                         state.is_syncing = false;
                         state.backup_controller_error = Some(message);

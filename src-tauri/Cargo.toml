@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "pubky-backup-core"]
+
 [package]
 name = "pubky-backup"
 version = "0.1.0"

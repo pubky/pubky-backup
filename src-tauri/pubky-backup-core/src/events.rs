@@ -1,5 +1,6 @@
 use crate::error::EventsError;
-use pubky::{Method, PubkyResource, PublicKey};
+use pubky::{PubkyResource, PublicKey};
+use reqwest::Method;
 use std::str::FromStr;
 
 const EVENTS_LIMIT: u32 = 1000;

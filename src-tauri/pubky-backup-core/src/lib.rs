@@ -5,7 +5,7 @@ mod utils;
 
 pub use error::{BackupError, EventsError, StorageError};
 pub use events::{Event, EventsResponse, Operation};
-pub use storage::{AppStorage, get_data_directory};
+pub use storage::{get_data_directory, AppStorage};
 pub use utils::retry_with_backoff;
 
 use log::{debug, error, info, warn};
@@ -18,34 +18,108 @@ use tokio::time;
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
 
+/// Messages that can be sent to control the backup controller
 #[derive(Debug, Clone)]
 pub enum BackupControllerMessage {
+    /// Stop the backup controller
     Cancel,
+    /// Trigger an immediate sync (bypasses the interval timer)
     ForceSync,
 }
 
+/// Status updates emitted by the backup controller
 #[derive(Debug, Clone)]
-pub enum BackupStatus {
+pub enum BackupControllerStatus {
+    /// Controller is actively syncing data
     Syncing,
+    /// Controller is idle, waiting for next sync interval
     Idle,
+    /// Controller encountered a critical error and stopped
     Error { message: String },
 }
 
-/// Main backup controller which manages the backup process
+/// Main backup controller which manages the backup process for a Pubky user.
+///
+/// The controller continuously syncs data from a Pubky homeserver to local storage,
+/// polling for new events at regular intervals.
+///
+/// # Example
+///
+/// ```no_run
+/// use pubky_backup_core::{AppStorage, BackupController, BackupControllerMessage, BackupStatus};
+/// use pubky::PublicKey;
+/// use std::sync::Arc;
+/// use std::str::FromStr;
+/// use tokio::sync::broadcast;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     // Initialize storage
+///     let storage = Arc::new(AppStorage::new()?);
+///
+///     // Parse the pubky to backup
+///     let pubky = PublicKey::from_str("your_pubky_here")?;
+///
+///     // Create channels for control and status
+///     let (control_tx, control_rx) = broadcast::channel(5);
+///     let (status_tx, mut status_rx) = broadcast::channel(5);
+///
+///     // Create and spawn the backup controller
+///     let controller = BackupController::new(
+///         pubky,
+///         storage,
+///         Some(control_rx),
+///         Some(status_tx),
+///         false, // developer_mode
+///     );
+///
+///     // Spawn the controller in a background task
+///     tokio::spawn(controller.run());
+///
+///     // Listen for status updates
+///     tokio::spawn(async move {
+///         while let Ok(status) = status_rx.recv().await {
+///             match status {
+///                 BackupStatus::Syncing => println!("Syncing..."),
+///                 BackupStatus::Idle => println!("Idle"),
+///                 BackupStatus::Error { message } => println!("Error: {}", message),
+///             }
+///         }
+///     });
+///
+///     // Send control messages as needed
+///     control_tx.send(BackupControllerMessage::ForceSync)?;
+///
+///     Ok(())
+/// }
+/// ```
 pub struct BackupController {
     pubky: PublicKey,
     storage: Arc<AppStorage>,
     control_rx: Option<broadcast::Receiver<BackupControllerMessage>>,
-    status_tx: Option<broadcast::Sender<BackupStatus>>,
+    status_tx: Option<broadcast::Sender<BackupControllerStatus>>,
     developer_mode: bool,
 }
 
 impl BackupController {
+    /// Creates a new backup controller instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `pubky` - The public key to backup data for
+    /// * `storage` - Shared storage instance for persisting data
+    /// * `control_rx` - Optional receiver for control messages (Cancel, ForceSync)
+    /// * `status_tx` - Optional sender for status updates
+    /// * `developer_mode` - If true, uses mock data instead of real network calls
+    ///
+    /// # Returns
+    ///
+    /// A new `BackupController` ready to be run via [`BackupController::run`]
     pub fn new(
         pubky: PublicKey,
         storage: Arc<AppStorage>,
         control_rx: Option<broadcast::Receiver<BackupControllerMessage>>,
-        status_tx: Option<broadcast::Sender<BackupStatus>>,
+        status_tx: Option<broadcast::Sender<BackupControllerStatus>>,
         developer_mode: bool,
     ) -> Self {
         Self {
@@ -57,12 +131,24 @@ impl BackupController {
         }
     }
 
-    /// Main backup task controller:
-    ///     1) Take a Public Key
-    ///     2) Fetch and store all public data
+    /// Runs the backup controller loop.
     ///
-    /// Currently spins up a single async task which pulls batches of /events/ and processes them immediately.
-    /// Once all events have been processed it polls for more events every SYNC_INTERVAL_SECONDS.
+    /// This method consumes `self` and runs until:
+    /// - A `Cancel` message is received via the control channel
+    /// - A critical error occurs during syncing
+    /// - The control channel is closed
+    ///
+    /// The controller will:
+    /// 1. Poll for new events from the pubky's homeserver
+    /// 2. Download and store new/updated resources
+    /// 3. Delete resources that have been removed
+    /// 4. Wait for the next sync interval (30 seconds)
+    /// 5. Emit status updates via the status channel
+    ///
+    /// # Panics
+    ///
+    /// This method should not panic under normal circumstances. All errors are
+    /// logged and result in an `Error` status being sent before the controller stops.
     pub async fn run(mut self) {
         let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
 
@@ -70,7 +156,7 @@ impl BackupController {
             tokio::select! {
                 _ = interval.tick() => {
 
-                    self.send_status(BackupStatus::Syncing);
+                    self.send_status(BackupControllerStatus::Syncing);
 
                     match self.perform_sync_batch().await {
                         Ok(ControlFlow::Continue(())) => {
@@ -85,14 +171,14 @@ impl BackupController {
                         }
                         Err(e) => {
                             error!("Critical sync batch failure - terminating backup controller: {}", e);
-                            self.send_status(BackupStatus::Error {
+                            self.send_status(BackupControllerStatus::Error {
                                 message: format!("Critical sync batch failure: {}", e),
                             });
                             return;
                         }
                     }
 
-                    self.send_status(BackupStatus::Idle);
+                    self.send_status(BackupControllerStatus::Idle);
                 }
                 msg = async {
                     if let Some(ref mut rx) = self.control_rx {
@@ -104,7 +190,7 @@ impl BackupController {
                     match msg {
                         Ok(BackupControllerMessage::Cancel) => {
                             info!("Backup controller task cancelled");
-                            self.send_status(BackupStatus::Idle);
+                            self.send_status(BackupControllerStatus::Idle);
                             break;
                         }
                         Ok(BackupControllerMessage::ForceSync) => {
@@ -125,7 +211,7 @@ impl BackupController {
         }
     }
 
-    fn send_status(&self, status: BackupStatus) {
+    fn send_status(&self, status: BackupControllerStatus) {
         if let Some(tx) = &self.status_tx {
             let _ = tx.send(status);
         }
@@ -223,7 +309,10 @@ impl BackupController {
     }
 
     /// Fetch data from a PubkyResource url
-    async fn fetch_pubky_resource_data(&self, resource: &PubkyResource) -> Result<Vec<u8>, BackupError> {
+    async fn fetch_pubky_resource_data(
+        &self,
+        resource: &PubkyResource,
+    ) -> Result<Vec<u8>, BackupError> {
         if self.developer_mode {
             return Ok(get_mock_pubky_resource_data(&resource.to_string()));
         }
@@ -283,5 +372,345 @@ fn get_mock_pubky_resource_data(url: &str) -> Vec<u8> {
         )
         .as_bytes()
         .to_vec()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+    use tempfile::TempDir;
+
+    // Test helper to create a storage instance with a temporary directory
+    fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AppStorage::new_with_single_path(&temp_dir.path().to_path_buf()).unwrap();
+        (Arc::new(storage), temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_controller_runs_and_can_be_cancelled() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+
+        let (control_tx, control_rx) = broadcast::channel(1);
+        let (status_tx, mut status_rx) = broadcast::channel(1);
+
+        let controller = BackupController::new(
+            pubky,
+            storage,
+            Some(control_rx),
+            Some(status_tx),
+            true, // developer_mode
+        );
+
+        // Spawn the controller
+        let handle = tokio::spawn(controller.run());
+
+        // Wait for first status update (should be Syncing or Idle)
+        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
+            .await
+            .expect("Should receive status")
+            .unwrap();
+
+        match status {
+            BackupControllerStatus::Syncing | BackupControllerStatus::Idle => {}
+            BackupControllerStatus::Error { message } => panic!("Unexpected error: {}", message),
+        }
+
+        // Send cancel message
+        control_tx.send(BackupControllerMessage::Cancel).unwrap();
+
+        // Controller should finish
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("Controller should finish")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_controller_force_sync() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+
+        let (control_tx, control_rx) = broadcast::channel(1);
+        let (status_tx, mut status_rx) = broadcast::channel(1);
+
+        let controller = BackupController::new(
+            pubky,
+            storage,
+            Some(control_rx),
+            Some(status_tx),
+            true, // developer_mode
+        );
+
+        tokio::spawn(controller.run());
+
+        // Trigger force sync
+        control_tx.send(BackupControllerMessage::ForceSync).unwrap();
+
+        // Should receive Syncing status
+        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
+            .await
+            .expect("Should receive status")
+            .unwrap();
+
+        assert!(matches!(status, BackupControllerStatus::Syncing));
+
+        // Cleanup
+        control_tx.send(BackupControllerMessage::Cancel).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_perform_sync_batch_initial_sync() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            None,
+            None,
+            true, // developer_mode
+        );
+
+        // First sync should return Continue (more events available)
+        let result = controller.perform_sync_batch().await.unwrap();
+        assert!(matches!(result, ControlFlow::Continue(())));
+
+        // Cursor should have been updated
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert!(!cursor.is_empty());
+        assert_eq!(cursor, "cursor001");
+    }
+
+    #[tokio::test]
+    async fn test_perform_sync_batch_completes() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            None,
+            None,
+            true, // developer_mode
+        );
+
+        // Perform multiple syncs until completion
+        let mut iterations = 0;
+        loop {
+            match controller.perform_sync_batch().await.unwrap() {
+                ControlFlow::Continue(()) => {
+                    iterations += 1;
+                    if iterations > 10 {
+                        panic!("Too many iterations - sync should complete");
+                    }
+                }
+                ControlFlow::Break(()) => break,
+            }
+        }
+
+        // Should have completed after processing all mock events
+        assert!(iterations > 0);
+    }
+
+    #[tokio::test]
+    async fn test_perform_sync_batch_stores_data() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            None,
+            None,
+            true, // developer_mode
+        );
+
+        // Perform sync
+        let _ = controller.perform_sync_batch().await.unwrap();
+
+        // Check that data was stored
+        let size = storage.calculate_pubky_size(&pubky).await;
+        assert!(size > 0, "Data should have been stored");
+    }
+
+    #[tokio::test]
+    async fn test_process_events_handles_put() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            None,
+            None,
+            true, // developer_mode
+        );
+
+        // Create a PUT event
+        let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
+        let events = vec![Event::Valid {
+            operation: Operation::Put,
+            resource: resource.clone(),
+        }];
+
+        // Process events
+        controller.process_events(&events).await.unwrap();
+
+        // Verify data was written
+        let data = storage.read(&resource).await.unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_process_events_handles_delete() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            None,
+            None,
+            true, // developer_mode
+        );
+
+        // First create a resource
+        let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
+        storage
+            .write(&resource, b"test data".to_vec())
+            .await
+            .unwrap();
+
+        // Verify it exists
+        assert!(storage.read(&resource).await.is_ok());
+
+        // Create a DELETE event
+        let events = vec![Event::Valid {
+            operation: Operation::Delete,
+            resource: resource.clone(),
+        }];
+
+        // Process events
+        controller.process_events(&events).await.unwrap();
+
+        // Verify data was deleted
+        assert!(storage.read(&resource).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_process_events_handles_invalid() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            None,
+            None,
+            true, // developer_mode
+        );
+
+        // Create an invalid event
+        let events = vec![Event::Invalid {
+            url: "invalid://url".to_string(),
+            error: "Test error".to_string(),
+        }];
+
+        // Process events - should not fail, just log
+        controller.process_events(&events).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_process_events_skips_other_pubky() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky1 =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky2 =
+            PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
+
+        let controller = BackupController::new(
+            pubky1.clone(),
+            storage.clone(),
+            None,
+            None,
+            true, // developer_mode
+        );
+
+        // Create event for a different pubky
+        let resource = PubkyResource::new(pubky2.clone(), "/pub/test.json").unwrap();
+        let events = vec![Event::Valid {
+            operation: Operation::Put,
+            resource: resource.clone(),
+        }];
+
+        // Process events
+        controller.process_events(&events).await.unwrap();
+
+        // Verify data was NOT written for the other pubky
+        assert!(storage.read(&resource).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mock_pubky_resource_data() {
+        // Test profile data
+        let profile_data = get_mock_pubky_resource_data("pubky://test/pub/profile.json");
+        assert!(!profile_data.is_empty());
+        assert!(String::from_utf8(profile_data)
+            .unwrap()
+            .contains("Mock User"));
+
+        // Test posts data
+        let post_data = get_mock_pubky_resource_data("pubky://test/pub/posts/123");
+        assert!(!post_data.is_empty());
+        assert!(String::from_utf8(post_data).unwrap().contains("123"));
+
+        // Test follows data
+        let follows_data = get_mock_pubky_resource_data("pubky://test/pub/follows");
+        assert!(!follows_data.is_empty());
+        assert!(String::from_utf8(follows_data).unwrap().contains("pubky1"));
+
+        // Test generic data
+        let generic_data = get_mock_pubky_resource_data("pubky://test/pub/other");
+        assert!(!generic_data.is_empty());
+        assert!(String::from_utf8(generic_data)
+            .unwrap()
+            .contains("Mock data"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_pubky_resource_data_developer_mode() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            None,
+            None,
+            true, // developer_mode
+        );
+
+        // Fetch mock resource data
+        let resource = PubkyResource::new(pubky.clone(), "/pub/profile.json").unwrap();
+        let data = controller
+            .fetch_pubky_resource_data(&resource)
+            .await
+            .unwrap();
+
+        // Should return mock data
+        assert!(!data.is_empty());
+        assert!(String::from_utf8(data).unwrap().contains("Mock User"));
     }
 }

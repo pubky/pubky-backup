@@ -1,10 +1,8 @@
 .vscode
 .claude
 
-/target/
-/Cargo.lock
+**/target/
+**/Cargo.lock
 
 /node_modules
 /src/dist/
-
-/.pubky-backup/
