@@ -205,26 +205,39 @@ async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
 /// To be called by front-end upon entering main screen.
 #[tauri::command]
 async fn backup_controller_begin() -> Result<(), BackupAppError> {
-    let mut state = APP_STATE
-        .lock()
-        .map_err(|_| BackupAppError::lock_failed())?;
+    // Extract required data from state
+    let (pubky, storage) = {
+        let state = APP_STATE
+            .lock()
+            .map_err(|_| BackupAppError::lock_failed())?;
 
-    let pubky = state
-        .pubky
-        .clone()
-        .ok_or_else(|| BackupAppError::internal("Pubky not available in AppState"))?;
+        let pubky = state
+            .pubky
+            .clone()
+            .ok_or_else(|| BackupAppError::internal("Pubky not available in AppState"))?;
 
-    let storage = state
-        .storage
-        .clone()
-        .ok_or_else(|| BackupAppError::internal("Storage not available in AppState"))?;
+        let storage = state
+            .storage
+            .clone()
+            .ok_or_else(|| BackupAppError::internal("Storage not available in AppState"))?;
 
+        (pubky, storage)
+    };
+
+    // Initialise state
     let (backup_control_tx, backup_control_rx) = broadcast::channel(5);
     let (status_tx, mut status_rx) = broadcast::channel(5);
+    let initial_size = storage.calculate_pubky_size(&pubky).await;
+    {
+        let mut state = APP_STATE
+            .lock()
+            .map_err(|_| BackupAppError::lock_failed())?;
 
-    state.backup_process = Some(BackupProcess {
-        backup_control_tx: backup_control_tx.clone(),
-    });
+        state.backup_process = Some(BackupProcess {
+            backup_control_tx: backup_control_tx.clone(),
+        });
+        state.data_dir_size = initial_size;
+    }
 
     // Spawn a task to listen for status updates
     let storage_clone = storage.clone();
@@ -232,11 +245,18 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     tauri::async_runtime::spawn(async move {
         while let Ok(status) = status_rx.recv().await {
             match status {
-                BackupControllerStatus::Syncing => {
-                    let data_dir_size = storage_clone.calculate_pubky_size(&pubky_clone).await;
+                BackupControllerStatus::Syncing { events_processed } => {
+                    // Recalculate size only if events were processed (data changed)
+                    let data_dir_size = if events_processed > 0 {
+                        Some(storage_clone.calculate_pubky_size(&pubky_clone).await)
+                    } else {
+                        None
+                    };
                     if let Ok(mut state) = APP_STATE.lock() {
                         state.is_syncing = true;
-                        state.data_dir_size = data_dir_size;
+                        if let Some(size) = data_dir_size {
+                            state.data_dir_size = size;
+                        }
                         update_tray_icon(&state);
                     }
                 }

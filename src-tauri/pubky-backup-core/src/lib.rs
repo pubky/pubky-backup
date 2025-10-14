@@ -48,7 +48,10 @@ pub enum BackupControllerMessage {
 #[derive(Debug, Clone)]
 pub enum BackupControllerStatus {
     /// Controller is actively syncing data
-    Syncing,
+    Syncing {
+        /// Number of events processed in this sync batch
+        events_processed: usize,
+    },
     /// Controller is idle, waiting for next sync interval
     Idle,
     /// Controller has been stopped gracefully
@@ -65,7 +68,7 @@ pub enum BackupControllerStatus {
 /// # Example
 ///
 /// ```no_run
-/// use pubky_backup_core::{AppStorage, BackupController, BackupControllerMessage, BackupStatus};
+/// use pubky_backup_core::{AppStorage, BackupController, BackupControllerMessage, BackupControllerStatus};
 /// use pubky::PublicKey;
 /// use std::sync::Arc;
 /// use std::str::FromStr;
@@ -98,9 +101,12 @@ pub enum BackupControllerStatus {
 ///     tokio::spawn(async move {
 ///         while let Ok(status) = status_rx.recv().await {
 ///             match status {
-///                 BackupStatus::Syncing => println!("Syncing..."),
-///                 BackupStatus::Idle => println!("Idle"),
-///                 BackupStatus::Error { message } => println!("Error: {}", message),
+///                 BackupControllerStatus::Syncing { events_processed } => {
+///                     println!("Syncing... ({} events)", events_processed)
+///                 },
+///                 BackupControllerStatus::Idle => println!("Idle"),
+///                 BackupControllerStatus::Ended => println!("Ended"),
+///                 BackupControllerStatus::Error { message } => println!("Error: {}", message),
 ///             }
 ///         }
 ///     });
@@ -175,11 +181,12 @@ impl BackupController {
             tokio::select! {
                 _ = interval.tick() => {
 
-                    self.send_status(BackupControllerStatus::Syncing);
+                    self.send_status(BackupControllerStatus::Syncing{events_processed: 0});
 
                     match self.perform_sync_batch().await {
-                        Ok(ControlFlow::Continue(())) => {
-                            // More events available, keep syncing immediately
+                        Ok(ControlFlow::Continue(events_processed)) => {
+                            // More events available, send status and keep syncing immediately
+                            self.send_status(BackupControllerStatus::Syncing { events_processed });
                             interval = time::interval_at(
                                 time::Instant::now(),
                                 Duration::from_secs(SYNC_INTERVAL_SECONDS)
@@ -244,7 +251,7 @@ impl BackupController {
     }
 
     /// Process one batch of sync events
-    async fn perform_sync_batch(&self) -> Result<ControlFlow<(), ()>, BackupError> {
+    async fn perform_sync_batch(&self) -> Result<ControlFlow<(), usize>, BackupError> {
         let cursor = self.storage.read_cursor(&self.pubky).await?;
 
         // Check if developer mode is enabled - use mock events if so
@@ -281,7 +288,7 @@ impl BackupController {
                 .write_cursor(&self.pubky, events_response.cursor.clone())
                 .await?;
 
-            Ok(ControlFlow::Continue(()))
+            Ok(ControlFlow::Continue(num_events))
         } else {
             Ok(ControlFlow::Break(()))
         }
@@ -425,8 +432,8 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let (control_tx, control_rx) = broadcast::channel(1);
-        let (status_tx, mut status_rx) = broadcast::channel(1);
+        let (control_tx, control_rx) = broadcast::channel(5);
+        let (status_tx, mut status_rx) = broadcast::channel(10);
 
         let controller = BackupController::new(pubky, storage, Some(control_rx), Some(status_tx));
 
@@ -440,7 +447,7 @@ mod tests {
             .unwrap();
 
         match status {
-            BackupControllerStatus::Syncing | BackupControllerStatus::Idle => {}
+            BackupControllerStatus::Syncing { .. } | BackupControllerStatus::Idle => {}
             _ => panic!("Unexpected BackupControllerStatus"),
         }
 
@@ -459,8 +466,8 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let (control_tx, control_rx) = broadcast::channel(1);
-        let (status_tx, mut status_rx) = broadcast::channel(1);
+        let (control_tx, control_rx) = broadcast::channel(5);
+        let (status_tx, mut status_rx) = broadcast::channel(10);
 
         let controller = BackupController::new(pubky, storage, Some(control_rx), Some(status_tx));
 
@@ -475,7 +482,7 @@ mod tests {
             .expect("Should receive status")
             .unwrap();
 
-        assert!(matches!(status, BackupControllerStatus::Syncing));
+        assert!(matches!(status, BackupControllerStatus::Syncing { .. }));
 
         // Cleanup
         control_tx.send(BackupControllerMessage::Cancel).unwrap();
@@ -490,7 +497,7 @@ mod tests {
 
         // First sync should return Continue (more events available)
         let result = controller.perform_sync_batch().await.unwrap();
-        assert!(matches!(result, ControlFlow::Continue(())));
+        assert!(matches!(result, ControlFlow::Continue(_)));
 
         // Cursor should have been updated
         let cursor = storage.read_cursor(&pubky).await.unwrap();
@@ -509,7 +516,7 @@ mod tests {
         let mut iterations = 0;
         loop {
             match controller.perform_sync_batch().await.unwrap() {
-                ControlFlow::Continue(()) => {
+                ControlFlow::Continue(_) => {
                     iterations += 1;
                     if iterations > 10 {
                         panic!("Too many iterations - sync should complete");
