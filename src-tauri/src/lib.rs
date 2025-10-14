@@ -25,6 +25,12 @@ use pubky_backup_core::{
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
 
+/// Represents a running backup process
+#[derive(Clone)]
+pub struct BackupProcess {
+    backup_control_tx: broadcast::Sender<BackupControllerMessage>,
+}
+
 /// Get the next sync time (current time + sync interval)
 fn next_sync_time() -> u64 {
     std::time::SystemTime::now()
@@ -44,7 +50,7 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     data_dir_size: 0,
     backup_controller_error: None,
     storage: None,
-    backup_control_tx: None,
+    backup_process: None,
     app_handle: None,
 });
 
@@ -72,7 +78,7 @@ pub struct AppState {
     #[serde(skip)]
     storage: Option<Arc<AppStorage>>,
     #[serde(skip)]
-    backup_control_tx: Option<broadcast::Sender<BackupControllerMessage>>,
+    backup_process: Option<BackupProcess>,
     #[serde(skip)]
     app_handle: Option<AppHandle>,
 }
@@ -216,7 +222,9 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     let (backup_control_tx, backup_control_rx) = broadcast::channel(5);
     let (status_tx, mut status_rx) = broadcast::channel(5);
 
-    state.backup_control_tx = Some(backup_control_tx);
+    state.backup_process = Some(BackupProcess {
+        backup_control_tx: backup_control_tx.clone(),
+    });
 
     // Spawn a task to listen for status updates
     let storage_clone = storage.clone();
@@ -239,11 +247,18 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
                         update_tray_icon(&state);
                     }
                 }
+                BackupControllerStatus::Ended => {
+                    if let Ok(mut state) = APP_STATE.lock() {
+                        state.is_syncing = false;
+                        state.backup_process = None;
+                        update_tray_icon(&state);
+                    }
+                }
                 BackupControllerStatus::Error { message } => {
                     if let Ok(mut state) = APP_STATE.lock() {
                         state.is_syncing = false;
                         state.backup_controller_error = Some(message);
-                        state.backup_control_tx = None;
+                        state.backup_process = None;
                         update_tray_icon(&state);
                     }
                 }
@@ -264,13 +279,12 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
 /// To be controlled by front-end on exiting main screen.
 #[tauri::command]
 async fn backup_controller_close() -> Result<(), BackupAppError> {
-    let mut state = APP_STATE
+    let state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
-    state.backup_controller_error = None;
 
-    if let Some(control_tx) = state.backup_control_tx.take() {
-        let _ = control_tx.send(BackupControllerMessage::Cancel);
+    if let Some(backup_process) = &state.backup_process {
+        let _ = backup_process.backup_control_tx.send(BackupControllerMessage::Cancel);
         debug!("Backup controller task stop signal sent");
         Ok(())
     } else {
@@ -287,8 +301,8 @@ async fn force_sync_now() -> Result<(), BackupAppError> {
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
 
-    if let Some(control_tx) = &state.backup_control_tx {
-        match control_tx.send(BackupControllerMessage::ForceSync) {
+    if let Some(backup_process) = &state.backup_process {
+        match backup_process.backup_control_tx.send(BackupControllerMessage::ForceSync) {
             Ok(_) => {
                 debug!("Force sync signal sent");
                 Ok(())
@@ -332,17 +346,30 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppErro
 fn update_tray_icon(state: &AppState) {
     if let Some(app_handle) = &state.app_handle {
         if let Some(tray) = app_handle.tray_by_id("main") {
-            // Update tooltip (doesnt seem to be visible on Ubuntu)
-            let tooltip = if state.is_syncing {
-                "🔄 Pubky Backup - Syncing..."
-            } else {
-                "✅ Pubky Backup - Synced"
+            let (tooltip, title) = match (&state.backup_process, state.is_syncing) {
+                (None, _) => {
+                    // Backup process not running - no icon
+                    ("Pubky Backup", None)
+                }
+                (Some(_), true) => {
+                    // Running and syncing
+                    ("🔄 Pubky Backup - Syncing...", Some("🔄"))
+                }
+                (Some(_), false) => {
+                    // Running but idle
+                    ("✅ Pubky Backup - Synced", Some("✅"))
+                }
             };
+
             let _ = tray.set_tooltip(Some(tooltip));
 
-            let title = if state.is_syncing { "🔄" } else { "✅" };
-            if let Err(e) = tray.set_title(Some(title)) {
-                error!("Failed to update tray title: {}", e);
+            if let Some(title_str) = title {
+                if let Err(e) = tray.set_title(Some(title_str)) {
+                    error!("Failed to update tray title: {}", e);
+                }
+            } else {
+                // Clear title when backup process is not running
+                let _ = tray.set_title(None::<&str>);
             }
         }
     }

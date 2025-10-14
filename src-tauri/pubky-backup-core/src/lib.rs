@@ -51,6 +51,8 @@ pub enum BackupControllerStatus {
     Syncing,
     /// Controller is idle, waiting for next sync interval
     Idle,
+    /// Controller has been stopped gracefully
+    Ended,
     /// Controller encountered a critical error and stopped
     Error { message: String },
 }
@@ -207,7 +209,8 @@ impl BackupController {
                     match msg {
                         Ok(BackupControllerMessage::Cancel) => {
                             info!("Backup controller task cancelled");
-                            self.send_status(BackupControllerStatus::Idle);
+                            self.send_status(BackupControllerStatus::Ended);
+                            // Break out of loop ending task
                             break;
                         }
                         Ok(BackupControllerMessage::ForceSync) => {
@@ -220,6 +223,7 @@ impl BackupController {
                         }
                         Err(e) => {
                             warn!("Backup controller task closed: {}", e);
+                            self.send_status(BackupControllerStatus::Ended);
                             break;
                         }
                     }
@@ -230,7 +234,9 @@ impl BackupController {
 
     fn send_status(&self, status: BackupControllerStatus) {
         if let Some(tx) = &self.status_tx {
-            let _ = tx.send(status);
+            if let Err(e) = tx.send(status.clone()) {
+                warn!("Failed to send status update (no receivers or lagging): {:?}", e);
+            }
         }
     }
 
@@ -425,8 +431,8 @@ mod tests {
             .unwrap();
 
         match status {
-            BackupControllerStatus::Syncing | BackupControllerStatus::Idle => {}
-            BackupControllerStatus::Error { message } => panic!("Unexpected error: {}", message),
+            BackupControllerStatus::Syncing|BackupControllerStatus::Idle=>{}
+            _=>panic!("Unexpected BackupControllerStatus"),
         }
 
         // Send cancel message
