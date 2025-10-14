@@ -284,7 +284,9 @@ async fn backup_controller_close() -> Result<(), BackupAppError> {
         .map_err(|_| BackupAppError::lock_failed())?;
 
     if let Some(backup_process) = &state.backup_process {
-        let _ = backup_process.backup_control_tx.send(BackupControllerMessage::Cancel);
+        let _ = backup_process
+            .backup_control_tx
+            .send(BackupControllerMessage::Cancel);
         debug!("Backup controller task stop signal sent");
         Ok(())
     } else {
@@ -302,7 +304,10 @@ async fn force_sync_now() -> Result<(), BackupAppError> {
         .map_err(|_| BackupAppError::lock_failed())?;
 
     if let Some(backup_process) = &state.backup_process {
-        match backup_process.backup_control_tx.send(BackupControllerMessage::ForceSync) {
+        match backup_process
+            .backup_control_tx
+            .send(BackupControllerMessage::ForceSync)
+        {
             Ok(_) => {
                 debug!("Force sync signal sent");
                 Ok(())

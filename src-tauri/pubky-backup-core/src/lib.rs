@@ -235,7 +235,10 @@ impl BackupController {
     fn send_status(&self, status: BackupControllerStatus) {
         if let Some(tx) = &self.status_tx {
             if let Err(e) = tx.send(status.clone()) {
-                warn!("Failed to send status update (no receivers or lagging): {:?}", e);
+                warn!(
+                    "Failed to send status update (no receivers or lagging): {:?}",
+                    e
+                );
             }
         }
     }
@@ -437,8 +440,8 @@ mod tests {
             .unwrap();
 
         match status {
-            BackupControllerStatus::Syncing|BackupControllerStatus::Idle=>{}
-            _=>panic!("Unexpected BackupControllerStatus"),
+            BackupControllerStatus::Syncing | BackupControllerStatus::Idle => {}
+            _ => panic!("Unexpected BackupControllerStatus"),
         }
 
         // Send cancel message
