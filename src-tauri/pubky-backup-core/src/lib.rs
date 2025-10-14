@@ -10,13 +10,30 @@ pub use utils::retry_with_backoff;
 
 use log::{debug, error, info, warn};
 use pubky::{PubkyResource, PublicKey, PublicStorage};
+use std::env;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time;
 
+/// Developer mode mock pubky (for testing without real pubky)
+pub const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
 const SYNC_INTERVAL_SECONDS: u64 = 30;
+
+/// Check if developer mode is enabled via environment variable.
+///
+/// Developer mode uses mock data instead of real network calls.
+/// Enable by setting `PUBKY_DEVELOPER_MODE` environment variable.
+///
+/// # Example
+///
+/// ```bash
+/// PUBKY_DEVELOPER_MODE=1 cargo run
+/// ```
+pub fn is_developer_mode() -> bool {
+    env::var("PUBKY_DEVELOPER_MODE").is_ok()
+}
 
 /// Messages that can be sent to control the backup controller
 #[derive(Debug, Clone)]
@@ -70,7 +87,6 @@ pub enum BackupControllerStatus {
 ///         storage,
 ///         Some(control_rx),
 ///         Some(status_tx),
-///         false, // developer_mode
 ///     );
 ///
 ///     // Spawn the controller in a background task
@@ -98,7 +114,6 @@ pub struct BackupController {
     storage: Arc<AppStorage>,
     control_rx: Option<broadcast::Receiver<BackupControllerMessage>>,
     status_tx: Option<broadcast::Sender<BackupControllerStatus>>,
-    developer_mode: bool,
 }
 
 impl BackupController {
@@ -110,24 +125,26 @@ impl BackupController {
     /// * `storage` - Shared storage instance for persisting data
     /// * `control_rx` - Optional receiver for control messages (Cancel, ForceSync)
     /// * `status_tx` - Optional sender for status updates
-    /// * `developer_mode` - If true, uses mock data instead of real network calls
     ///
     /// # Returns
     ///
     /// A new `BackupController` ready to be run via [`BackupController::run`]
+    ///
+    /// # Developer Mode
+    ///
+    /// Enable developer mode by setting the `PUBKY_DEVELOPER_MODE` environment variable.
+    /// In developer mode, the controller uses mock data instead of real network calls.
     pub fn new(
         pubky: PublicKey,
         storage: Arc<AppStorage>,
         control_rx: Option<broadcast::Receiver<BackupControllerMessage>>,
         status_tx: Option<broadcast::Sender<BackupControllerStatus>>,
-        developer_mode: bool,
     ) -> Self {
         Self {
             pubky,
             storage,
             control_rx,
             status_tx,
-            developer_mode,
         }
     }
 
@@ -222,7 +239,7 @@ impl BackupController {
         let cursor = self.storage.read_cursor(&self.pubky).await?;
 
         // Check if developer mode is enabled - use mock events if so
-        let events_response = if self.developer_mode {
+        let events_response = if is_developer_mode() {
             events::get_mock_events_response(&cursor)?
         } else {
             match events::fetch_events(&cursor, &self.pubky).await {
@@ -271,7 +288,7 @@ impl BackupController {
                 } => {
                     // Skip events for other pubkys
                     // TODO: Filter server-side
-                    if &resource.owner != &self.pubky {
+                    if resource.owner != self.pubky {
                         continue;
                     }
 
@@ -313,7 +330,7 @@ impl BackupController {
         &self,
         resource: &PubkyResource,
     ) -> Result<Vec<u8>, BackupError> {
-        if self.developer_mode {
+        if is_developer_mode() {
             return Ok(get_mock_pubky_resource_data(&resource.to_string()));
         }
 
@@ -391,19 +408,12 @@ mod tests {
     #[tokio::test]
     async fn test_controller_runs_and_can_be_cancelled() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
         let (control_tx, control_rx) = broadcast::channel(1);
         let (status_tx, mut status_rx) = broadcast::channel(1);
 
-        let controller = BackupController::new(
-            pubky,
-            storage,
-            Some(control_rx),
-            Some(status_tx),
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky, storage, Some(control_rx), Some(status_tx));
 
         // Spawn the controller
         let handle = tokio::spawn(controller.run());
@@ -432,19 +442,12 @@ mod tests {
     #[tokio::test]
     async fn test_controller_force_sync() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
         let (control_tx, control_rx) = broadcast::channel(1);
         let (status_tx, mut status_rx) = broadcast::channel(1);
 
-        let controller = BackupController::new(
-            pubky,
-            storage,
-            Some(control_rx),
-            Some(status_tx),
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky, storage, Some(control_rx), Some(status_tx));
 
         tokio::spawn(controller.run());
 
@@ -466,16 +469,9 @@ mod tests {
     #[tokio::test]
     async fn test_perform_sync_batch_initial_sync() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            None,
-            None,
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
 
         // First sync should return Continue (more events available)
         let result = controller.perform_sync_batch().await.unwrap();
@@ -490,16 +486,9 @@ mod tests {
     #[tokio::test]
     async fn test_perform_sync_batch_completes() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            None,
-            None,
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
 
         // Perform multiple syncs until completion
         let mut iterations = 0;
@@ -522,16 +511,9 @@ mod tests {
     #[tokio::test]
     async fn test_perform_sync_batch_stores_data() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            None,
-            None,
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
 
         // Perform sync
         let _ = controller.perform_sync_batch().await.unwrap();
@@ -544,16 +526,9 @@ mod tests {
     #[tokio::test]
     async fn test_process_events_handles_put() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            None,
-            None,
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
 
         // Create a PUT event
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
@@ -573,16 +548,9 @@ mod tests {
     #[tokio::test]
     async fn test_process_events_handles_delete() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            None,
-            None,
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
 
         // First create a resource
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
@@ -610,16 +578,9 @@ mod tests {
     #[tokio::test]
     async fn test_process_events_handles_invalid() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            None,
-            None,
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
 
         // Create an invalid event
         let events = vec![Event::Invalid {
@@ -634,18 +595,11 @@ mod tests {
     #[tokio::test]
     async fn test_process_events_skips_other_pubky() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky1 =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky1 = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky2 =
             PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
 
-        let controller = BackupController::new(
-            pubky1.clone(),
-            storage.clone(),
-            None,
-            None,
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky1.clone(), storage.clone(), None, None);
 
         // Create event for a different pubky
         let resource = PubkyResource::new(pubky2.clone(), "/pub/test.json").unwrap();
@@ -691,16 +645,9 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_pubky_resource_data_developer_mode() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky =
-            PublicKey::from_str("g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y").unwrap();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            None,
-            None,
-            true, // developer_mode
-        );
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
 
         // Fetch mock resource data
         let resource = PubkyResource::new(pubky.clone(), "/pub/profile.json").unwrap();

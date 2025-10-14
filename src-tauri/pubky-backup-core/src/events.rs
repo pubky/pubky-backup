@@ -1,4 +1,4 @@
-use crate::error::EventsError;
+use crate::{error::EventsError, DEV_MODE_PUBKY};
 use pubky::{PubkyResource, PublicKey};
 use reqwest::Method;
 use std::str::FromStr;
@@ -127,9 +127,6 @@ pub async fn fetch_events(cursor: &str, pubky: &PublicKey) -> Result<EventsRespo
 
     EventsResponse::from_response(&text)
 }
-
-/// Developer mode mock pubky (for testing without real pubky)
-const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
 
 /// Generate mock events response for developer mode
 pub fn get_mock_events_response(cursor: &str) -> Result<EventsResponse, EventsError> {

@@ -19,11 +19,10 @@ use tokio::sync::broadcast;
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    AppStorage, BackupController, BackupControllerMessage, BackupControllerStatus,
+    is_developer_mode, AppStorage, BackupController, BackupControllerMessage,
+    BackupControllerStatus, DEV_MODE_PUBKY,
 };
 
-/// Developer mode mock pubky (for testing without real pubky)
-const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
 const SYNC_INTERVAL_SECONDS: u64 = 30;
 
 /// Get the next sync time (current time + sync interval)
@@ -60,7 +59,7 @@ pub struct AppState {
     /// This session's pubky's homeserver. Stored only for displaying in GUI.
     #[serde_as(as = "Option<DisplayFromStr>")]
     homeserver: Option<PublicKey>,
-    /// Dev mode is for working on the front-end - doesnt make network calls and populates with mock data.
+    /// Developer mode status
     developer_mode: bool,
     /// Current sync status
     is_syncing: bool,
@@ -94,8 +93,8 @@ fn get_or_create_storage() -> Result<Arc<AppStorage>, BackupAppError> {
 /// Take a pubky, verify and add to State ready for usage.
 #[tauri::command]
 async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
-    if let Ok(mut state) = APP_STATE.lock() {
-        if state.developer_mode {
+    if is_developer_mode() {
+        if let Ok(mut state) = APP_STATE.lock() {
             let dev_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode pubky is valid");
             let dev_homeserver =
                 PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode homeserver is valid");
@@ -153,7 +152,11 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
 #[tauri::command]
 async fn fetch_state() -> Result<AppState, BackupAppError> {
     match APP_STATE.lock() {
-        Ok(state) => Ok(state.clone()),
+        Ok(mut state) => {
+            // Always sync developer_mode from environment variable
+            state.developer_mode = is_developer_mode();
+            Ok(state.clone())
+        }
         Err(_) => Err(BackupAppError::lock_failed()),
     }
 }
@@ -210,8 +213,6 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
         .clone()
         .ok_or_else(|| BackupAppError::internal("Storage not available in AppState"))?;
 
-    let developer_mode = state.developer_mode;
-
     let (backup_control_tx, backup_control_rx) = broadcast::channel(5);
     let (status_tx, mut status_rx) = broadcast::channel(5);
 
@@ -251,13 +252,8 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     });
 
     // Spawn the backup controller
-    let controller = BackupController::new(
-        pubky,
-        storage,
-        Some(backup_control_rx),
-        Some(status_tx),
-        developer_mode,
-    );
+    let controller =
+        BackupController::new(pubky, storage, Some(backup_control_rx), Some(status_tx));
 
     tauri::async_runtime::spawn(controller.run());
     info!("Backup controller task started");
@@ -355,23 +351,17 @@ fn update_tray_icon(state: &AppState) {
 pub fn run() {
     env_logger::init();
 
-    let developer_mode = env::args()
-        .collect::<Vec<String>>()
-        .contains(&"--developer".to_string());
-
-    if let Ok(mut state) = APP_STATE.lock() {
-        state.developer_mode = developer_mode;
-        if developer_mode {
-            info!("Developer mode enabled");
-        }
+    if is_developer_mode() {
+        info!("Developer mode enabled via PUBKY_DEVELOPER_MODE environment variable");
     }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // Store app handle for tray updates
+            // Store app handle for tray updates and sync developer mode
             if let Ok(mut state) = APP_STATE.lock() {
                 state.app_handle = Some(app.handle().clone());
+                state.developer_mode = is_developer_mode();
             }
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
