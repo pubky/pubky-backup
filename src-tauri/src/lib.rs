@@ -59,7 +59,7 @@ pub struct AppState {
     /// This session's pubky's homeserver. Stored only for displaying in GUI.
     #[serde_as(as = "Option<DisplayFromStr>")]
     homeserver: Option<PublicKey>,
-    /// Developer mode status
+    /// Developer mode for working on the front-end - doesnt make network calls and populates with mock data.
     developer_mode: bool,
     /// Current sync status
     is_syncing: bool,

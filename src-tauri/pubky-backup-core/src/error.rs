@@ -1,6 +1,3 @@
-/// Errors from the backup crate - these are lower-level errors
-/// that get wrapped by BackupAppError in the main crate
-
 #[derive(thiserror::Error, Debug)]
 pub enum BackupError {
     #[error("Storage error: {0}")]

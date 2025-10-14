@@ -35,7 +35,7 @@ Development mode is useful when working on the GUI: it skips network calls by au
 **You do not need to enter a valid pubky in this mode. A default is preset.**
 
 ```
-cargo tauri dev -- -- --developer
+PUBKY_DEVELOPER_MODE=1 cargo tauri dev
 ```
 
 
