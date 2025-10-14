@@ -270,7 +270,12 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     let controller =
         BackupController::new(pubky, storage, Some(backup_control_rx), Some(status_tx));
 
-    tauri::async_runtime::spawn(controller.run());
+    // Keep the sender alive by moving it into the spawned task
+    // This prevents the channel from closing if state.backup_process is temporarily cleared for whatever reason
+    tauri::async_runtime::spawn(async move {
+        let _tx = backup_control_tx;
+        controller.run().await;
+    });
     info!("Backup controller task started");
     Ok(())
 }
