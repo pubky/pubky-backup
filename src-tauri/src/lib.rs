@@ -243,44 +243,59 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     let storage_clone = storage.clone();
     let pubky_clone = pubky.clone();
     tauri::async_runtime::spawn(async move {
-        while let Ok(status) = status_rx.recv().await {
-            match status {
-                BackupControllerStatus::Syncing { events_processed } => {
-                    // Recalculate size only if events were processed (data changed)
-                    let data_dir_size = if events_processed > 0 {
-                        Some(storage_clone.calculate_pubky_size(&pubky_clone).await)
-                    } else {
-                        None
-                    };
-                    if let Ok(mut state) = APP_STATE.lock() {
-                        state.is_syncing = true;
-                        if let Some(size) = data_dir_size {
-                            state.data_dir_size = size;
+        loop {
+            match status_rx.recv().await {
+                Ok(status) => match status {
+                    BackupControllerStatus::Syncing { events_processed } => {
+                        // Recalculate size only if events were processed (data changed)
+                        let data_dir_size = if events_processed > 0 {
+                            Some(storage_clone.calculate_pubky_size(&pubky_clone).await)
+                        } else {
+                            None
+                        };
+                        if let Ok(mut state) = APP_STATE.lock() {
+                            state.is_syncing = true;
+                            if let Some(size) = data_dir_size {
+                                state.data_dir_size = size;
+                            }
+                            update_tray_icon(&state);
                         }
-                        update_tray_icon(&state);
                     }
-                }
-                BackupControllerStatus::Idle => {
+                    BackupControllerStatus::Idle => {
+                        if let Ok(mut state) = APP_STATE.lock() {
+                            state.is_syncing = false;
+                            state.next_sync_time = next_sync_time();
+                            update_tray_icon(&state);
+                        }
+                    }
+                    BackupControllerStatus::Ended => {
+                        if let Ok(mut state) = APP_STATE.lock() {
+                            state.is_syncing = false;
+                            state.backup_process = None;
+                            update_tray_icon(&state);
+                        }
+                        break;
+                    }
+                    BackupControllerStatus::Error { message } => {
+                        if let Ok(mut state) = APP_STATE.lock() {
+                            state.is_syncing = false;
+                            state.backup_process = None;
+                            state.backup_controller_error = Some(message);
+                            update_tray_icon(&state);
+                        }
+                        break;
+                    }
+                },
+                Err(e) => {
+                    // Channel closed unexpectedly (controller crashed/panicked)
                     if let Ok(mut state) = APP_STATE.lock() {
                         state.is_syncing = false;
-                        state.next_sync_time = next_sync_time();
-                        update_tray_icon(&state);
-                    }
-                }
-                BackupControllerStatus::Ended => {
-                    if let Ok(mut state) = APP_STATE.lock() {
-                        state.is_syncing = false;
+                        state.backup_controller_error =
+                            Some(format!("Backup controller stopped unexpectedly: {}", e));
                         state.backup_process = None;
                         update_tray_icon(&state);
                     }
-                }
-                BackupControllerStatus::Error { message } => {
-                    if let Ok(mut state) = APP_STATE.lock() {
-                        state.is_syncing = false;
-                        state.backup_controller_error = Some(message);
-                        state.backup_process = None;
-                        update_tray_icon(&state);
-                    }
+                    break;
                 }
             }
         }
