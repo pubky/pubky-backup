@@ -237,6 +237,7 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
             backup_control_tx: backup_control_tx.clone(),
         });
         state.data_dir_size = initial_size;
+        state.backup_controller_error = None;
     }
 
     // Spawn a task to listen for status updates
