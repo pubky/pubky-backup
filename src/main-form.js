@@ -136,35 +136,16 @@ export class MainForm {
   async fetchAndUpdateStatus() {
     try {
       const data = await invoke("fetch_state");
-      const newIsSyncing = data.is_syncing;
-      const newNextSyncTime = data.next_sync_time;
-      const newDataSize = data.data_dir_size || 0;
-      const newBackupControllerError = data.backup_controller_error;
 
-      // Status
-      if (newIsSyncing !== this.isSyncing) {
-        this.isSyncing = newIsSyncing;
-        this.updateSyncStatus();
-      }
-
-      // Next sync time
-      if (newNextSyncTime !== this.nextSyncTime) {
-        this.nextSyncTime = newNextSyncTime;
-      }
-
-      // Data size
-      if (newDataSize !== this.dataSize) {
-        this.dataSize = newDataSize;
-        this.updateBackupSize();
-      }
-
-      // Backup controller error
-      if (newBackupControllerError !== this.backupControllerError) {
-        this.backupControllerError = newBackupControllerError;
-        if (this.backupControllerError) {
-          alert(`Internal Error: ${this.backupControllerError}`);
-          this.returnToStartup();
-        }
+      this.isSyncing = data.is_syncing;
+      this.nextSyncTime = data.next_sync_time;
+      this.dataSize = data.data_dir_size || 0;
+      this.backupControllerError = data.backup_controller_error;
+      this.updateSyncStatus();
+      this.updateBackupSize();
+      if (this.backupControllerError) {
+        alert(`Internal Error: ${this.backupControllerError}`);
+        this.returnToStartup();
       }
     } catch (error) {
       console.error("Error fetching status:", error);
