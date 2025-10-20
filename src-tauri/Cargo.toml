@@ -36,6 +36,7 @@ env_logger = "0.11.8"
 thiserror = "2.0.16"
 tokio = { version = "1", features = ["full"] }
 pubky-backup-core = { path = "pubky-backup-core" }
+hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3.0"

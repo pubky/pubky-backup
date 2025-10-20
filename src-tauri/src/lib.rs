@@ -1,7 +1,7 @@
 mod error;
 
 use log::{debug, error, info};
-use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
+use pubky::{Keypair, Pkdns, PubkySession, PubkySigner, PublicKey};
 use serde::Serialize;
 use serde_with::{serde_as, DisplayFromStr};
 
@@ -44,13 +44,14 @@ fn next_sync_time() -> u64 {
 pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     pubky: None,
     homeserver: None,
-    developer_mode: false,
+    developer_mode: is_developer_mode(),
     is_syncing: false,
     next_sync_time: 0,
     data_dir_size: 0,
     backup_controller_error: None,
     storage: None,
     backup_process: None,
+    session: None,
     app_handle: None,
 });
 
@@ -80,6 +81,8 @@ pub struct AppState {
     #[serde(skip)]
     backup_process: Option<BackupProcess>,
     #[serde(skip)]
+    session: Option<Arc<PubkySession>>,
+    #[serde(skip)]
     app_handle: Option<AppHandle>,
 }
 
@@ -96,9 +99,9 @@ fn get_or_create_storage() -> Result<Arc<AppStorage>, BackupAppError> {
     Ok(state.storage.clone().unwrap())
 }
 
-/// Take a pubky, verify and add to State ready for usage.
+/// Take a private key, establish a session, and add to State ready for usage.
 #[tauri::command]
-async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
+async fn init_app_state(private_key_str: &str) -> Result<(), BackupAppError> {
     if is_developer_mode() {
         if let Ok(mut state) = APP_STATE.lock() {
             let dev_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode pubky is valid");
@@ -106,14 +109,38 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
                 PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode homeserver is valid");
             state.pubky = Some(dev_pubky);
             state.homeserver = Some(dev_homeserver);
+            state.developer_mode = true;
+            state.session = None;
             return Ok(());
         }
     }
 
-    let pubky = PublicKey::from_str(pubky_str)
-        .map_err(|e| BackupAppError::InvalidPubkyFormat(e.to_string()))?;
+    let cleaned_key = private_key_str.trim();
+    if cleaned_key.is_empty() {
+        return Err(BackupAppError::InvalidPrivateKey(
+            "Private key cannot be empty".to_string(),
+        ));
+    }
 
-    // Check pubky is discoverable
+    let secret_bytes =
+        hex::decode(cleaned_key).map_err(|e| BackupAppError::InvalidPrivateKey(e.to_string()))?;
+
+    if secret_bytes.len() != 32 {
+        return Err(BackupAppError::InvalidPrivateKey(format!(
+            "Expected 32 bytes but got {}",
+            secret_bytes.len()
+        )));
+    }
+
+    let mut secret_key = [0u8; 32];
+    secret_key.copy_from_slice(&secret_bytes);
+
+    let signer = PubkySigner::new(Keypair::from_secret_key(&secret_key))
+        .map_err(BackupAppError::internal)?;
+    let session = signer.signin().await.map_err(BackupAppError::internal)?;
+
+    let pubky = session.info().public_key().clone();
+
     let homeserver_pubky_str = Pkdns::new()
         .map_err(BackupAppError::internal)?
         .get_homeserver_of(&pubky)
@@ -122,27 +149,15 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
     let homeserver_pubky = PublicKey::from_str(&homeserver_pubky_str)
         .map_err(|e| BackupAppError::InvalidPubkyFormat(e.to_string()))?;
 
-    // Check Pubky has /pub/ data on Homeserver
-    let pubky_storage = PublicStorage::new().map_err(BackupAppError::internal)?;
+    info!("Authenticated session for Pubky: {}", pubky);
 
-    let path = PubkyResource::new(pubky.clone(), "/pub/").map_err(BackupAppError::internal)?;
-
-    // TODO: We should check the pub key has data with exists(), but currently incorrectly returns 401 (https://github.com/pubky/pubky-core/issues/236)
-    // if !pubky_storage.exists(path.clone()).await.map_err(|e| format!("Internal error: {}", e))? {
-    //     return Err(format!("Failed to find data for pubky"));
-    // }
-
-    // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
-    if (pubky_storage.get(path).await).is_err() {
-        return Err(BackupAppError::DataNotFound);
-    }
-    info!("Pubky is valid for Backup: {}", pubky);
-
-    // Save the last used pubky to storage
-    get_or_create_storage()
-        .map_err(BackupAppError::internal)?
+    let storage = get_or_create_storage().map_err(BackupAppError::internal)?;
+    storage
         .write_last_pubky(&pubky)
         .await
+        .map_err(BackupAppError::internal)?;
+    storage
+        .ensure_pub_data_dir(&pubky)
         .map_err(BackupAppError::internal)?;
 
     let mut state = APP_STATE
@@ -150,6 +165,8 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
         .map_err(|_| BackupAppError::lock_failed())?;
     state.pubky = Some(pubky);
     state.homeserver = Some(homeserver_pubky);
+    state.session = Some(Arc::new(session));
+    state.developer_mode = is_developer_mode();
 
     Ok(())
 }
@@ -206,7 +223,7 @@ async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
 #[tauri::command]
 async fn backup_controller_begin() -> Result<(), BackupAppError> {
     // Extract required data from state
-    let (pubky, storage) = {
+    let (pubky, storage, session, developer_mode) = {
         let state = APP_STATE
             .lock()
             .map_err(|_| BackupAppError::lock_failed())?;
@@ -221,8 +238,22 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
             .clone()
             .ok_or_else(|| BackupAppError::internal("Storage not available in AppState"))?;
 
-        (pubky, storage)
+        let session = state.session.clone();
+        let developer_mode = state.developer_mode;
+
+        (pubky, storage, session, developer_mode)
     };
+
+    if developer_mode {
+        info!("Developer mode active - skipping backup controller startup");
+        return Ok(());
+    }
+
+    let session = session.ok_or_else(|| BackupAppError::internal("Session not initialised"))?;
+
+    let local_pub_dir = storage
+        .ensure_pub_data_dir(&pubky)
+        .map_err(BackupAppError::internal)?;
 
     // Initialise state
     let (backup_control_tx, backup_control_rx) = broadcast::channel(5);
@@ -303,8 +334,13 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     });
 
     // Spawn the backup controller
-    let controller =
-        BackupController::new(pubky, storage, Some(backup_control_rx), Some(status_tx));
+    let controller = BackupController::new(
+        pubky,
+        session,
+        local_pub_dir,
+        Some(backup_control_rx),
+        Some(status_tx),
+    );
 
     // Keep the sender alive by moving it into the spawned task
     // This prevents the channel from closing if state.backup_process is temporarily cleared for whatever reason
@@ -320,6 +356,10 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
 /// To be controlled by front-end on exiting main screen.
 #[tauri::command]
 async fn backup_controller_close() -> Result<(), BackupAppError> {
+    if is_developer_mode() {
+        return Ok(());
+    }
+
     let state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
@@ -344,16 +384,20 @@ async fn force_sync_now() -> Result<(), BackupAppError> {
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
 
+    if is_developer_mode() {
+        return Ok(());
+    }
+
     if let Some(backup_process) = &state.backup_process {
         match backup_process
             .backup_control_tx
             .send(BackupControllerMessage::ForceSync)
         {
             Ok(_) => {
-                debug!("Force sync signal sent");
+                debug!("Manual upload signal sent");
                 Ok(())
             }
-            Err(_) => Err(BackupAppError::internal("Failed to send force sync signal")),
+            Err(_) => Err(BackupAppError::internal("Failed to send upload signal")),
         }
     } else {
         Err(BackupAppError::internal(

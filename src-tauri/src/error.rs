@@ -11,10 +11,10 @@ pub enum BackupAppError {
     DataNotFound,
     #[error("Invalid pubky format: {0}")]
     InvalidPubkyFormat(String),
+    #[error("Invalid private key: {0}")]
+    InvalidPrivateKey(String),
     #[error("Storage error: {0}")]
     Storage(#[from] pubky_backup_core::StorageError),
-    #[error("Events error: {0}")]
-    Events(#[from] pubky_backup_core::EventsError),
     #[error("Backup error: {0}")]
     Backup(#[from] pubky_backup_core::BackupError),
 }

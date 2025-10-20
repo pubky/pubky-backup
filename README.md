@@ -1,8 +1,10 @@
 # Pubky Backup App
 
-A basic multi-platform desktop application which takes a `pubky` and downloads all of it's files to a local directory.
+A basic multi-platform desktop application which signs in with a Pubky private key and keeps the homeserver in sync with a local folder.
 
-The idea is for this to be a lightweight background process which continually keeps a Pubky User's local backup in-sync with it's published data. 
+Drop new or updated files into the app's data directory and they will be uploaded to the authenticated homeserver on the next sync cycle (or immediately via the "Upload now" button).
+
+On startup the app prompts for your Pubky private key (hex encoded). The key is used only to establish a session; only the derived public key is persisted for convenience.
 
 ## Download and run
 

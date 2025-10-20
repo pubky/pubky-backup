@@ -54,9 +54,9 @@ export class MainForm {
       .addEventListener("click", async () => {
         try {
           await invoke("force_sync_now");
-          console.log("Force sync triggered");
+          console.log("Manual upload triggered");
         } catch (error) {
-          console.error("Force sync failed:", error);
+          console.error("Manual upload failed:", error);
         }
       });
 

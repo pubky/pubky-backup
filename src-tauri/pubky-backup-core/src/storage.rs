@@ -470,6 +470,16 @@ impl AppStorage {
         get_data_directory()
     }
 
+    /// Ensure the local pub directory exists for the current user and return its path.
+    pub fn ensure_pub_data_dir(&self, pubky: &PublicKey) -> Result<PathBuf, StorageError> {
+        let base_dir = get_data_directory()?;
+        let pub_dir = base_dir.join(pubky.to_string()).join("pub");
+        std::fs::create_dir_all(&pub_dir).map_err(|e| {
+            StorageError::DirectoryCreation(format!("{}: {}", pub_dir.display(), e))
+        })?;
+        Ok(pub_dir)
+    }
+
     /// Write the last used pubky to storage.
     ///
     /// Used to remember which pubky was last backed up by the application.

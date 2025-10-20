@@ -15,17 +15,13 @@
           </div>
         </div>
         <div id="startup-form" class="form-box box">
-          <p>Insert your Pubky public key:</p>
+          <p>Enter your Pubky private key (hexadecimal):</p>
           <input
-            id="pubky-input"
-            type="text"
-            placeholder="g1b6wp8bhhxt..."
-            list="previous-keys"
+            id="private-key-input"
+            type="password"
+            placeholder="e.g. 0f1a..."
             autocomplete="off"
           />
-          <datalist id="previous-keys">
-            <!-- Options populated dynamically -->
-          </datalist>
           <div>
             <!-- Add spinner to both sides to centre label - Sorry.-->
             <button id="continue-btn" class="button-container standard-btn"><span class="spinner" style="visibility: hidden;">◐</span>Continue<span id="continue-spinner" class="spinner hidden">◐</span></button>
@@ -44,21 +40,21 @@
           </div>
         </div>
         <div id="main-form" class="form-box box hidden">
-          <h2>Public Key: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
+          <h2>Your Pubky: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
           <h2>Homeserver: <span id="homeserver-display"></span> <button id="copy-homeserver" class="copy-btn" title="Copy full homeserver">📋</button></h2>
           <div id="sync-status" class="sync-status">
             <span id="status-text">Synced</span>
             <span id="status-spinner" class="spinner hidden">◐</span>
             <span id="status-tick" class="tick hidden">✓</span>
           </div>
-          <div id="backup-size" class="backup-size">Current Backup size: <span id="backup-size-value">--</span></div>
+          <div id="backup-size" class="backup-size">Current folder size: <span id="backup-size-value">--</span></div>
           <div id="data-dir-display" class="data-dir-display">
             Data dir: <span id="data-dir-value">--</span>
             <button id="open-data-dir" class="icon-btn" title="Open data directory">📁</button>
           </div>
           <div id="button-container" class="button-container">
             <div id="countdown-display" class="countdown">Next sync in: <span id="countdown-timer">--</span></div>
-            <button id="force-sync-btn" class="standard-btn">Force sync Now</button>
+            <button id="force-sync-btn" class="standard-btn">Upload now</button>
           </div>
         </div>
       </main>

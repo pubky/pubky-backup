@@ -2,8 +2,6 @@
 pub enum BackupError {
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
-    #[error("Events error: {0}")]
-    Events(#[from] EventsError),
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -41,8 +39,6 @@ impl std::fmt::Display for OperationFailedError {
 
 #[derive(thiserror::Error, Debug)]
 pub enum EventsError {
-    #[error("Failed to fetch events: {0}")]
-    FetchFailed(String),
-    #[error("Invalid response: {0}")]
-    InvalidResponse(String),
+    #[error("Deprecated events error: {0}")]
+    Deprecated(String),
 }
