@@ -17,6 +17,10 @@ pub enum BackupAppError {
     Events(#[from] pubky_backup_core::EventsError),
     #[error("Backup error: {0}")]
     Backup(#[from] pubky_backup_core::BackupError),
+    #[error("Invalid .pkarr file: {0}")]
+    InvalidPkarr(String),
+    #[error("Private key does not match the selected public key")]
+    PrivateKeyMismatch,
 }
 
 impl Serialize for BackupAppError {

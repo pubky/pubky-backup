@@ -467,7 +467,10 @@ impl AppStorage {
     ///
     /// Path to the backup data directory
     pub fn get_backup_data_dir(&self) -> Result<PathBuf, StorageError> {
-        get_data_directory()
+        let dir = get_data_directory()?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| StorageError::DirectoryCreation(format!("{}: {}", dir.display(), e)))?;
+        Ok(dir)
     }
 
     /// Write the last used pubky to storage.

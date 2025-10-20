@@ -1,5 +1,6 @@
 mod error;
 mod events;
+mod local_sync;
 mod storage;
 mod utils;
 
@@ -9,13 +10,17 @@ pub use storage::{get_data_directory, AppStorage};
 pub use utils::retry_with_backoff;
 
 use log::{debug, error, info, warn};
-use pubky::{PubkyResource, PublicKey, PublicStorage};
+use pubky::{PubkyResource, PublicKey, PublicStorage, SessionStorage};
 use std::env;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time;
+
+use crate::local_sync::{
+    diff_manifest, load_manifest, manifest_path, save_manifest, scan_local_files,
+};
 
 /// Developer mode mock pubky (for testing without real pubky)
 pub const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
@@ -92,6 +97,7 @@ pub enum BackupControllerStatus {
 ///         storage,
 ///         Some(control_rx),
 ///         Some(status_tx),
+///         None,
 ///     );
 ///
 ///     // Spawn the controller in a background task
@@ -122,6 +128,7 @@ pub struct BackupController {
     storage: Arc<AppStorage>,
     control_rx: Option<broadcast::Receiver<BackupControllerMessage>>,
     status_tx: Option<broadcast::Sender<BackupControllerStatus>>,
+    session_storage: Option<SessionStorage>,
 }
 
 impl BackupController {
@@ -147,12 +154,14 @@ impl BackupController {
         storage: Arc<AppStorage>,
         control_rx: Option<broadcast::Receiver<BackupControllerMessage>>,
         status_tx: Option<broadcast::Sender<BackupControllerStatus>>,
+        session_storage: Option<SessionStorage>,
     ) -> Self {
         Self {
             pubky,
             storage,
             control_rx,
             status_tx,
+            session_storage,
         }
     }
 
@@ -252,6 +261,10 @@ impl BackupController {
 
     /// Process one batch of sync events
     async fn perform_sync_batch(&self) -> Result<ControlFlow<(), usize>, BackupError> {
+        if self.session_storage.is_some() {
+            self.sync_local_changes().await?;
+        }
+
         let cursor = self.storage.read_cursor(&self.pubky).await?;
 
         // Check if developer mode is enabled - use mock events if so
@@ -288,10 +301,86 @@ impl BackupController {
                 .write_cursor(&self.pubky, events_response.cursor.clone())
                 .await?;
 
+            if self.session_storage.is_some() {
+                self.refresh_local_manifest().await?;
+            }
+
             Ok(ControlFlow::Continue(num_events))
         } else {
+            if self.session_storage.is_some() {
+                self.refresh_local_manifest().await?;
+            }
             Ok(ControlFlow::Break(()))
         }
+    }
+
+    fn pubky_dir(&self) -> Result<std::path::PathBuf, BackupError> {
+        let base = self.storage.get_backup_data_dir()?;
+        Ok(base.join(self.pubky.to_string()))
+    }
+
+    async fn sync_local_changes(&self) -> Result<(), BackupError> {
+        let Some(session) = &self.session_storage else {
+            return Ok(());
+        };
+
+        let pubky_dir = self.pubky_dir()?;
+        tokio::fs::create_dir_all(&pubky_dir).await.map_err(|e| {
+            BackupError::Internal(format!("Failed to prepare data directory: {}", e))
+        })?;
+        let manifest_file = manifest_path(&pubky_dir);
+
+        let current_state = scan_local_files(&pubky_dir)
+            .map_err(|e| BackupError::Internal(format!("Failed to scan local files: {}", e)))?;
+        let previous_state = load_manifest(&manifest_file)
+            .map_err(|e| BackupError::Internal(format!("Failed to load manifest: {}", e)))?;
+
+        let plan = diff_manifest(&current_state, &previous_state);
+
+        for relative in &plan.uploads {
+            let file_path = pubky_dir.join(relative);
+            let data = tokio::fs::read(&file_path).await.map_err(|e| {
+                BackupError::Internal(format!("Failed to read {}: {}", relative, e))
+            })?;
+            let remote_path = format!("/{}", relative.replace('\\', "/"));
+            session.put(remote_path, data).await.map_err(|e| {
+                BackupError::Internal(format!("Failed to upload {}: {}", relative, e))
+            })?;
+            debug!("Uploaded local change: {}", relative);
+        }
+
+        for relative in &plan.deletions {
+            let remote_path = format!("/{}", relative.replace('\\', "/"));
+            session.delete(remote_path).await.map_err(|e| {
+                BackupError::Internal(format!("Failed to delete {}: {}", relative, e))
+            })?;
+            debug!(
+                "Removed remote resource for deleted local file: {}",
+                relative
+            );
+        }
+
+        save_manifest(&manifest_file, &current_state)
+            .map_err(|e| BackupError::Internal(format!("Failed to save manifest: {}", e)))?;
+
+        Ok(())
+    }
+
+    async fn refresh_local_manifest(&self) -> Result<(), BackupError> {
+        if self.session_storage.is_none() {
+            return Ok(());
+        }
+
+        let pubky_dir = self.pubky_dir()?;
+        tokio::fs::create_dir_all(&pubky_dir).await.map_err(|e| {
+            BackupError::Internal(format!("Failed to prepare data directory: {}", e))
+        })?;
+        let manifest_file = manifest_path(&pubky_dir);
+        let current_state = scan_local_files(&pubky_dir)
+            .map_err(|e| BackupError::Internal(format!("Failed to scan local files: {}", e)))?;
+        save_manifest(&manifest_file, &current_state)
+            .map_err(|e| BackupError::Internal(format!("Failed to update manifest: {}", e)))?;
+        Ok(())
     }
 
     /// Take a list of events and store the data of those which belong to a given pubky
@@ -435,7 +524,8 @@ mod tests {
         let (control_tx, control_rx) = broadcast::channel(5);
         let (status_tx, mut status_rx) = broadcast::channel(10);
 
-        let controller = BackupController::new(pubky, storage, Some(control_rx), Some(status_tx));
+        let controller =
+            BackupController::new(pubky, storage, Some(control_rx), Some(status_tx), None);
 
         // Spawn the controller
         let handle = tokio::spawn(controller.run());
@@ -469,7 +559,8 @@ mod tests {
         let (control_tx, control_rx) = broadcast::channel(5);
         let (status_tx, mut status_rx) = broadcast::channel(10);
 
-        let controller = BackupController::new(pubky, storage, Some(control_rx), Some(status_tx));
+        let controller =
+            BackupController::new(pubky, storage, Some(control_rx), Some(status_tx), None);
 
         tokio::spawn(controller.run());
 
@@ -493,7 +584,7 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None, None);
 
         // First sync should return Continue (more events available)
         let result = controller.perform_sync_batch().await.unwrap();
@@ -510,7 +601,7 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None, None);
 
         // Perform multiple syncs until completion
         let mut iterations = 0;
@@ -535,7 +626,7 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None, None);
 
         // Perform sync
         let _ = controller.perform_sync_batch().await.unwrap();
@@ -550,7 +641,7 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None, None);
 
         // Create a PUT event
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
@@ -572,7 +663,7 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None, None);
 
         // First create a resource
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
@@ -602,7 +693,7 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None, None);
 
         // Create an invalid event
         let events = vec![Event::Invalid {
@@ -621,7 +712,7 @@ mod tests {
         let pubky2 =
             PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
 
-        let controller = BackupController::new(pubky1.clone(), storage.clone(), None, None);
+        let controller = BackupController::new(pubky1.clone(), storage.clone(), None, None, None);
 
         // Create event for a different pubky
         let resource = PubkyResource::new(pubky2.clone(), "/pub/test.json").unwrap();
@@ -669,7 +760,7 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None);
+        let controller = BackupController::new(pubky.clone(), storage.clone(), None, None, None);
 
         // Fetch mock resource data
         let resource = PubkyResource::new(pubky.clone(), "/pub/profile.json").unwrap();

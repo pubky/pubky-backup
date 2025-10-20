@@ -12,6 +12,7 @@ export class MainForm {
     this.backupControllerError = null;
     this.statusInterval = null;
     this.countdownInterval = null;
+    this.hasPrivateKey = false;
   }
 
   init() {
@@ -83,11 +84,13 @@ export class MainForm {
       this.nextSyncTime = data.next_sync_time;
       this.dataSize = data.data_dir_size || 0;
       this.backupControllerError = data.backup_controller_error;
+      this.hasPrivateKey = data.has_private_key || false;
       this.setHeader();
       this.updateSyncStatus();
       this.updateBackupSize();
       this.loadDataDirPath();
       this.startCountdown();
+      this.updatePrivateKeyIndicator();
     } catch (error) {
       console.error("Error loading initial state:", error);
       document.getElementById("main-form").classList.add("hidden");
@@ -141,8 +144,10 @@ export class MainForm {
       this.nextSyncTime = data.next_sync_time;
       this.dataSize = data.data_dir_size || 0;
       this.backupControllerError = data.backup_controller_error;
+      this.hasPrivateKey = data.has_private_key || false;
       this.updateSyncStatus();
       this.updateBackupSize();
+      this.updatePrivateKeyIndicator();
       if (this.backupControllerError) {
         alert(`Internal Error: ${this.backupControllerError}`);
         this.returnToStartup();
@@ -262,6 +267,20 @@ export class MainForm {
       document.getElementById("startup-screen").classList.remove("hidden");
     } catch (error) {
       console.error("Error returning to startup:", error);
+    }
+  }
+
+  updatePrivateKeyIndicator() {
+    const statusElement = document.getElementById("private-key-status");
+    if (!statusElement) return;
+
+    statusElement.classList.remove("ready", "missing", "hidden");
+    if (this.hasPrivateKey) {
+      statusElement.textContent = "Private key loaded – syncing both ways.";
+      statusElement.classList.add("ready");
+    } else {
+      statusElement.textContent = "Private key not loaded – running in backup-only mode.";
+      statusElement.classList.add("missing");
     }
   }
 }

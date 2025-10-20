@@ -26,6 +26,10 @@ export class GreetForm {
   bindEvents() {
     const continueBtn = document.getElementById("continue-btn");
     const pubkyInput = document.getElementById("pubky-input");
+    const importBtn = document.getElementById("import-pkarr-btn");
+    const pkarrFile = document.getElementById("pkarr-file");
+    const pkarrPassphrase = document.getElementById("pkarr-passphrase");
+    const pkarrStatus = document.getElementById("pkarr-status");
 
     // Clear placeholder on focus or input
     pubkyInput.addEventListener("focus", () => {
@@ -40,6 +44,47 @@ export class GreetForm {
       e.preventDefault();
       const pubkyValue = pubkyInput.value.trim();
       await this.initializeAndStart(pubkyValue);
+    });
+
+    importBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+
+      if (!pkarrFile.files || pkarrFile.files.length === 0) {
+        pkarrStatus.textContent = "Please select a .pkarr file first.";
+        pkarrStatus.classList.add("error");
+        pkarrStatus.classList.remove("hidden");
+        return;
+      }
+
+      const file = pkarrFile.files[0];
+      try {
+        importBtn.disabled = true;
+        pkarrStatus.classList.remove("error");
+        pkarrStatus.textContent = "Importing private key...";
+        pkarrStatus.classList.remove("hidden");
+
+        const buffer = await file.arrayBuffer();
+        const data = Array.from(new Uint8Array(buffer));
+        const passphrase = pkarrPassphrase.value.trim();
+
+        const publicKey = await invoke("import_private_key_from_pkarr", {
+          pkarrData: data,
+          passphrase: passphrase.length > 0 ? passphrase : null,
+        });
+
+        pkarrStatus.textContent = `Private key imported for ${publicKey.slice(0, 8)}...`;
+        const currentValue = pubkyInput.value.trim();
+        if (!currentValue) {
+          pubkyInput.value = publicKey;
+        }
+      } catch (error) {
+        console.error("Failed to import private key:", error);
+        pkarrStatus.textContent = `Failed to import private key: ${error}`;
+        pkarrStatus.classList.add("error");
+        pkarrStatus.classList.remove("hidden");
+      } finally {
+        importBtn.disabled = false;
+      }
     });
   }
 

@@ -182,6 +182,43 @@ button:active {
   align-self: center;
 }
 
+.pkarr-section {
+  margin-top: 1em;
+  padding-top: 0.5em;
+  border-top: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  width: 100%;
+}
+
+.pkarr-section input[type="file"] {
+  padding: 0.4em 0;
+  box-shadow: none;
+}
+
+.pkarr-status {
+  font-size: 0.85em;
+  color: #0f5132;
+}
+
+.pkarr-status.error {
+  color: #842029;
+}
+
+.private-key-status {
+  font-weight: 600;
+  margin-bottom: 0.5em;
+}
+
+.private-key-status.ready {
+  color: #0f5132;
+}
+
+.private-key-status.missing {
+  color: #842029;
+}
+
 .copy-btn {
   font-size: 0.8em;
   min-width: auto;

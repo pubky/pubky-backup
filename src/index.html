@@ -30,6 +30,17 @@
             <!-- Add spinner to both sides to centre label - Sorry.-->
             <button id="continue-btn" class="button-container standard-btn"><span class="spinner" style="visibility: hidden;">◐</span>Continue<span id="continue-spinner" class="spinner hidden">◐</span></button>
           </div>
+          <div id="pkarr-section" class="pkarr-section">
+            <h3>Optional: Recover from .pkarr file</h3>
+            <input id="pkarr-file" type="file" accept=".pkarr,.txt" />
+            <input
+              id="pkarr-passphrase"
+              type="password"
+              placeholder="Passphrase (leave blank if none)"
+            />
+            <button id="import-pkarr-btn" class="standard-btn">Import private key</button>
+            <p id="pkarr-status" class="pkarr-status hidden"></p>
+          </div>
         </div>
       </main>
     </div>
@@ -46,6 +57,7 @@
         <div id="main-form" class="form-box box hidden">
           <h2>Public Key: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
           <h2>Homeserver: <span id="homeserver-display"></span> <button id="copy-homeserver" class="copy-btn" title="Copy full homeserver">📋</button></h2>
+          <div id="private-key-status" class="private-key-status hidden"></div>
           <div id="sync-status" class="sync-status">
             <span id="status-text">Synced</span>
             <span id="status-spinner" class="spinner hidden">◐</span>

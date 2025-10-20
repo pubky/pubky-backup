@@ -1,7 +1,10 @@
 mod error;
 
 use log::{debug, error, info};
-use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
+use pubky::{
+    recovery_file, Keypair, Pkdns, PubkyResource, PubkySigner, PublicKey, PublicStorage,
+    SessionStorage,
+};
 use serde::Serialize;
 use serde_with::{serde_as, DisplayFromStr};
 
@@ -49,9 +52,11 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     next_sync_time: 0,
     data_dir_size: 0,
     backup_controller_error: None,
+    has_private_key: false,
     storage: None,
     backup_process: None,
     app_handle: None,
+    private_signer: None,
 });
 
 /// AppState is Tauri's Rust back-end State.
@@ -75,12 +80,16 @@ pub struct AppState {
     data_dir_size: u64,
     /// Error message if backup controller failed, None if running normally
     backup_controller_error: Option<String>,
+    /// True if a private key has been imported for this session
+    has_private_key: bool,
     #[serde(skip)]
     storage: Option<Arc<AppStorage>>,
     #[serde(skip)]
     backup_process: Option<BackupProcess>,
     #[serde(skip)]
     app_handle: Option<AppHandle>,
+    #[serde(skip)]
+    private_signer: Option<PubkySigner>,
 }
 
 fn get_or_create_storage() -> Result<Arc<AppStorage>, BackupAppError> {
@@ -94,6 +103,36 @@ fn get_or_create_storage() -> Result<Arc<AppStorage>, BackupAppError> {
     }
 
     Ok(state.storage.clone().unwrap())
+}
+
+fn parse_pkarr_keypair(data: &[u8], passphrase: &str) -> Result<Keypair, BackupAppError> {
+    if let Ok(keypair) = recovery_file::decrypt_recovery_file(data, passphrase) {
+        debug!("Recovered keypair from encrypted .pkarr file");
+        return Ok(keypair);
+    }
+
+    let text = std::str::from_utf8(data)
+        .map_err(|e| BackupAppError::InvalidPkarr(format!("Invalid file encoding: {}", e)))?
+        .trim();
+
+    let cleaned = text.strip_prefix("0x").unwrap_or(text);
+
+    if cleaned.len() == 64 && cleaned.chars().all(|c| c.is_ascii_hexdigit()) {
+        let mut bytes = [0u8; 32];
+        for (idx, chunk) in cleaned.as_bytes().chunks(2).enumerate() {
+            let byte_str = std::str::from_utf8(chunk)
+                .map_err(|e| BackupAppError::InvalidPkarr(format!("Invalid hex data: {}", e)))?;
+            bytes[idx] = u8::from_str_radix(byte_str, 16).map_err(|_| {
+                BackupAppError::InvalidPkarr("Invalid hex digits in .pkarr file".to_string())
+            })?;
+        }
+        debug!("Recovered keypair from raw secret key data");
+        return Ok(Keypair::from_secret_key(&bytes));
+    }
+
+    Err(BackupAppError::InvalidPkarr(
+        "Unsupported .pkarr file contents".to_string(),
+    ))
 }
 
 /// Take a pubky, verify and add to State ready for usage.
@@ -145,11 +184,20 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
         .await
         .map_err(BackupAppError::internal)?;
 
-    let mut state = APP_STATE
-        .lock()
-        .map_err(|_| BackupAppError::lock_failed())?;
-    state.pubky = Some(pubky);
-    state.homeserver = Some(homeserver_pubky);
+    {
+        let mut state = APP_STATE
+            .lock()
+            .map_err(|_| BackupAppError::lock_failed())?;
+
+        if let Some(signer) = &state.private_signer {
+            if signer.public_key() != pubky {
+                return Err(BackupAppError::PrivateKeyMismatch);
+            }
+        }
+
+        state.pubky = Some(pubky.clone());
+        state.homeserver = Some(homeserver_pubky);
+    }
 
     Ok(())
 }
@@ -161,6 +209,7 @@ async fn fetch_state() -> Result<AppState, BackupAppError> {
         Ok(mut state) => {
             // Always sync developer_mode from environment variable
             state.developer_mode = is_developer_mode();
+            state.has_private_key = state.private_signer.is_some();
             Ok(state.clone())
         }
         Err(_) => Err(BackupAppError::lock_failed()),
@@ -201,12 +250,35 @@ async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
     }
 }
 
+/// Import a private key from a `.pkarr` recovery file
+#[tauri::command]
+async fn import_private_key_from_pkarr(
+    pkarr_data: Vec<u8>,
+    passphrase: Option<String>,
+) -> Result<String, BackupAppError> {
+    let passphrase = passphrase.unwrap_or_default();
+    let keypair = parse_pkarr_keypair(&pkarr_data, &passphrase)?;
+    let signer = PubkySigner::new(keypair).map_err(BackupAppError::internal)?;
+    let public_key_str = signer.public_key().to_string();
+
+    {
+        let mut state = APP_STATE
+            .lock()
+            .map_err(|_| BackupAppError::lock_failed())?;
+        state.private_signer = Some(signer);
+        state.has_private_key = true;
+    }
+
+    info!("Imported private key for pubky {}", public_key_str);
+    Ok(public_key_str)
+}
+
 /// Spawn task for downloads and polling.
 /// To be called by front-end upon entering main screen.
 #[tauri::command]
 async fn backup_controller_begin() -> Result<(), BackupAppError> {
     // Extract required data from state
-    let (pubky, storage) = {
+    let (pubky, storage, signer_opt) = {
         let state = APP_STATE
             .lock()
             .map_err(|_| BackupAppError::lock_failed())?;
@@ -221,7 +293,16 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
             .clone()
             .ok_or_else(|| BackupAppError::internal("Storage not available in AppState"))?;
 
-        (pubky, storage)
+        (pubky, storage, state.private_signer.clone())
+    };
+
+    let session_storage: Option<SessionStorage> = if let Some(signer) = signer_opt {
+        let session = signer.signin().await.map_err(|e| {
+            BackupAppError::internal(format!("Failed to sign in with private key: {}", e))
+        })?;
+        Some(session.storage())
+    } else {
+        None
     };
 
     // Initialise state
@@ -303,8 +384,13 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     });
 
     // Spawn the backup controller
-    let controller =
-        BackupController::new(pubky, storage, Some(backup_control_rx), Some(status_tx));
+    let controller = BackupController::new(
+        pubky,
+        storage,
+        Some(backup_control_rx),
+        Some(status_tx),
+        session_storage,
+    );
 
     // Keep the sender alive by moving it into the spawned task
     // This prevents the channel from closing if state.backup_process is temporarily cleared for whatever reason
@@ -477,6 +563,7 @@ pub fn run() {
             fetch_state,
             get_previous_pubky_keys,
             get_last_pubky,
+            import_private_key_from_pkarr,
             backup_controller_begin,
             backup_controller_close,
             force_sync_now,
@@ -485,4 +572,29 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_pkarr_keypair_from_hex() {
+        let secret: [u8; 32] = [0x11; 32];
+        let hex: String = secret.iter().map(|b| format!("{b:02x}")).collect();
+        let keypair = parse_pkarr_keypair(hex.as_bytes(), "").expect("should parse hex");
+        assert_eq!(keypair.secret_key(), secret);
+    }
+
+    #[test]
+    fn parse_pkarr_keypair_from_recovery_file() {
+        let secret: [u8; 32] = [0xAB; 32];
+        let keypair = Keypair::from_secret_key(&secret);
+        let passphrase = "test-passphrase";
+        let recovery = recovery_file::create_recovery_file(&keypair, passphrase);
+
+        let recovered =
+            parse_pkarr_keypair(&recovery, passphrase).expect("should parse recovery file");
+        assert_eq!(recovered.secret_key(), secret);
+    }
 }
