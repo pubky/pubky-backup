@@ -1,11 +1,19 @@
 #[derive(thiserror::Error, Debug)]
-pub enum BackupError {
+pub enum SyncError {
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
     #[error("Events error: {0}")]
     Events(#[from] EventsError),
     #[error("Internal error: {0}")]
     Internal(String),
+    #[error("Authentication error: {0}")]
+    Authentication(String),
+    #[error("File watcher error: {0}")]
+    FileWatcher(String),
+    #[error("Upload error: {0}")]
+    Upload(String),
+    #[error("Delete error: {0}")]
+    Delete(String),
 }
 
 #[derive(thiserror::Error, Debug)]
