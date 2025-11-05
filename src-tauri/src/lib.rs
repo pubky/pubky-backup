@@ -19,16 +19,16 @@ use tokio::sync::broadcast;
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_developer_mode, AppStorage, BackupController, BackupControllerMessage,
-    BackupControllerStatus, DEV_MODE_PUBKY,
+    is_developer_mode, AppStorage, SyncController, SyncControllerMessage,
+    SyncControllerStatus, SyncMode, DEV_MODE_PUBKY,
 };
 
 const SYNC_INTERVAL_SECONDS: u64 = 30;
 
-/// Represents a running backup process
+/// Represents a running sync process
 #[derive(Clone)]
-pub struct BackupProcess {
-    backup_control_tx: broadcast::Sender<BackupControllerMessage>,
+pub struct SyncProcess {
+    sync_control_tx: broadcast::Sender<SyncControllerMessage>,
 }
 
 /// Get the next sync time (current time + sync interval)
@@ -48,14 +48,14 @@ pub static APP_STATE: Mutex<AppState> = Mutex::new(AppState {
     is_syncing: false,
     next_sync_time: 0,
     data_dir_size: 0,
-    backup_controller_error: None,
+    sync_controller_error: None,
     storage: None,
-    backup_process: None,
+    sync_process: None,
     app_handle: None,
 });
 
 /// AppState is Tauri's Rust back-end State.
-/// Here we provide an interface for the front-end and manage other application tasks (eg. The Backup task)
+/// Here we provide an interface for the front-end and manage other application tasks (eg. The sync task)
 #[serde_as]
 #[derive(Clone, Serialize)]
 pub struct AppState {
@@ -73,12 +73,12 @@ pub struct AppState {
     next_sync_time: u64,
     /// Size of data stored for current pubky in bytes
     data_dir_size: u64,
-    /// Error message if backup controller failed, None if running normally
-    backup_controller_error: Option<String>,
+    /// Error message if sync controller failed, None if running normally
+    sync_controller_error: Option<String>,
     #[serde(skip)]
     storage: Option<Arc<AppStorage>>,
     #[serde(skip)]
-    backup_process: Option<BackupProcess>,
+    sync_process: Option<SyncProcess>,
     #[serde(skip)]
     app_handle: Option<AppHandle>,
 }
@@ -204,7 +204,7 @@ async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
 /// Spawn task for downloads and polling.
 /// To be called by front-end upon entering main screen.
 #[tauri::command]
-async fn backup_controller_begin() -> Result<(), BackupAppError> {
+async fn sync_controller_begin() -> Result<(), BackupAppError> {
     // Extract required data from state
     let (pubky, storage) = {
         let state = APP_STATE
@@ -225,7 +225,7 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
     };
 
     // Initialise state
-    let (backup_control_tx, backup_control_rx) = broadcast::channel(5);
+    let (sync_control_tx, sync_control_rx) = broadcast::channel(5);
     let (status_tx, mut status_rx) = broadcast::channel(5);
     let initial_size = storage.calculate_pubky_size(&pubky).await;
     {
@@ -233,11 +233,11 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
             .lock()
             .map_err(|_| BackupAppError::lock_failed())?;
 
-        state.backup_process = Some(BackupProcess {
-            backup_control_tx: backup_control_tx.clone(),
+        state.sync_process = Some(SyncProcess {
+            sync_control_tx: sync_control_tx.clone(),
         });
         state.data_dir_size = initial_size;
-        state.backup_controller_error = None;
+        state.sync_controller_error = None;
     }
 
     // Spawn a task to listen for status updates
@@ -247,7 +247,7 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
         loop {
             match status_rx.recv().await {
                 Ok(status) => match status {
-                    BackupControllerStatus::Syncing { events_processed } => {
+                    SyncControllerStatus::Syncing { events_processed } => {
                         // Recalculate size only if events were processed (data changed)
                         let data_dir_size = if events_processed > 0 {
                             Some(storage_clone.calculate_pubky_size(&pubky_clone).await)
@@ -262,26 +262,26 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
                             update_tray_icon(&state);
                         }
                     }
-                    BackupControllerStatus::Idle => {
+                    SyncControllerStatus::Idle => {
                         if let Ok(mut state) = APP_STATE.lock() {
                             state.is_syncing = false;
                             state.next_sync_time = next_sync_time();
                             update_tray_icon(&state);
                         }
                     }
-                    BackupControllerStatus::Ended => {
+                    SyncControllerStatus::Ended => {
                         if let Ok(mut state) = APP_STATE.lock() {
                             state.is_syncing = false;
-                            state.backup_process = None;
+                            state.sync_process = None;
                             update_tray_icon(&state);
                         }
                         break;
                     }
-                    BackupControllerStatus::Error { message } => {
+                    SyncControllerStatus::Error { message } => {
                         if let Ok(mut state) = APP_STATE.lock() {
                             state.is_syncing = false;
-                            state.backup_process = None;
-                            state.backup_controller_error = Some(message);
+                            state.sync_process = None;
+                            state.sync_controller_error = Some(message);
                             update_tray_icon(&state);
                         }
                         break;
@@ -291,9 +291,9 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
                     // Channel closed unexpectedly (controller crashed/panicked)
                     if let Ok(mut state) = APP_STATE.lock() {
                         state.is_syncing = false;
-                        state.backup_controller_error =
-                            Some(format!("Backup controller stopped unexpectedly: {}", e));
-                        state.backup_process = None;
+                        state.sync_controller_error =
+                            Some(format!("Sync controller stopped unexpectedly: {}", e));
+                        state.sync_process = None;
                         update_tray_icon(&state);
                     }
                     break;
@@ -302,52 +302,52 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
         }
     });
 
-    // Spawn the backup controller
-    let controller =
-        BackupController::new(pubky, storage, Some(backup_control_rx), Some(status_tx));
+    // Spawn the sync controller
+    let mode = SyncMode::ReadOnly { pubky };
+    let controller = SyncController::new(mode, storage, Some(sync_control_rx), Some(status_tx));
 
     // Keep the sender alive by moving it into the spawned task
-    // This prevents the channel from closing if state.backup_process is temporarily cleared for whatever reason
+    // This prevents the channel from closing if state.sync_process is temporarily cleared for whatever reason
     tauri::async_runtime::spawn(async move {
-        let _tx = backup_control_tx;
+        let _tx = sync_control_tx;
         controller.run().await;
     });
-    info!("Backup controller task started");
+    info!("Sync controller task started");
     Ok(())
 }
 
-/// Send backup controller task Cancel message.
+/// Send sync controller task Cancel message.
 /// To be controlled by front-end on exiting main screen.
 #[tauri::command]
-async fn backup_controller_close() -> Result<(), BackupAppError> {
+async fn sync_controller_close() -> Result<(), BackupAppError> {
     let state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
 
-    if let Some(backup_process) = &state.backup_process {
-        let _ = backup_process
-            .backup_control_tx
-            .send(BackupControllerMessage::Cancel);
-        debug!("Backup controller task stop signal sent");
+    if let Some(sync_process) = &state.sync_process {
+        let _ = sync_process
+            .sync_control_tx
+            .send(SyncControllerMessage::Cancel);
+        debug!("Sync controller task stop signal sent");
         Ok(())
     } else {
         Err(BackupAppError::internal(
-            "No Backup controller task running",
+            "No sync controller task running",
         ))
     }
 }
 
-/// Send backup controller task ForceSync message.
+/// Send sync controller task ForceSync message.
 #[tauri::command]
 async fn force_sync_now() -> Result<(), BackupAppError> {
     let state = APP_STATE
         .lock()
         .map_err(|_| BackupAppError::lock_failed())?;
 
-    if let Some(backup_process) = &state.backup_process {
-        match backup_process
-            .backup_control_tx
-            .send(BackupControllerMessage::ForceSync)
+    if let Some(sync_process) = &state.sync_process {
+        match sync_process
+            .sync_control_tx
+            .send(SyncControllerMessage::ForceSync)
         {
             Ok(_) => {
                 debug!("Force sync signal sent");
@@ -357,7 +357,7 @@ async fn force_sync_now() -> Result<(), BackupAppError> {
         }
     } else {
         Err(BackupAppError::internal(
-            "No Backup controller task running",
+            "No sync controller task running",
         ))
     }
 }
@@ -392,9 +392,9 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppErro
 fn update_tray_icon(state: &AppState) {
     if let Some(app_handle) = &state.app_handle {
         if let Some(tray) = app_handle.tray_by_id("main") {
-            let (tooltip, title) = match (&state.backup_process, state.is_syncing) {
+            let (tooltip, title) = match (&state.sync_process, state.is_syncing) {
                 (None, _) => {
-                    // Backup process not running - no icon
+                    // Sync process not running - no icon
                     ("Pubky Backup", None)
                 }
                 (Some(_), true) => {
@@ -414,7 +414,7 @@ fn update_tray_icon(state: &AppState) {
                     error!("Failed to update tray title: {}", e);
                 }
             } else {
-                // Clear title when backup process is not running
+                // Clear title when sync process is not running
                 let _ = tray.set_title(None::<&str>);
             }
         }
@@ -477,8 +477,8 @@ pub fn run() {
             fetch_state,
             get_previous_pubky_keys,
             get_last_pubky,
-            backup_controller_begin,
-            backup_controller_close,
+            sync_controller_begin,
+            sync_controller_close,
             force_sync_now,
             get_data_dir_path,
             open_data_dir

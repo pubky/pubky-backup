@@ -291,7 +291,7 @@ impl BackupDataStorage {
 
 /// Application-specific storage that manages both app data and backup data.
 ///
-/// This is the main storage interface used by [`BackupController`](crate::BackupController).
+/// This is the main storage interface used by [`SyncController`](crate::SyncController).
 /// It handles:
 /// - Writing/reading/deleting backed-up Pubky resources
 /// - Tracking sync progress via cursors
@@ -300,19 +300,6 @@ impl BackupDataStorage {
 ///
 /// Errors from write/delete operations are logged to `error.log` and don't cause
 /// the backup process to fail. Other errors are propagated to the caller.
-///
-/// # Storage Layout
-///
-/// ```text
-/// ~/.pubky-backup/
-/// ├── error.log              # Error log for write/delete failures
-/// ├── last_pubky             # Last used public key
-/// └── <pubky>/               # Directory per backed-up pubky
-///     ├── cursor             # Sync progress cursor
-///     └── pub/               # Backed-up resources
-///         ├── profile.json
-///         └── ...
-/// ```
 pub struct AppStorage {
     /// Application's data Eg error.log
     app_data: AppDataStorage,
@@ -488,6 +475,52 @@ impl AppStorage {
     /// The last used public key, or `None` if none has been stored
     pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
         self.app_data.read_last_pubky().await
+    }
+
+    /// Get the full filesystem path to a pubky's backup directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `pubky` - The public key whose directory path to retrieve
+    ///
+    /// # Returns
+    ///
+    /// Full filesystem path to the pubky's data directory
+    pub fn get_pubky_directory_path(&self, pubky: &PublicKey) -> Result<PathBuf, StorageError> {
+        let base_dir = get_data_directory()?;
+        Ok(base_dir.join(pubky.to_string()))
+    }
+
+    /// Convert a filesystem path to a PubkyResource URL.
+    ///
+    /// Takes a file path within the backup directory and converts it to the corresponding
+    /// PubkyResource that would be used to access it on the homeserver.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_dir` - The root backup directory (e.g., ~/.pubky-backup/<pubky>/)
+    /// * `file_path` - The full path to the file
+    /// * `pubky` - The public key this file belongs to
+    ///
+    /// # Returns
+    ///
+    /// A PubkyResource representing this file's location on the homeserver
+    pub fn path_to_resource(
+        &self,
+        base_dir: &std::path::Path,
+        file_path: &std::path::Path,
+        pubky: &PublicKey,
+    ) -> Result<PubkyResource, StorageError> {
+        let relative_path = file_path
+            .strip_prefix(base_dir)
+            .map_err(|e| StorageError::Internal(format!("Path not in base directory: {}", e)))?;
+
+        // Convert to URL path with leading slash
+        let url_path = format!("/{}", relative_path.to_string_lossy().replace('\\', "/"));
+
+        // Create the PubkyResource
+        PubkyResource::new(pubky.clone(), &url_path)
+            .map_err(|e| StorageError::Internal(format!("Invalid resource path: {}", e)))
     }
 }
 

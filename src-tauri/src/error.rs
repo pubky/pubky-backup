@@ -15,8 +15,8 @@ pub enum BackupAppError {
     Storage(#[from] pubky_backup_core::StorageError),
     #[error("Events error: {0}")]
     Events(#[from] pubky_backup_core::EventsError),
-    #[error("Backup error: {0}")]
-    Backup(#[from] pubky_backup_core::BackupError),
+    #[error("Sync error: {0}")]
+    Sync(#[from] pubky_backup_core::SyncError),
 }
 
 impl Serialize for BackupAppError {
