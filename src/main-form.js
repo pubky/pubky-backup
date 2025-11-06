@@ -12,7 +12,6 @@ export class MainForm {
     this.backupControllerError = null;
     this.lastSyncTime = null;
     this.statusInterval = null;
-    this.countdownInterval = null;
     this.syncMessageInterval = null;
   }
 
@@ -20,7 +19,6 @@ export class MainForm {
     this.bindEvents();
     this.loadStateOnInit();
     this.startStatusPolling();
-    this.startCountdown();
     this.startSyncMessageUpdates();
   }
 
@@ -100,7 +98,9 @@ export class MainForm {
     if (!str) return "...";
     const endLength = 5;
     if (str.length <= length + endLength + 3) return str;
-    return str.substring(0, length) + "..." + str.substring(str.length - endLength);
+    return (
+      str.substring(0, length) + "..." + str.substring(str.length - endLength)
+    );
   }
 
   setHeader() {
@@ -145,11 +145,16 @@ export class MainForm {
       this.nextSyncTime = data.next_sync_time;
       this.dataSize = data.data_dir_size || 0;
       this.backupControllerError = data.backup_controller_error;
-      
+
       // Update lastSyncTime when sync completes
       // We detect this when next_sync_time gets updated to a new future timestamp (now + 30)
+      // TODO: This needs work when poll time is settable by user
       const now = Math.floor(Date.now() / 1000);
-      if (!this.isSyncing && this.nextSyncTime > previousNextSyncTime && this.nextSyncTime > now) {
+      if (
+        !this.isSyncing &&
+        this.nextSyncTime > previousNextSyncTime &&
+        this.nextSyncTime > now
+      ) {
         // Sync just completed, next sync scheduled for 30 seconds from now
         this.lastSyncTime = now;
       }
@@ -225,9 +230,9 @@ export class MainForm {
       const seconds = remaining % 60;
 
       if (minutes > 0) {
-        syncMessageText.textContent = `Next backup in ${minutes} minute${minutes !== 1 ? 's' : ''}...`;
+        syncMessageText.textContent = `Next backup in ${minutes} minute${minutes !== 1 ? "s" : ""}...`;
       } else if (seconds > 0) {
-        syncMessageText.textContent = `Next backup in ${seconds} second${seconds !== 1 ? 's' : ''}...`;
+        syncMessageText.textContent = `Next backup in ${seconds} second${seconds !== 1 ? "s" : ""}...`;
       } else {
         syncMessageText.textContent = "Syncing soon...";
       }
@@ -303,51 +308,10 @@ export class MainForm {
     }
   }
 
-  startCountdown() {
-    // Update countdown every second
-    this.countdownInterval = setInterval(() => {
-      this.updateCountdown();
-    }, 1000);
-  }
-
-  stopCountdown() {
-    if (this.countdownInterval) {
-      clearInterval(this.countdownInterval);
-      this.countdownInterval = null;
-    }
-  }
-
-  updateCountdown() {
-    const countdownElement = document.getElementById("countdown-timer");
-    if (!countdownElement) {
-      return; // Element doesn't exist in current UI
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-
-    if (this.nextSyncTime > now) {
-      const remaining = this.nextSyncTime - now;
-      const minutes = Math.floor(remaining / 60);
-      const seconds = remaining % 60;
-
-      if (minutes > 0) {
-        countdownElement.textContent = `${minutes}m ${seconds}s`;
-      } else {
-        countdownElement.textContent = `${seconds}s`;
-      }
-    } else {
-      countdownElement.textContent = "0s";
-    }
-  }
-
   showToast(pubkyText) {
     const toast = document.getElementById("toast");
     const toastDescription = document.getElementById("toast-description");
-
-    // Update the toast description with truncated pubky
     toastDescription.textContent = this.displayPubky(pubkyText);
-
-    // Show the toast
     toast.classList.add("show");
 
     // Hide the toast after 2 seconds
@@ -366,7 +330,6 @@ export class MainForm {
       }
 
       this.stopStatusPolling();
-      this.stopCountdown();
       this.stopSyncMessageUpdates();
 
       // Navigate back to startup screen

@@ -69,7 +69,7 @@
       <main class="container">
         <div id="main-form" class="form-box box hidden">
           <!-- Top nav buttons (placeholder, no functionality yet) -->
-          <div class="top-nav-buttons">
+          <div class="top-nav-buttons hidden">
             <button class="icon-button" title="Activity" disabled>
               <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M16.6667 10H13.3333L11.6667 15L8.33333 5L6.66667 10H3.33333" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
@@ -99,6 +99,11 @@
           <!-- Header with pubky, copy button, and status -->
           <div class="dashboard-header">
             <div class="dashboard-header-left">
+              <button id="back-btn" class="icon-button-inline" title="Back">
+                <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
               <h4 class="dashboard-pubky" id="pubky-display">9g3zs...87a6h</h4>
               <button id="copy-pubky" class="icon-button-inline" title="Copy full pubky">
                 <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -133,40 +138,35 @@
             <div class="info-cards-row">
               <div class="info-card">
                 <div class="info-card-header">
-                  <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M15.75 5.25H2.25C1.42157 5.25 0.75 5.92157 0.75 6.75V14.25C0.75 15.0784 1.42157 15.75 2.25 15.75H15.75C16.5784 15.75 17.25 15.0784 17.25 14.25V6.75C17.25 5.92157 16.5784 5.25 15.75 5.25Z" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M12 15.75V3.75C12 3.35218 11.842 2.97064 11.5607 2.68934C11.2794 2.40804 10.8978 2.25 10.5 2.25H7.5C7.10218 2.25 6.72064 2.40804 6.43934 2.68934C6.15804 2.97064 6 3.35218 6 3.75V15.75" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21 5C21 6.65685 16.9706 8 12 8C7.02944 8 3 6.65685 3 5M21 5C21 3.34315 16.9706 2 12 2C7.02944 2 3 3.34315 3 5M21 5V19C21 19.7956 20.0518 20.5587 18.364 21.1213C16.6761 21.6839 14.3869 22 12 22C9.61305 22 7.32387 21.6839 5.63604 21.1213C3.94821 20.5587 3 19.7956 3 19V5M3 12C3 12.7956 3.94821 13.5587 5.63604 14.1213C7.32387 14.6839 9.61305 15 12 15C14.3869 15 16.6761 14.6839 18.364 14.1213C20.0518 13.5587 21 12.7956 21 12" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
-                  <span class="info-card-label">BACKUP SIZE</span>
+                  <span class="info-card-label">Backup Size</span>
                 </div>
                 <strong class="info-card-value" id="backup-size-value">--</strong>
               </div>
               <div class="info-card">
                 <div class="info-card-header">
-                  <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M9 16.5C13.1421 16.5 16.5 13.1421 16.5 9C16.5 4.85786 13.1421 1.5 9 1.5C4.85786 1.5 1.5 4.85786 1.5 9C1.5 13.1421 4.85786 16.5 9 16.5Z" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M9 4.5V9L12 10.5" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 6V12L16 14M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
-                  <span class="info-card-label">LAST SYNC</span>
+                  <span class="info-card-label">Last Sync</span>
                 </div>
                 <strong class="info-card-value" id="last-sync-value">--</strong>
               </div>
             </div>
             <div class="info-card info-card-full">
               <div class="info-card-header">
-                <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M16.5 13.5V3C16.5 2.60218 16.342 2.22064 16.0607 1.93934C15.7794 1.65804 15.3978 1.5 15 1.5H3C2.60218 1.5 2.22064 1.65804 1.93934 1.93934C1.65804 2.22064 1.5 2.60218 1.5 3V13.5" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M0.75 13.5H17.25V15C17.25 15.3978 17.092 15.7794 16.8107 16.0607C16.5294 16.342 16.1478 16.5 15.75 16.5H2.25C1.85218 16.5 1.47064 16.342 1.18934 16.0607C0.908035 15.7794 0.75 15.3978 0.75 15V13.5Z" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M20 20C20.5304 20 21.0391 19.7893 21.4142 19.4142C21.7893 19.0391 22 18.5304 22 18V8C22 7.46957 21.7893 6.96086 21.4142 6.58579C21.0391 6.21071 20.5304 6 20 6H12.1C11.7655 6.00328 11.4355 5.92261 11.1403 5.76538C10.8451 5.60815 10.594 5.37938 10.41 5.1L9.6 3.9C9.41789 3.62347 9.16997 3.39648 8.8785 3.2394C8.58702 3.08231 8.26111 3.00005 7.93 3H4C3.46957 3 2.96086 3.21071 2.58579 3.58579C2.21071 3.96086 2 4.46957 2 5V18C2 18.5304 2.21071 19.0391 2.58579 19.4142C2.96086 19.7893 3.46957 20 4 20H20Z" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                <span class="info-card-label">BACKUP LOCATION</span>
+                <span class="info-card-label">Backup Location</span>
               </div>
               <div class="info-card-location">
                 <strong class="info-card-value" id="data-dir-value">--</strong>
                 <button id="open-data-dir" class="icon-button-inline" title="Open data directory">
-                  <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M15 10.8333V15.8333C15 16.2754 14.8244 16.6993 14.5118 17.0118C14.1993 17.3244 13.7754 17.5 13.3333 17.5H4.16667C3.72464 17.5 3.30072 17.3244 2.98816 17.0118C2.67559 16.6993 2.5 16.2754 2.5 15.8333V6.66667C2.5 6.22464 2.67559 5.80072 2.98816 5.48816C3.30072 5.17559 3.72464 5 4.16667 5H9.16667" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M12.5 2.5H17.5V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M8.33333 11.6667L17.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M15 3H21M21 3V9M21 3L10 14M18 13V19C18 19.5304 17.7893 20.0391 17.4142 20.4142C17.0391 20.7893 16.5304 21 16 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V8C3 7.46957 3.21071 6.96086 3.58579 6.58579C3.96086 6.21071 4.46957 6 5 6H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
               </div>
@@ -182,7 +182,6 @@
           </button>
         </div>
         <div class="header-box box">
-          <button id="back-btn" class="back-btn">Back</button>
         </div>
       </main>
     </div>

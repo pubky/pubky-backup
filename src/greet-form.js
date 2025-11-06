@@ -23,7 +23,6 @@ export class GreetForm {
 
   async init() {
     this.bindEvents();
-    await this.checkDevMode();
     await this.autoLoadLastPubky();
     await this.loadPreviousKeys();
   }
@@ -90,20 +89,6 @@ export class GreetForm {
       alert(`Error: ${error}`);
       this.resetContinueButton();
       throw error;
-    }
-  }
-
-  async checkDevMode() {
-    try {
-      const data = await invoke("fetch_state");
-      const devIndicator = document.getElementById("startup-dev-indicator");
-
-      if (data.developer_mode && devIndicator) {
-        devIndicator.classList.remove("hidden");
-        console.log("Developer mode is enabled");
-      }
-    } catch (error) {
-      console.error("Error checking dev mode:", error);
     }
   }
 
