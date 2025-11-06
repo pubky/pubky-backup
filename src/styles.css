@@ -1,5 +1,5 @@
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Inter Tight', Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
   line-height: 24px;
   font-weight: 400;
@@ -146,12 +146,138 @@ button:active {
 }
 
 .form-box {
-  width: 350px;
-  height: 300px;
+  width: 480px;
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  padding: 24px 32px 32px;
+  gap: 24px;
+  background-color: #1D1D20;
+  border: 1px solid #303034;
+  border-radius: 8px;
+  box-shadow: 0px 8px 10px 0px rgba(5, 5, 10, 0.25), 0px 20px 25px 0px rgba(5, 5, 10, 0.5);
+}
+
+.startup-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0;
+}
+
+.pubky-logo {
+  width: 272px;
+  height: 48px;
+}
+
+.startup-heading {
+  font-size: 20px;
+  line-height: 1.4em;
+  font-weight: 400;
+  text-align: center;
+  color: #89898F;
+  margin: 0;
+}
+
+.startup-form-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background-color: rgba(5, 5, 10, 0.1);
+  border: 1px dashed #525252;
+  border-radius: 9999px;
+  padding: 16px 20px 16px 24px;
+  gap: 12px;
+  transition: border 0.2s ease;
+}
+
+/* When input has a value (filled state) */
+.input-wrapper.filled {
+  border: 1px solid #525252;
+}
+
+.input-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.input-wrapper input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #89898F;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5em;
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+  transition: color 0.2s ease;
+}
+
+/* When input has a value, text turns white */
+.input-wrapper.filled input {
+  color: #FFFFFF;
+}
+
+.input-wrapper input::placeholder {
+  color: #89898F;
+}
+
+.backup-btn {
+  display: flex;
   justify-content: center;
   align-items: center;
+  gap: 8px;
+  padding: 20px 32px;
+  background-color: rgba(185, 92, 232, 0.16);
+  border: 1px solid #B95CE8;
+  border-radius: 9999px;
+  box-shadow: 0px 1px 2px 0px rgba(5, 5, 10, 0.2);
+  cursor: pointer;
+  opacity: 0.3;
+  transition: opacity 0.2s;
+}
+
+.backup-btn:not(:disabled):hover {
+  opacity: 0.5;
+}
+
+.backup-btn:disabled {
+  cursor: not-allowed;
+}
+
+.backup-btn-text {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.428em;
+  color: #B95CE8;
+  margin: 0;
+}
+
+.backup-btn-icon {
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .form-box .sync-status,
@@ -274,15 +400,6 @@ button:active {
   font-weight: 500;
 }
 
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
@@ -298,9 +415,10 @@ button:active {
     background-color: #0f0f0f69;
   }
 
-  .form-box {
-    background-color: #1a1a1a;
-    border-color: #444;
+  /* Startup form keeps the Figma design */
+  #startup-form.form-box {
+    background-color: #1D1D20;
+    border-color: #303034;
   }
 
   .copy-btn {

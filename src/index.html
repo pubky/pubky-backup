@@ -15,20 +15,44 @@
           </div>
         </div>
         <div id="startup-form" class="form-box box">
-          <p>Insert your Pubky public key:</p>
-          <input
-            id="pubky-input"
-            type="text"
-            placeholder="g1b6wp8bhhxt..."
-            list="previous-keys"
-            autocomplete="off"
-          />
-          <datalist id="previous-keys">
-            <!-- Options populated dynamically -->
-          </datalist>
-          <div>
-            <!-- Add spinner to both sides to centre label - Sorry.-->
-            <button id="continue-btn" class="button-container standard-btn"><span class="spinner" style="visibility: hidden;">◐</span>Continue<span id="continue-spinner" class="spinner hidden">◐</span></button>
+          <div class="startup-header">
+            <div class="pubky-logo">
+              <svg width="272" height="48" viewBox="0 0 272 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- Pubky Brand Mark (Purple P with crown) -->
+                <g transform="translate(0, 4.5)">
+                  <path d="M12.75 0C19.8462 0 25.5 5.16 25.5 11.6C25.5 18.04 19.8462 23.2 12.75 23.2C11.3346 23.2 10.0115 23.04 8.86154 22.64V38.88H0V1.12C0 0.52 0.462 0 1.03846 0H12.75ZM11.7115 15.76C14.8615 15.76 17.0654 14.08 17.0654 11.6C17.0654 9.12 14.8615 7.44 11.7115 7.44H8.86154V15.76H11.7115Z" fill="#B95CE8"/>
+                </g>
+                <!-- pubky text (white, medium weight) -->
+                <text x="39" y="33" fill="#FFFFFF" font-family="Inter Tight, Arial, sans-serif" font-size="24" font-weight="500" letter-spacing="-0.3">pubky</text>
+                <!-- Backup text (white, light weight) -->
+                <text x="152" y="33" fill="#FFFFFF" font-family="Inter Tight, Arial, sans-serif" font-size="24" font-weight="300" letter-spacing="-0.2">Backup</text>
+              </svg>
+            </div>
+            <h1 class="startup-heading">Securely mirror your Pubky data.</h1>
+          </div>
+          <div class="startup-form-content">
+            <div class="input-wrapper">
+              <svg class="input-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7.33333 12.6667C10.2789 12.6667 12.6667 10.2789 12.6667 7.33333C12.6667 4.38781 10.2789 2 7.33333 2C4.38781 2 2 4.38781 2 7.33333C2 10.2789 4.38781 12.6667 7.33333 12.6667Z" stroke="#89898F" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M14 14L11.1 11.1" stroke="#89898F" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <input
+                id="pubky-input"
+                type="text"
+                placeholder="Enter your pubky..."
+                list="previous-keys"
+                autocomplete="off"
+              />
+            </div>
+            <datalist id="previous-keys">
+              <!-- Options populated dynamically -->
+            </datalist>
+            <button id="continue-btn" class="backup-btn">
+              <span class="backup-btn-text">Backup</span>
+              <svg id="continue-spinner" class="backup-btn-icon hidden" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 8C14 11.3137 11.3137 14 8 14C4.68629 14 2 11.3137 2 8C2 4.68629 4.68629 2 8 2" stroke="#B95CE8" stroke-width="1.33" stroke-linecap="round"/>
+              </svg>
+            </button>
           </div>
         </div>
       </main>
