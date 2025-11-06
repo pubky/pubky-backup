@@ -10,6 +10,7 @@ export class MainForm {
     this.dataSize = 0;
     this.dataDirPath = null;
     this.backupControllerError = null;
+    this.lastSyncTime = null;
     this.statusInterval = null;
     this.countdownInterval = null;
   }
@@ -18,10 +19,11 @@ export class MainForm {
     this.bindEvents();
     this.loadStateOnInit();
     this.startStatusPolling();
+    this.startCountdown();
   }
 
   bindEvents() {
-    // Copy pubky and homeserver buttons
+    // Copy pubky button
     document.getElementById("copy-pubky").addEventListener("click", () => {
       navigator.clipboard
         .writeText(this.pubky)
@@ -30,16 +32,6 @@ export class MainForm {
         })
         .catch((err) => {
           console.error("Failed to copy pubky:", err);
-        });
-    });
-    document.getElementById("copy-homeserver").addEventListener("click", () => {
-      navigator.clipboard
-        .writeText(this.homeserver)
-        .then(() => {
-          console.log("Homeserver copied to clipboard");
-        })
-        .catch((err) => {
-          console.error("Failed to copy homeserver:", err);
         });
     });
 
@@ -83,28 +75,30 @@ export class MainForm {
       this.nextSyncTime = data.next_sync_time;
       this.dataSize = data.data_dir_size || 0;
       this.backupControllerError = data.backup_controller_error;
+      this.lastSyncTime = data.last_sync_time || null;
       this.setHeader();
       this.updateSyncStatus();
       this.updateBackupSize();
+      this.updateLastSync();
       this.loadDataDirPath();
-      this.startCountdown();
     } catch (error) {
       console.error("Error loading initial state:", error);
       document.getElementById("main-form").classList.add("hidden");
     }
   }
 
-  displayPubky(str, length = 8) {
-    return str.length > length ? str.substring(0, length) + "..." : str;
+  displayPubky(str, length = 5) {
+    if (!str) return "...";
+    const endLength = 5;
+    if (str.length <= length + endLength + 3) return str;
+    return str.substring(0, length) + "..." + str.substring(str.length - endLength);
   }
 
   setHeader() {
     const backupHeader = document.getElementById("main-form");
     const pubkyDisplay = document.getElementById("pubky-display");
-    const homeserverDisplay = document.getElementById("homeserver-display");
-    if (this.pubky && this.homeserver) {
+    if (this.pubky) {
       pubkyDisplay.textContent = this.displayPubky(this.pubky);
-      homeserverDisplay.textContent = this.displayPubky(this.homeserver);
       backupHeader.classList.remove("hidden");
     } else {
       console.log(`Failed to find State data`);
@@ -141,8 +135,10 @@ export class MainForm {
       this.nextSyncTime = data.next_sync_time;
       this.dataSize = data.data_dir_size || 0;
       this.backupControllerError = data.backup_controller_error;
+      this.lastSyncTime = data.last_sync_time || null;
       this.updateSyncStatus();
       this.updateBackupSize();
+      this.updateLastSync();
       if (this.backupControllerError) {
         alert(`Internal Error: ${this.backupControllerError}`);
         this.returnToStartup();
@@ -153,32 +149,61 @@ export class MainForm {
   }
 
   updateSyncStatus() {
+    const statusBadge = document.getElementById("status-badge");
     const statusText = document.getElementById("status-text");
-    const statusSpinner = document.getElementById("status-spinner");
-    const statusTick = document.getElementById("status-tick");
-    const syncStatus = document.getElementById("sync-status");
-    const syncControls = document.getElementById("button-container");
+    const syncMessage = document.getElementById("sync-message");
+    const syncMessageText = document.getElementById("sync-message-text");
+    const forceSyncBtn = document.getElementById("force-sync-btn");
 
     if (this.isSyncing) {
-      statusText.textContent = "Syncing...";
-      statusSpinner.classList.remove("hidden");
-      statusTick.classList.add("hidden");
-      syncStatus.classList.add("syncing");
-      syncStatus.classList.remove("synced");
-      syncControls.classList.add("hidden");
+      // Update status badge
+      statusBadge.classList.remove("synced");
+      statusBadge.classList.add("syncing");
+      statusText.textContent = "SYNCING";
+
+      // Update sync message
+      syncMessage.classList.add("syncing");
+      syncMessageText.textContent = "Syncing data...";
+
+      // Disable force sync button while syncing
+      forceSyncBtn.disabled = true;
     } else {
-      statusText.textContent = "Synced";
-      statusSpinner.classList.add("hidden");
-      statusTick.classList.remove("hidden");
-      syncStatus.classList.add("synced");
-      syncStatus.classList.remove("syncing");
-      syncControls.classList.remove("hidden");
+      // Update status badge
+      statusBadge.classList.remove("syncing");
+      statusBadge.classList.add("synced");
+      statusText.textContent = "SYNCED";
+
+      // Update sync message
+      syncMessage.classList.remove("syncing");
+      syncMessageText.textContent = "Data synchronized";
+
+      // Enable force sync button
+      forceSyncBtn.disabled = false;
     }
   }
 
   updateBackupSize() {
     const backupSizeValue = document.getElementById("backup-size-value");
     backupSizeValue.textContent = this.formatFileSize(this.dataSize);
+  }
+
+  updateLastSync() {
+    const lastSyncValue = document.getElementById("last-sync-value");
+    if (this.lastSyncTime && this.lastSyncTime > 0) {
+      lastSyncValue.textContent = this.formatTimestamp(this.lastSyncTime);
+    } else {
+      lastSyncValue.textContent = "--";
+    }
+  }
+
+  formatTimestamp(unixTimestamp) {
+    const date = new Date(unixTimestamp * 1000);
+    const hours = date.getHours();
+    const minutes = date.getMinutes().toString().padStart(2, "0");
+    const seconds = date.getSeconds().toString().padStart(2, "0");
+    const ampm = hours >= 12 ? "PM" : "AM";
+    const displayHours = hours % 12 || 12;
+    return `${displayHours}:${minutes}:${seconds} ${ampm}`;
   }
 
   async loadDataDirPath() {

@@ -9,11 +9,6 @@
     <!-- Startup Screen -->
     <div id="startup-screen" class="screen">
       <main class="container">
-        <div class="header-box box">
-          <div id="startup-dev-indicator" class="dev-indicator hidden">
-            <span>🔧 Developer Mode</span>
-          </div>
-        </div>
         <div id="startup-form" class="form-box box">
           <div class="startup-header">
             <div class="pubky-logo">
@@ -55,34 +50,130 @@
             </button>
           </div>
         </div>
+        <div class="header-box box">
+          <div id="startup-dev-indicator" class="dev-indicator hidden">
+            <span>🔧 Developer Mode</span>
+          </div>
+        </div>
       </main>
     </div>
 
     <!-- Main App Screen -->
     <div id="app-screen" class="screen hidden">
       <main class="container">
+        <div id="main-form" class="form-box box hidden">
+          <!-- Top nav buttons (placeholder, no functionality yet) -->
+          <div class="top-nav-buttons">
+            <button class="icon-button" title="Activity" disabled>
+              <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M16.6667 10H13.3333L11.6667 15L8.33333 5L6.66667 10H3.33333" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button class="icon-button" title="Key" disabled>
+              <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M15.8333 9.16667C17.2141 9.16667 18.3333 8.04738 18.3333 6.66667C18.3333 5.28596 17.2141 4.16667 15.8333 4.16667C14.4526 4.16667 13.3333 5.28596 13.3333 6.66667C13.3333 8.04738 14.4526 9.16667 15.8333 9.16667Z" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M8.70833 15.2917L2.5 15.2917L2.5 12.7917L5.83333 12.7917L12.0417 6.58333" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button class="icon-button" title="Settings" disabled>
+              <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M10 12.5C11.3807 12.5 12.5 11.3807 12.5 10C12.5 8.61929 11.3807 7.5 10 7.5C8.61929 7.5 7.5 8.61929 7.5 10C7.5 11.3807 8.61929 12.5 10 12.5Z" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M16.1667 12.5C16.0557 12.7513 16.0227 13.0302 16.0722 13.3005C16.1218 13.5708 16.2517 13.8203 16.4458 14.0167L16.4925 14.0633C16.6466 14.2172 16.7689 14.4005 16.8525 14.6022C16.9361 14.8038 16.9793 15.0199 16.9793 15.2383C16.9793 15.4567 16.9361 15.6728 16.8525 15.8745C16.7689 16.0762 16.6466 16.2594 16.4925 16.4133C16.3386 16.5674 16.1553 16.6898 15.9537 16.7733C15.752 16.8569 15.5359 16.9001 15.3175 16.9001C15.0991 16.9001 14.883 16.8569 14.6813 16.7733C14.4797 16.6898 14.2964 16.5674 14.1425 16.4133L14.0958 16.3667C13.8995 16.1726 13.65 16.0426 13.3796 15.9931C13.1093 15.9436 12.8304 15.9765 12.5792 16.0875C12.3331 16.1939 12.1253 16.3722 11.9826 16.5998C11.8399 16.8273 11.769 17.0943 11.7792 17.3642V17.5C11.7792 17.942 11.6036 18.366 11.2909 18.6785C10.9783 18.9911 10.5543 19.1667 10.1125 19.1667C9.67051 19.1667 9.24649 18.9911 8.93393 18.6785C8.62137 18.366 8.44583 17.942 8.44583 17.5V17.425C8.43032 17.1464 8.34659 16.8766 8.20242 16.6402C8.05824 16.4037 7.8583 16.2081 7.62083 16.0708C7.36965 15.9599 7.09075 15.927 6.82042 15.9765C6.55009 16.026 6.30061 16.156 6.10417 16.35L6.0575 16.3967C5.90361 16.5508 5.72037 16.6731 5.51868 16.7567C5.31699 16.8403 5.1009 16.8835 4.8825 16.8835C4.6641 16.8835 4.44801 16.8403 4.24632 16.7567C4.04463 16.6731 3.86139 16.5508 3.7075 16.3967C3.55338 16.2428 3.43109 16.0595 3.34748 15.8578C3.26387 15.6561 3.22071 15.44 3.22071 15.2217C3.22071 15.0033 3.26387 14.7872 3.34748 14.5855C3.43109 14.3838 3.55338 14.2005 3.7075 14.0467L3.75417 14C3.94824 13.8035 4.07821 13.554 4.12774 13.2837C4.17726 13.0134 4.14439 12.7345 4.03333 12.4833C3.92698 12.2372 3.74867 12.0294 3.52114 11.8867C3.2936 11.744 3.02659 11.6731 2.75667 11.6833H2.61667C2.17464 11.6833 1.75062 11.5078 1.43806 11.1952C1.1255 10.8827 0.95 10.4586 0.95 10.0167C0.95 9.57464 1.1255 9.15062 1.43806 8.83806C1.75062 8.5255 2.17464 8.35 2.61667 8.35H2.69167C2.97027 8.33449 3.24005 8.25076 3.47647 8.10658C3.71289 7.96241 3.90852 7.76247 4.04583 7.525C4.15689 7.27382 4.18976 6.99492 4.14024 6.72459C4.09071 6.45426 3.96074 6.20478 3.76667 6.00833L3.72 5.96167C3.56588 5.80778 3.44359 5.62454 3.35998 5.42285C3.27637 5.22116 3.23321 5.00507 3.23321 4.78667C3.23321 4.56827 3.27637 4.35218 3.35998 4.15049C3.44359 3.9488 3.56588 3.76556 3.72 3.61167C3.87389 3.45755 4.05713 3.33526 4.25882 3.25165C4.46051 3.16804 4.6766 3.12488 4.895 3.12488C5.1134 3.12488 5.32949 3.16804 5.53118 3.25165C5.73287 3.33526 5.91611 3.45755 6.07 3.61167L6.11667 3.65833C6.31312 3.85241 6.5626 3.98237 6.83293 4.0319C7.10326 4.08143 7.38216 4.04856 7.63333 3.9375H7.7125C7.95864 3.83115 8.16649 3.65284 8.30915 3.42531C8.45182 3.19777 8.52273 2.93076 8.5125 2.66083V2.5C8.5125 2.05797 8.688 1.63395 9.00056 1.32139C9.31312 1.00883 9.73714 0.833332 10.1792 0.833332C10.6212 0.833332 11.0452 1.00883 11.3578 1.32139C11.6703 1.63395 11.8458 2.05797 11.8458 2.5V2.575C11.8561 2.84493 11.927 3.11194 12.0697 3.33948C12.2123 3.56701 12.4202 3.74532 12.6663 3.85167C12.9175 3.96273 13.1964 3.9956 13.4667 3.94608C13.7371 3.89655 13.9865 3.76658 14.183 3.5725L14.2297 3.52583C14.3835 3.37171 14.5668 3.24942 14.7685 3.16581C14.9702 3.0822 15.1863 3.03904 15.4047 3.03904C15.6231 3.03904 15.8391 3.0822 16.0408 3.16581C16.2425 3.24942 16.4258 3.37171 16.5797 3.52583C16.7338 3.67972 16.8561 3.86296 16.9397 4.06465C17.0233 4.26634 17.0664 4.48243 17.0664 4.70083C17.0664 4.91923 17.0233 5.13533 16.9397 5.33701C16.8561 5.5387 16.7338 5.72194 16.5797 5.87583L16.533 5.9225C16.3389 6.11895 16.209 6.36843 16.1594 6.63876C16.1099 6.90909 16.1428 7.18799 16.2538 7.43917V7.51833C16.3602 7.76447 16.5385 7.97232 16.766 8.11499C16.9936 8.25765 17.2606 8.32856 17.5305 8.31833H17.6663C18.1084 8.31833 18.5324 8.49383 18.845 8.80639C19.1575 9.11895 19.333 9.54297 19.333 9.985C19.333 10.427 19.1575 10.851 18.845 11.1636C18.5324 11.4762 18.1084 11.6517 17.6663 11.6517H17.5913C17.3214 11.6619 17.0544 11.7328 16.8269 11.8755C16.5994 12.0182 16.4211 12.226 16.3147 12.4722V12.4722Z" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button class="icon-button icon-button-selected" title="Refresh" disabled>
+              <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M16.6667 2.5V7.5H11.6667" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M3.33333 17.5V12.5H8.33333" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M4.93333 7.5C5.32649 6.38451 6.01383 5.39433 6.92282 4.63352C7.83181 3.87271 8.92742 3.36863 10.0939 3.17482C11.2605 2.98101 12.4571 3.10408 13.5572 3.53103C14.6572 3.95798 15.6199 4.67345 16.35 5.6L16.6667 6M3.33333 14L3.65 14.4C4.38008 15.3266 5.34277 16.042 6.44281 16.469C7.54286 16.8959 8.7395 17.019 9.90604 16.8252C11.0726 16.6314 12.1682 16.1273 13.0772 15.3665C13.9862 14.6057 14.6735 13.6155 15.0667 12.5" stroke="currentColor" stroke-width="1.67" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Header with pubky, copy button, and status -->
+          <div class="dashboard-header">
+            <div class="dashboard-header-left">
+              <h4 class="dashboard-pubky" id="pubky-display">9g3zs...87a6h</h4>
+              <button id="copy-pubky" class="icon-button-inline" title="Copy full pubky">
+                <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M16.6667 7.5H9.16667C8.24619 7.5 7.5 8.24619 7.5 9.16667V16.6667C7.5 17.5871 8.24619 18.3333 9.16667 18.3333H16.6667C17.5871 18.3333 18.3333 17.5871 18.3333 16.6667V9.16667C18.3333 8.24619 17.5871 7.5 16.6667 7.5Z" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M4.16667 12.5H3.33333C2.89131 12.5 2.46738 12.3244 2.15482 12.0118C1.84226 11.6993 1.66667 11.2754 1.66667 10.8333V3.33333C1.66667 2.89131 1.84226 2.46738 2.15482 2.15482C2.46738 1.84226 2.89131 1.66667 3.33333 1.66667H10.8333C11.2754 1.66667 11.6993 1.84226 12.0118 2.15482C12.3244 2.46738 12.5 2.89131 12.5 3.33333V4.16667" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+            <div class="status-badge" id="status-badge">
+              <span class="status-badge-text" id="status-text">SYNCED</span>
+            </div>
+          </div>
+
+          <!-- Success/Syncing message banner -->
+          <div class="sync-message" id="sync-message">
+            <span class="sync-message-text" id="sync-message-text">Data synchronized</span>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" id="sync-message-icon">
+              <path d="M22 11.08V12C21.9988 14.1564 21.3005 16.2547 20.0093 17.9818C18.7182 19.7088 16.9033 20.9725 14.8354 21.5839C12.7674 22.1953 10.5573 22.1219 8.53447 21.3746C6.51168 20.6273 4.78465 19.2461 3.61096 17.4371C2.43727 15.628 1.87979 13.4881 2.02168 11.3363C2.16356 9.18455 2.99721 7.13631 4.39828 5.49706C5.79935 3.85781 7.69279 2.71537 9.79619 2.24013C11.8996 1.7649 14.1003 1.98232 16.07 2.85999" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M22 4L12 14.01L9 11.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+
+          <!-- Info cards grid -->
+          <div class="info-cards-container">
+            <div class="info-cards-row">
+              <div class="info-card">
+                <div class="info-card-header">
+                  <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M15.75 5.25H2.25C1.42157 5.25 0.75 5.92157 0.75 6.75V14.25C0.75 15.0784 1.42157 15.75 2.25 15.75H15.75C16.5784 15.75 17.25 15.0784 17.25 14.25V6.75C17.25 5.92157 16.5784 5.25 15.75 5.25Z" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M12 15.75V3.75C12 3.35218 11.842 2.97064 11.5607 2.68934C11.2794 2.40804 10.8978 2.25 10.5 2.25H7.5C7.10218 2.25 6.72064 2.40804 6.43934 2.68934C6.15804 2.97064 6 3.35218 6 3.75V15.75" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span class="info-card-label">BACKUP SIZE</span>
+                </div>
+                <strong class="info-card-value" id="backup-size-value">--</strong>
+              </div>
+              <div class="info-card">
+                <div class="info-card-header">
+                  <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 16.5C13.1421 16.5 16.5 13.1421 16.5 9C16.5 4.85786 13.1421 1.5 9 1.5C4.85786 1.5 1.5 4.85786 1.5 9C1.5 13.1421 4.85786 16.5 9 16.5Z" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M9 4.5V9L12 10.5" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span class="info-card-label">LAST SYNC</span>
+                </div>
+                <strong class="info-card-value" id="last-sync-value">--</strong>
+              </div>
+            </div>
+            <div class="info-card info-card-full">
+              <div class="info-card-header">
+                <svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M16.5 13.5V3C16.5 2.60218 16.342 2.22064 16.0607 1.93934C15.7794 1.65804 15.3978 1.5 15 1.5H3C2.60218 1.5 2.22064 1.65804 1.93934 1.93934C1.65804 2.22064 1.5 2.60218 1.5 3V13.5" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M0.75 13.5H17.25V15C17.25 15.3978 17.092 15.7794 16.8107 16.0607C16.5294 16.342 16.1478 16.5 15.75 16.5H2.25C1.85218 16.5 1.47064 16.342 1.18934 16.0607C0.908035 15.7794 0.75 15.3978 0.75 15V13.5Z" stroke="#89898F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="info-card-label">BACKUP LOCATION</span>
+              </div>
+              <div class="info-card-location">
+                <strong class="info-card-value" id="data-dir-value">--</strong>
+                <button id="open-data-dir" class="icon-button-inline" title="Open data directory">
+                  <svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M15 10.8333V15.8333C15 16.2754 14.8244 16.6993 14.5118 17.0118C14.1993 17.3244 13.7754 17.5 13.3333 17.5H4.16667C3.72464 17.5 3.30072 17.3244 2.98816 17.0118C2.67559 16.6993 2.5 16.2754 2.5 15.8333V6.66667C2.5 6.22464 2.67559 5.80072 2.98816 5.48816C3.30072 5.17559 3.72464 5 4.16667 5H9.16667" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M12.5 2.5H17.5V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M8.33333 11.6667L17.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Force Sync button -->
+          <button id="force-sync-btn" class="force-sync-btn">
+            <span class="force-sync-btn-text">Force Sync</span>
+            <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" class="force-sync-icon">
+              <path d="M13.3333 2V6H9.33333" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M2.66667 14V10H6.66667" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M3.94667 6C4.26119 5.10761 4.81106 4.31546 5.53826 3.70682C6.26545 3.09817 7.14194 2.69491 8.07512 2.53986C9.0083 2.38481 9.96568 2.48326 10.8458 2.82482C11.7258 3.16638 12.4959 3.73876 13.08 4.48L13.3333 4.8M2.66667 11.2L2.92 11.52C3.50407 12.2613 4.27422 12.8336 5.15425 13.1752C6.03428 13.5167 6.99167 13.6151 7.92483 13.4601C8.858 13.3051 9.73456 12.9018 10.4618 12.2932C11.189 11.6846 11.7388 10.8924 12.0533 10" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
         <div class="header-box box">
           <button id="back-btn" class="back-btn">Back</button>
           <div id="dev-indicator" class="dev-indicator hidden">
             <span>🔧 Developer Mode</span>
-          </div>
-        </div>
-        <div id="main-form" class="form-box box hidden">
-          <h2>Public Key: <span id="pubky-display"></span> <button id="copy-pubky" class="copy-btn" title="Copy full pubky">📋</button></h2>
-          <h2>Homeserver: <span id="homeserver-display"></span> <button id="copy-homeserver" class="copy-btn" title="Copy full homeserver">📋</button></h2>
-          <div id="sync-status" class="sync-status">
-            <span id="status-text">Synced</span>
-            <span id="status-spinner" class="spinner hidden">◐</span>
-            <span id="status-tick" class="tick hidden">✓</span>
-          </div>
-          <div id="backup-size" class="backup-size">Current Backup size: <span id="backup-size-value">--</span></div>
-          <div id="data-dir-display" class="data-dir-display">
-            Data dir: <span id="data-dir-value">--</span>
-            <button id="open-data-dir" class="icon-btn" title="Open data directory">📁</button>
-          </div>
-          <div id="button-container" class="button-container">
-            <div id="countdown-display" class="countdown">Next sync in: <span id="countdown-timer">--</span></div>
-            <button id="force-sync-btn" class="standard-btn">Force sync Now</button>
           </div>
         </div>
       </main>
