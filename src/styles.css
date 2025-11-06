@@ -168,12 +168,42 @@ button:active {
 }
 
 .pubky-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
   width: 272px;
   height: 48px;
 }
 
+.pubky-brand-mark {
+  width: 38px;
+  height: 60px;
+  flex-shrink: 0;
+  filter: drop-shadow(0px 5px 8px rgba(0, 0, 0, 0.6));
+  margin-bottom: -5px;
+}
+
+.pubky-text {
+  font-family: 'Inter Tight', Inter, sans-serif;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.18em;
+  letter-spacing: -0.5px;
+  color: #FFFFFF;
+}
+
+.backup-text {
+  font-family: 'Inter Tight', Inter, sans-serif;
+  font-size: 32px;
+  font-weight: 300;
+  line-height: 1.18em;
+  letter-spacing: -0.3px;
+  color: #FFFFFF;
+}
+
 .startup-heading {
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1.4em;
   font-weight: 400;
   text-align: center;
@@ -645,6 +675,66 @@ button:active {
 
 .force-sync-btn {
   align-self: stretch;
+}
+
+/* Toast notification */
+.toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  width: 360px;
+  max-width: calc(100vw - 64px);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  background: linear-gradient(to right, rgba(185, 92, 232, 0.1), #1D1D20);
+  border: 1px solid #B95CE8;
+  border-radius: 8px;
+  box-shadow: 0px 4px 6px 0px rgba(5, 5, 10, 0.25), 0px 10px 15px 0px rgba(5, 5, 10, 0.5);
+  backdrop-filter: blur(20px);
+  opacity: 0;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.toast-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.toast-title {
+  font-family: 'Inter Tight', Inter, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.5em;
+  color: #EEEEF6;
+  text-align: left;
+  margin: 0;
+}
+
+.toast-description {
+  font-family: 'Inter Tight', Inter, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.428em;
+  color: #EEEEF6;
+  opacity: 0.9;
+  text-align: left;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (prefers-color-scheme: dark) {

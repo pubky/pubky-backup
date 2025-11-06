@@ -15,8 +15,8 @@
       {
         "title": "pubky-backup",
         "width": 400,
-        "height": 400,
-        "resizable": false,
+        "height": 450,
+        "resizable": true,
         "center": true
       }
     ],

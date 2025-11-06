@@ -12,16 +12,25 @@
         <div id="startup-form" class="form-box box">
           <div class="startup-header">
             <div class="pubky-logo">
-              <svg width="272" height="48" viewBox="0 0 272 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <!-- Pubky Brand Mark (Purple P with crown) -->
-                <g transform="translate(0, 4.5)">
-                  <path d="M12.75 0C19.8462 0 25.5 5.16 25.5 11.6C25.5 18.04 19.8462 23.2 12.75 23.2C11.3346 23.2 10.0115 23.04 8.86154 22.64V38.88H0V1.12C0 0.52 0.462 0 1.03846 0H12.75ZM11.7115 15.76C14.8615 15.76 17.0654 14.08 17.0654 11.6C17.0654 9.12 14.8615 7.44 11.7115 7.44H8.86154V15.76H11.7115Z" fill="#B95CE8"/>
+              <svg class="pubky-brand-mark" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <g filter="url(#filter0_d_23413_16300)">
+                  <path d="M17 11.3496C20.8073 11.3496 23.8935 14.4921 23.8936 18.3682C23.8936 20.0455 23.315 21.5838 22.3535 22.7891L24.9912 31H9.00879L11.6465 22.7891C10.685 21.5838 10.1064 20.0455 10.1064 18.3682C10.1065 14.4921 13.1927 11.3496 17 11.3496ZM17 14.6553C14.9857 14.6553 13.3526 16.3179 13.3525 18.3682C13.3525 19.7891 14.1374 21.0243 15.29 21.6484L15.4082 21.7119L13.4863 27.6943H20.5137L18.5918 21.7119L18.71 21.6484C19.8626 21.0243 20.6475 19.7891 20.6475 18.3682C20.6474 16.3179 19.0143 14.6553 17 14.6553ZM17 3L17.0029 3.00391L19.1758 5.9043L21.9775 4.10742L22.748 7.13281L26 6.4375L23.042 11.3555C21.4296 9.91423 19.3162 9.04078 17.0029 9.04004H16.9971C14.6838 9.04078 12.5704 9.91423 10.958 11.3555L8 6.4375L11.252 7.13281L12.0225 4.10742L14.8242 5.9043L17 3Z" fill="#B95CE8"/>
                 </g>
-                <!-- pubky text (white, medium weight) -->
-                <text x="39" y="33" fill="#FFFFFF" font-family="Inter Tight, Arial, sans-serif" font-size="24" font-weight="500" letter-spacing="-0.3">pubky</text>
-                <!-- Backup text (white, light weight) -->
-                <text x="152" y="33" fill="#FFFFFF" font-family="Inter Tight, Arial, sans-serif" font-size="24" font-weight="300" letter-spacing="-0.2">Backup</text>
+                <defs>
+                  <filter id="filter0_d_23413_16300" x="0" y="0" width="34" height="44" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+                    <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+                    <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                    <feOffset dy="5"/>
+                    <feGaussianBlur stdDeviation="4"/>
+                    <feComposite in2="hardAlpha" operator="out"/>
+                    <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.6 0"/>
+                    <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_23413_16300"/>
+                    <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_23413_16300" result="shape"/>
+                  </filter>
+                </defs>
               </svg>
+              <span class="pubky-text">Pubky</span>
+              <span class="backup-text">Backup</span>
             </div>
             <h1 class="startup-heading">Securely mirror your Pubky data.</h1>
           </div>
@@ -51,9 +60,6 @@
           </div>
         </div>
         <div class="header-box box">
-          <div id="startup-dev-indicator" class="dev-indicator hidden">
-            <span>🔧 Developer Mode</span>
-          </div>
         </div>
       </main>
     </div>
@@ -177,12 +183,18 @@
         </div>
         <div class="header-box box">
           <button id="back-btn" class="back-btn">Back</button>
-          <div id="dev-indicator" class="dev-indicator hidden">
-            <span>🔧 Developer Mode</span>
-          </div>
         </div>
       </main>
     </div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast">
+      <div class="toast-text">
+        <div class="toast-title">Pubky copied to clipboard</div>
+        <div class="toast-description" id="toast-description">pubky9g3zsjpwijn3gsh7ibghjxxadpjidceos5rw4387a6h</div>
+      </div>
+    </div>
+
     <script type="module" src="/main.js"></script>
   </body>
 </html>

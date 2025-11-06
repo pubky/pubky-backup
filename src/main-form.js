@@ -31,6 +31,7 @@ export class MainForm {
         .writeText(this.pubky)
         .then(() => {
           console.log("Pubky copied to clipboard");
+          this.showToast(this.pubky);
         })
         .catch((err) => {
           console.error("Failed to copy pubky:", err);
@@ -337,6 +338,22 @@ export class MainForm {
     } else {
       countdownElement.textContent = "0s";
     }
+  }
+
+  showToast(pubkyText) {
+    const toast = document.getElementById("toast");
+    const toastDescription = document.getElementById("toast-description");
+
+    // Update the toast description with truncated pubky
+    toastDescription.textContent = this.displayPubky(pubkyText);
+
+    // Show the toast
+    toast.classList.add("show");
+
+    // Hide the toast after 2 seconds
+    setTimeout(() => {
+      toast.classList.remove("show");
+    }, 2000);
   }
 
   async returnToStartup() {

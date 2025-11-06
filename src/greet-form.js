@@ -10,6 +10,14 @@ export class GreetForm {
     if (continueBtn) {
       continueBtn.disabled = false;
       continueBtn.classList.remove("activated");
+
+      // Restore opacity based on input value
+      const pubkyInput = document.getElementById("pubky-input");
+      if (pubkyInput && pubkyInput.value.trim().length > 0) {
+        continueBtn.style.opacity = "1";
+      } else {
+        continueBtn.style.opacity = "0.3";
+      }
     }
   }
 
