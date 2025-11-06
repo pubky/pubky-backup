@@ -44,8 +44,8 @@
             </datalist>
             <button id="continue-btn" class="backup-btn">
               <span class="backup-btn-text">Backup</span>
-              <svg id="continue-spinner" class="backup-btn-icon hidden" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M14 8C14 11.3137 11.3137 14 8 14C4.68629 14 2 11.3137 2 8C2 4.68629 4.68629 2 8 2" stroke="#B95CE8" stroke-width="1.33" stroke-linecap="round"/>
+              <svg class="backup-btn-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M3 12C3 9.61305 3.94821 7.32387 5.63604 5.63604C7.32387 3.94821 9.61305 3 12 3C14.516 3.00947 16.931 3.99122 18.74 5.74L21 8M21 8V3M21 8H16M21 12C21 14.3869 20.0518 16.6761 18.364 18.364C16.6761 20.0518 14.3869 21 12 21C9.48395 20.9905 7.06897 20.0088 5.26 18.26L3 16M3 16H8M3 16V21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </button>
           </div>
@@ -108,11 +108,18 @@
 
           <!-- Success/Syncing message banner -->
           <div class="sync-message" id="sync-message">
-            <span class="sync-message-text" id="sync-message-text">Data synchronized</span>
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" id="sync-message-icon">
-              <path d="M22 11.08V12C21.9988 14.1564 21.3005 16.2547 20.0093 17.9818C18.7182 19.7088 16.9033 20.9725 14.8354 21.5839C12.7674 22.1953 10.5573 22.1219 8.53447 21.3746C6.51168 20.6273 4.78465 19.2461 3.61096 17.4371C2.43727 15.628 1.87979 13.4881 2.02168 11.3363C2.16356 9.18455 2.99721 7.13631 4.39828 5.49706C5.79935 3.85781 7.69279 2.71537 9.79619 2.24013C11.8996 1.7649 14.1003 1.98232 16.07 2.85999" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M22 4L12 14.01L9 11.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+            <div class="sync-message-content">
+              <span class="sync-message-text" id="sync-message-text">Data synchronized</span>
+            </div>
+            <div class="sync-message-actions">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" id="sync-message-icon" class="sync-message-icon">
+                <path d="M22 11.08V12C21.9988 14.1564 21.3005 16.2547 20.0093 17.9818C18.7182 19.7088 16.9033 20.9725 14.8354 21.5839C12.7674 22.1953 10.5573 22.1219 8.53447 21.3746C6.51168 20.6273 4.78465 19.2461 3.61096 17.4371C2.43727 15.628 1.87979 13.4881 2.02168 11.3363C2.16356 9.18455 2.99721 7.13631 4.39828 5.49706C5.79935 3.85781 7.69279 2.71537 9.79619 2.24013C11.8996 1.7649 14.1003 1.98232 16.07 2.85999" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M22 4L12 14.01L9 11.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" id="sync-spinner-icon" class="sync-spinner-icon hidden">
+                <path d="M14 8C14 11.3137 11.3137 14 8 14C4.68629 14 2 11.3137 2 8C2 4.68629 4.68629 2 8 2" stroke="currentColor" stroke-width="1.33" stroke-linecap="round"/>
+              </svg>
+            </div>
           </div>
 
           <!-- Info cards grid -->
@@ -163,10 +170,8 @@
           <!-- Force Sync button -->
           <button id="force-sync-btn" class="force-sync-btn">
             <span class="force-sync-btn-text">Force Sync</span>
-            <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" class="force-sync-icon">
-              <path d="M13.3333 2V6H9.33333" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M2.66667 14V10H6.66667" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M3.94667 6C4.26119 5.10761 4.81106 4.31546 5.53826 3.70682C6.26545 3.09817 7.14194 2.69491 8.07512 2.53986C9.0083 2.38481 9.96568 2.48326 10.8458 2.82482C11.7258 3.16638 12.4959 3.73876 13.08 4.48L13.3333 4.8M2.66667 11.2L2.92 11.52C3.50407 12.2613 4.27422 12.8336 5.15425 13.1752C6.03428 13.5167 6.99167 13.6151 7.92483 13.4601C8.858 13.3051 9.73456 12.9018 10.4618 12.2932C11.189 11.6846 11.7388 10.8924 12.0533 10" stroke="currentColor" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
+            <svg class="force-sync-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M3 12C3 9.61305 3.94821 7.32387 5.63604 5.63604C7.32387 3.94821 9.61305 3 12 3C14.516 3.00947 16.931 3.99122 18.74 5.74L21 8M21 8V3M21 8H16M21 12C21 14.3869 20.0518 16.6761 18.364 18.364C16.6761 20.0518 14.3869 21 12 21C9.48395 20.9905 7.06897 20.0088 5.26 18.26L3 16M3 16H8M3 16V21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
         </div>

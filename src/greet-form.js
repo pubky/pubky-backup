@@ -7,12 +7,9 @@ export class GreetForm {
 
   resetContinueButton() {
     const continueBtn = document.getElementById("continue-btn");
-    const spinner = document.getElementById("continue-spinner");
     if (continueBtn) {
       continueBtn.disabled = false;
-    }
-    if (spinner) {
-      spinner.classList.add("hidden");
+      continueBtn.classList.remove("activated");
     }
   }
 
@@ -72,13 +69,8 @@ export class GreetForm {
   // Load main-form, beginning backup process
   async initializeAndStart(pubkyValue) {
     const continueBtn = document.getElementById("continue-btn");
-    const spinner = document.getElementById("continue-spinner");
-
-    // Show loading spinner
     continueBtn.disabled = true;
-    if (spinner) {
-      spinner.classList.remove("hidden");
-    }
+    continueBtn.classList.add("activated");
 
     try {
       await invoke("init_app_state", { pubkyStr: pubkyValue });

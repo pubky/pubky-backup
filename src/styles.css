@@ -246,8 +246,16 @@ button:active {
   border-radius: 9999px;
   box-shadow: 0px 1px 2px 0px rgba(5, 5, 10, 0.2);
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: all 0.2s;
   margin: 0;
+}
+
+/* Activated/dark mode */
+.backup-btn.activated,
+.force-sync-btn.activated {
+  background-color: #1D1D20;
+  border-color: #303034;
+  opacity: 1;
 }
 
 .backup-btn {
@@ -285,7 +293,9 @@ button:active {
   color: #B95CE8;
 }
 
-.backup-btn-icon {
+/* Spinning animation only when activated */
+.backup-btn.activated .backup-btn-icon,
+.force-sync-btn.activated .force-sync-icon {
   animation: spin 1s linear infinite;
 }
 
@@ -442,6 +452,18 @@ button:active {
   background-color: rgba(185, 92, 232, 0.16);
 }
 
+.sync-message.error {
+  background-color: rgba(255, 83, 80, 0.16);
+}
+
+.sync-message-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  flex: 1;
+}
+
 .sync-message-text {
   font-family: 'Inter Tight', Inter, sans-serif;
   font-size: 12px;
@@ -455,15 +477,85 @@ button:active {
   color: #B95CE8;
 }
 
-.sync-message svg {
+.sync-message.error .sync-message-text {
+  color: #FF5350;
+}
+
+.sync-message-detail {
+  font-family: 'Inter Tight', Inter, sans-serif;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4em;
+  color: #89898F;
+  margin: 0;
+}
+
+.sync-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sync-message-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #C8FF00;
+  transition: background-color 0.2s;
+  box-shadow: none;
+  margin: 0;
+}
+
+.sync-message-action-btn:hover {
+  background-color: rgba(200, 255, 0, 0.1);
+}
+
+.sync-message.syncing .sync-message-action-btn {
+  color: #B95CE8;
+}
+
+.sync-message.syncing .sync-message-action-btn:hover {
+  background-color: rgba(185, 92, 232, 0.1);
+}
+
+.sync-message.error .sync-message-action-btn {
+  color: #FF5350;
+}
+
+.sync-message.error .sync-message-action-btn:hover {
+  background-color: rgba(255, 83, 80, 0.1);
+}
+
+.sync-message-action-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.sync-message-icon {
   width: 18px;
   height: 18px;
   color: #C8FF00;
   flex-shrink: 0;
 }
 
-.sync-message.syncing svg {
+.sync-message.syncing .sync-message-icon {
   color: #B95CE8;
+}
+
+.sync-message.error .sync-message-icon {
+  color: #FF5350;
+}
+
+.sync-spinner-icon {
+  width: 16px;
+  height: 16px;
+  color: #B95CE8;
+  flex-shrink: 0;
   animation: spin 1s linear infinite;
 }
 

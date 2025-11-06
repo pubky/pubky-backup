@@ -13,6 +13,7 @@ export class MainForm {
     this.lastSyncTime = null;
     this.statusInterval = null;
     this.countdownInterval = null;
+    this.syncMessageInterval = null;
   }
 
   init() {
@@ -20,6 +21,7 @@ export class MainForm {
     this.loadStateOnInit();
     this.startStatusPolling();
     this.startCountdown();
+    this.startSyncMessageUpdates();
   }
 
   bindEvents() {
@@ -44,11 +46,17 @@ export class MainForm {
     document
       .getElementById("force-sync-btn")
       .addEventListener("click", async () => {
+        const forceSyncBtn = document.getElementById("force-sync-btn");
         try {
+          forceSyncBtn.classList.add("activated");
+          forceSyncBtn.disabled = true;
           await invoke("force_sync_now");
           console.log("Force sync triggered");
+          // Button will be re-enabled when sync status updates
         } catch (error) {
           console.error("Force sync failed:", error);
+          forceSyncBtn.classList.remove("activated");
+          forceSyncBtn.disabled = false;
         }
       });
 
@@ -75,9 +83,9 @@ export class MainForm {
       this.nextSyncTime = data.next_sync_time;
       this.dataSize = data.data_dir_size || 0;
       this.backupControllerError = data.backup_controller_error;
-      this.lastSyncTime = data.last_sync_time || null;
       this.setHeader();
       this.updateSyncStatus();
+      this.updateNextSyncCountdown();
       this.updateBackupSize();
       this.updateLastSync();
       this.loadDataDirPath();
@@ -131,11 +139,20 @@ export class MainForm {
     try {
       const data = await invoke("fetch_state");
 
+      const previousNextSyncTime = this.nextSyncTime;
       this.isSyncing = data.is_syncing;
       this.nextSyncTime = data.next_sync_time;
       this.dataSize = data.data_dir_size || 0;
       this.backupControllerError = data.backup_controller_error;
-      this.lastSyncTime = data.last_sync_time || null;
+      
+      // Update lastSyncTime when sync completes
+      // We detect this when next_sync_time gets updated to a new future timestamp (now + 30)
+      const now = Math.floor(Date.now() / 1000);
+      if (!this.isSyncing && this.nextSyncTime > previousNextSyncTime && this.nextSyncTime > now) {
+        // Sync just completed, next sync scheduled for 30 seconds from now
+        this.lastSyncTime = now;
+      }
+
       this.updateSyncStatus();
       this.updateBackupSize();
       this.updateLastSync();
@@ -153,6 +170,8 @@ export class MainForm {
     const statusText = document.getElementById("status-text");
     const syncMessage = document.getElementById("sync-message");
     const syncMessageText = document.getElementById("sync-message-text");
+    const syncMessageIcon = document.getElementById("sync-message-icon");
+    const syncSpinnerIcon = document.getElementById("sync-spinner-icon");
     const forceSyncBtn = document.getElementById("force-sync-btn");
 
     if (this.isSyncing) {
@@ -162,10 +181,15 @@ export class MainForm {
       statusText.textContent = "SYNCING";
 
       // Update sync message
+      syncMessage.classList.remove("error");
       syncMessage.classList.add("syncing");
       syncMessageText.textContent = "Syncing data...";
 
-      // Disable force sync button while syncing
+      // Show spinner, hide check icon
+      syncMessageIcon.classList.add("hidden");
+      syncSpinnerIcon.classList.remove("hidden");
+
+      // Keep force sync button disabled and activated while syncing
       forceSyncBtn.disabled = true;
     } else {
       // Update status badge
@@ -174,11 +198,40 @@ export class MainForm {
       statusText.textContent = "SYNCED";
 
       // Update sync message
-      syncMessage.classList.remove("syncing");
-      syncMessageText.textContent = "Data synchronized";
+      syncMessage.classList.remove("syncing", "error");
 
-      // Enable force sync button
+      // Show check icon, hide spinner
+      syncMessageIcon.classList.remove("hidden");
+      syncSpinnerIcon.classList.add("hidden");
+
+      // Enable force sync button and remove activated state
       forceSyncBtn.disabled = false;
+      forceSyncBtn.classList.remove("activated");
+    }
+  }
+
+  updateNextSyncCountdown() {
+    if (this.isSyncing) {
+      return;
+    }
+
+    const syncMessageText = document.getElementById("sync-message-text");
+    const now = Math.floor(Date.now() / 1000);
+
+    if (this.nextSyncTime > now) {
+      const remaining = this.nextSyncTime - now;
+      const minutes = Math.floor(remaining / 60);
+      const seconds = remaining % 60;
+
+      if (minutes > 0) {
+        syncMessageText.textContent = `Next backup in ${minutes} minute${minutes !== 1 ? 's' : ''}...`;
+      } else if (seconds > 0) {
+        syncMessageText.textContent = `Next backup in ${seconds} second${seconds !== 1 ? 's' : ''}...`;
+      } else {
+        syncMessageText.textContent = "Syncing soon...";
+      }
+    } else {
+      syncMessageText.textContent = "Data synchronized";
     }
   }
 
@@ -235,6 +288,20 @@ export class MainForm {
     return `${size.toFixed(decimals)} ${sizes[i]}`;
   }
 
+  startSyncMessageUpdates() {
+    // Update sync message with next backup countdown every second
+    this.syncMessageInterval = setInterval(() => {
+      this.updateNextSyncCountdown();
+    }, 1000);
+  }
+
+  stopSyncMessageUpdates() {
+    if (this.syncMessageInterval) {
+      clearInterval(this.syncMessageInterval);
+      this.syncMessageInterval = null;
+    }
+  }
+
   startCountdown() {
     // Update countdown every second
     this.countdownInterval = setInterval(() => {
@@ -251,6 +318,10 @@ export class MainForm {
 
   updateCountdown() {
     const countdownElement = document.getElementById("countdown-timer");
+    if (!countdownElement) {
+      return; // Element doesn't exist in current UI
+    }
+
     const now = Math.floor(Date.now() / 1000);
 
     if (this.nextSyncTime > now) {
@@ -279,6 +350,7 @@ export class MainForm {
 
       this.stopStatusPolling();
       this.stopCountdown();
+      this.stopSyncMessageUpdates();
 
       // Navigate back to startup screen
       document.querySelectorAll(".screen").forEach((screen) => {
