@@ -7,18 +7,22 @@ export class GreetForm {
 
   resetContinueButton() {
     const continueBtn = document.getElementById("continue-btn");
-    const spinner = document.getElementById("continue-spinner");
     if (continueBtn) {
       continueBtn.disabled = false;
-    }
-    if (spinner) {
-      spinner.classList.add("hidden");
+      continueBtn.classList.remove("activated");
+
+      // Restore opacity based on input value
+      const pubkyInput = document.getElementById("pubky-input");
+      if (pubkyInput && pubkyInput.value.trim().length > 0) {
+        continueBtn.style.opacity = "1";
+      } else {
+        continueBtn.style.opacity = "0.3";
+      }
     }
   }
 
   async init() {
     this.bindEvents();
-    await this.checkDevMode();
     await this.autoLoadLastPubky();
     await this.loadPreviousKeys();
   }
@@ -26,6 +30,28 @@ export class GreetForm {
   bindEvents() {
     const continueBtn = document.getElementById("continue-btn");
     const pubkyInput = document.getElementById("pubky-input");
+    const inputWrapper = pubkyInput.closest(".input-wrapper");
+
+    // Update button and input state based on input value
+    const updateButtonState = () => {
+      const hasValue = pubkyInput.value.trim().length > 0;
+
+      if (hasValue) {
+        // Filled state
+        continueBtn.style.opacity = "1";
+        continueBtn.disabled = false;
+        if (inputWrapper) {
+          inputWrapper.classList.add("filled");
+        }
+      } else {
+        // Empty state
+        continueBtn.style.opacity = "0.3";
+        continueBtn.disabled = true;
+        if (inputWrapper) {
+          inputWrapper.classList.remove("filled");
+        }
+      }
+    };
 
     // Clear placeholder on focus or input
     pubkyInput.addEventListener("focus", () => {
@@ -34,6 +60,7 @@ export class GreetForm {
 
     pubkyInput.addEventListener("input", () => {
       pubkyInput.placeholder = "";
+      updateButtonState();
     });
 
     continueBtn.addEventListener("click", async (e) => {
@@ -41,18 +68,16 @@ export class GreetForm {
       const pubkyValue = pubkyInput.value.trim();
       await this.initializeAndStart(pubkyValue);
     });
+
+    // Set initial button state
+    updateButtonState();
   }
 
   // Load main-form, beginning backup process
   async initializeAndStart(pubkyValue) {
     const continueBtn = document.getElementById("continue-btn");
-    const spinner = document.getElementById("continue-spinner");
-
-    // Show loading spinner
     continueBtn.disabled = true;
-    if (spinner) {
-      spinner.classList.remove("hidden");
-    }
+    continueBtn.classList.add("activated");
 
     try {
       await invoke("init_app_state", { pubkyStr: pubkyValue });
@@ -64,20 +89,6 @@ export class GreetForm {
       alert(`Error: ${error}`);
       this.resetContinueButton();
       throw error;
-    }
-  }
-
-  async checkDevMode() {
-    try {
-      const data = await invoke("fetch_state");
-      const devIndicator = document.getElementById("startup-dev-indicator");
-
-      if (data.developer_mode && devIndicator) {
-        devIndicator.classList.remove("hidden");
-        console.log("Developer mode is enabled");
-      }
-    } catch (error) {
-      console.error("Error checking dev mode:", error);
     }
   }
 

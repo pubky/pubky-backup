@@ -14,9 +14,9 @@
     "windows": [
       {
         "title": "pubky-backup",
-        "width": 400,
-        "height": 400,
-        "resizable": false,
+        "width": 380,
+        "height": 455,
+        "resizable": true,
         "center": true
       }
     ],
