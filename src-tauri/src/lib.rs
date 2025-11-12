@@ -13,7 +13,7 @@ use std::{
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    AppHandle, Manager,
+    AppHandle, Manager, WindowEvent,
 };
 use tokio::sync::broadcast;
 
@@ -430,6 +430,14 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // After a minimise the close handler loses its scope and fails
+        // This is a Tauri bug - https://github.com/tauri-apps/tauri/issues/9504
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                window.hide().unwrap();
+            }
+        })
         .setup(|app| {
             // Store app handle for tray updates and sync developer mode
             if let Ok(mut state) = APP_STATE.lock() {
