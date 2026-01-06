@@ -1,23 +1,24 @@
-import { GreetForm } from "./greet-form.js";
-import { MainForm } from "./main-form.js";
+import { GreetForm } from "@/greet-form";
+import { MainForm } from "@/main-form";
+import { getElementByIdStrict } from "@/types/dom-helpers";
 
-function showScreen(screenId) {
+function showScreen(screenId: string): void {
   document.querySelectorAll(".screen").forEach((screen) => {
     screen.classList.add("hidden");
   });
-  document.getElementById(screenId).classList.remove("hidden");
+  getElementByIdStrict<HTMLElement>(screenId).classList.remove("hidden");
 }
 
-function init() {
+function init(): void {
   // Initialize the pubky form (startup screen)
   const greetForm = new GreetForm(() => {
     showScreen("app-screen");
     initMainForm();
   });
-  greetForm.init();
+  void greetForm.init();
 }
 
-function initMainForm() {
+function initMainForm(): void {
   // Initialize the main app form
   const mainForm = new MainForm();
   mainForm.init();

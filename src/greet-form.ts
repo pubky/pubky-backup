@@ -1,53 +1,67 @@
-import { invoke } from "@tauri-apps/api/core";
+import { handleBackendError } from "@/utils/error-handler";
+import {
+  initAppState,
+  backupControllerBegin,
+  getPreviousPubkyKeys,
+  getLastPubky,
+} from "@/types/tauri-commands";
+import { getElementById, getElementByIdStrict } from "@/types/dom-helpers";
+
+type OnSuccessCallback = () => void;
 
 export class GreetForm {
-  constructor(onSuccess) {
+  private readonly onSuccess: OnSuccessCallback;
+
+  constructor(onSuccess: OnSuccessCallback) {
     this.onSuccess = onSuccess;
   }
 
-  resetContinueButton() {
-    const continueBtn = document.getElementById("continue-btn");
-    if (continueBtn) {
-      continueBtn.disabled = false;
-      continueBtn.classList.remove("activated");
+  private resetContinueButton(): void {
+    const continueBtn = getElementById<HTMLButtonElement>("continue-btn");
+    if (continueBtn === null) return;
 
-      // Restore opacity based on input value
-      const pubkyInput = document.getElementById("pubky-input");
-      if (pubkyInput && pubkyInput.value.trim().length > 0) {
-        continueBtn.style.opacity = "1";
-      } else {
-        continueBtn.style.opacity = "0.3";
-      }
+    continueBtn.disabled = false;
+    continueBtn.classList.remove("activated");
+
+    // Restore opacity based on input value
+    const pubkyInput = getElementById<HTMLInputElement>("pubky-input");
+    if (pubkyInput !== null && pubkyInput.value.trim().length > 0) {
+      continueBtn.style.opacity = "1";
+    } else {
+      continueBtn.style.opacity = "0.3";
     }
   }
 
-  async init() {
+  async init(): Promise<void> {
     this.bindEvents();
     await this.autoLoadLastPubky();
     await this.loadPreviousKeys();
   }
 
-  bindEvents() {
-    const continueBtn = document.getElementById("continue-btn");
-    const pubkyInput = document.getElementById("pubky-input");
+  private bindEvents(): void {
+    const continueBtn = getElementByIdStrict<HTMLButtonElement>("continue-btn");
+    const pubkyInput = getElementByIdStrict<HTMLInputElement>("pubky-input");
     const inputWrapper = pubkyInput.closest(".input-wrapper");
+    if (inputWrapper === null) {
+      console.error("Input wrapper element not found");
+    }
 
     // Update button and input state based on input value
-    const updateButtonState = () => {
+    const updateButtonState = (): void => {
       const hasValue = pubkyInput.value.trim().length > 0;
 
       if (hasValue) {
         // Filled state
         continueBtn.style.opacity = "1";
         continueBtn.disabled = false;
-        if (inputWrapper) {
+        if (inputWrapper !== null) {
           inputWrapper.classList.add("filled");
         }
       } else {
         // Empty state
         continueBtn.style.opacity = "0.3";
         continueBtn.disabled = true;
-        if (inputWrapper) {
+        if (inputWrapper !== null) {
           inputWrapper.classList.remove("filled");
         }
       }
@@ -63,7 +77,7 @@ export class GreetForm {
       updateButtonState();
     });
 
-    continueBtn.addEventListener("click", async (e) => {
+    continueBtn.addEventListener("click", async (e: MouseEvent) => {
       e.preventDefault();
       const pubkyValue = pubkyInput.value.trim();
       await this.initializeAndStart(pubkyValue);
@@ -74,34 +88,35 @@ export class GreetForm {
   }
 
   // Load main-form, beginning backup process
-  async initializeAndStart(pubkyValue) {
-    const continueBtn = document.getElementById("continue-btn");
+  private async initializeAndStart(pubkyValue: string): Promise<void> {
+    const continueBtn = getElementByIdStrict<HTMLButtonElement>("continue-btn");
     continueBtn.disabled = true;
     continueBtn.classList.add("activated");
 
     try {
-      await invoke("init_app_state", { pubkyStr: pubkyValue });
-      await invoke("backup_controller_begin");
+      await initAppState(pubkyValue);
+      await backupControllerBegin();
       this.onSuccess();
       this.resetContinueButton();
-    } catch (error) {
-      console.error("Internal Error:", error);
-      alert(`Error: ${error}`);
+    } catch (error: unknown) {
+      console.error("Error:", error);
+      handleBackendError(error);
       this.resetContinueButton();
       throw error;
     }
   }
 
   // Fetch list of keys previously used and provide as suggestions
-  async loadPreviousKeys() {
-    const pubkyInput = document.getElementById("pubky-input");
+  private async loadPreviousKeys(): Promise<void> {
+    const pubkyInput = getElementByIdStrict<HTMLInputElement>("pubky-input");
 
     try {
-      const previousKeys = await invoke("get_previous_pubky_keys");
-      const datalist = document.getElementById("previous-keys");
+      const previousKeys = await getPreviousPubkyKeys();
+      const datalist =
+        getElementByIdStrict<HTMLDataListElement>("previous-keys");
 
       datalist.innerHTML = "";
-      if (previousKeys && previousKeys.length > 0) {
+      if (previousKeys.length > 0) {
         previousKeys.forEach((key) => {
           const option = document.createElement("option");
           option.value = key;
@@ -113,7 +128,7 @@ export class GreetForm {
         // No previous keys found, display example key
         pubkyInput.placeholder = "g1b6wp8bhhxt...";
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error loading previous keys:", error);
       // If we can't load previous keys just use the default placeholder
       if (pubkyInput.value === "") {
@@ -123,21 +138,22 @@ export class GreetForm {
   }
 
   // If a last_pubky exists then automatically move on to main-from
-  async autoLoadLastPubky() {
+  private async autoLoadLastPubky(): Promise<void> {
     try {
-      const lastPubky = await invoke("get_last_pubky");
-      if (lastPubky) {
+      const lastPubky = await getLastPubky();
+      if (lastPubky !== null) {
         console.log("Auto-loading last used pubky:", lastPubky);
-        const pubkyInput = document.getElementById("pubky-input");
+        const pubkyInput =
+          getElementByIdStrict<HTMLInputElement>("pubky-input");
         pubkyInput.value = lastPubky;
 
         try {
           await this.initializeAndStart(lastPubky);
-        } catch (error) {
+        } catch (error: unknown) {
           console.error("Internal Error:", error);
         }
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error checking for last pubky:", error);
     }
   }
