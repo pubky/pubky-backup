@@ -57,4 +57,6 @@ jobs:
       - name: Check typing
         run: npm run type-check
 
+      - name: Run frontend tests
+        run: npm run test:run
 

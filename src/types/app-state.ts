@@ -1,6 +1,6 @@
 /**
  * TypeScript representation of Rust AppState struct
- * Must match src-tauri/src/lib.rs:61-77
+ * Must match src-tauri/src/lib.rs
  */
 export interface AppState {
   /** This session's pubky */
