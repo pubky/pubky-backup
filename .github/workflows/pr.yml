@@ -54,4 +54,7 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      - name: Check typing
+        run: npm run type-check
+
 
