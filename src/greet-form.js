@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { handleBackendError } from "./utils/error-handler.js";
 
 export class GreetForm {
   constructor(onSuccess) {
@@ -85,8 +86,8 @@ export class GreetForm {
       this.onSuccess();
       this.resetContinueButton();
     } catch (error) {
-      console.error("Internal Error:", error);
-      alert(`Error: ${error}`);
+      console.error("Error:", error);
+      handleBackendError(error);
       this.resetContinueButton();
       throw error;
     }

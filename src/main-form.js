@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { handleBackendError } from "./utils/error-handler.js";
 
 export class MainForm {
   constructor() {
@@ -163,7 +164,7 @@ export class MainForm {
       this.updateBackupSize();
       this.updateLastSync();
       if (this.backupControllerError) {
-        alert(`Internal Error: ${this.backupControllerError}`);
+        handleBackendError(this.backupControllerError);
         this.returnToStartup();
       }
     } catch (error) {

@@ -111,16 +111,16 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
     }
 
     let pubky = PublicKey::from_str(pubky_str)
-        .map_err(|e| BackupAppError::InvalidPubkyFormat(e.to_string()))?;
+        .map_err(|e| BackupAppError::InvalidPubkyFormat { message: e.to_string() })?;
 
     // Check pubky is discoverable
     let homeserver_pubky_str = Pkdns::new()
         .map_err(BackupAppError::internal)?
         .get_homeserver_of(&pubky)
         .await
-        .ok_or_else(|| BackupAppError::HomeserverNotFound)?;
+        .ok_or_else(|| BackupAppError::HomeserverNotFound { message: "Failed to find Homeserver for pubky".to_string() })?;
     let homeserver_pubky = PublicKey::from_str(&homeserver_pubky_str)
-        .map_err(|e| BackupAppError::InvalidPubkyFormat(e.to_string()))?;
+        .map_err(|e| BackupAppError::InvalidPubkyFormat { message: e.to_string() })?;
 
     // Check Pubky has /pub/ data on Homeserver
     let pubky_storage = PublicStorage::new().map_err(BackupAppError::internal)?;
@@ -134,7 +134,7 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
 
     // Instead for now we can call `get` on the base pub path which will pull the urls of every item which the key has published.
     if (pubky_storage.get(path).await).is_err() {
-        return Err(BackupAppError::DataNotFound);
+        return Err(BackupAppError::DataNotFound { message: "Failed to find data for pubky".to_string() });
     }
     info!("Pubky is valid for Backup: {}", pubky);
 
