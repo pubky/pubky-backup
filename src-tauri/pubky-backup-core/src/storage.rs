@@ -98,6 +98,17 @@ impl Storage {
     async fn lister_recursive(&self, path: &str) -> Result<opendal::Lister, StorageError> {
         Ok(self.operator.lister_with(path).recursive(true).await?)
     }
+
+    async fn rename(&self, from: &str, to: &str) -> Result<(), StorageError> {
+        self.operator.rename(from, to).await.map_err(|e| {
+            StorageError::OperationFailed(Box::new(OperationFailedError {
+                operation: format!("rename {} to {}", from, to),
+                path: from.to_string(),
+                source: e,
+            }))
+        })?;
+        Ok(())
+    }
 }
 
 /// Storage for application data (error logs, last_pubky)
@@ -164,17 +175,16 @@ impl BackupDataStorage {
     }
 
     /// Write cursor to track backup progress for a pubky
+    /// Uses atomic write-then-rename to prevent torn writes on crashes
     pub async fn write_cursor(
         &self,
         pubky: &PublicKey,
         cursor_value: String,
     ) -> Result<(), StorageError> {
-        self.0
-            .write(
-                &format!("{}/{}", pubky, CURSOR_FILENAME),
-                cursor_value.clone(),
-            )
-            .await?;
+        let cursor_path = format!("{}/{}", pubky, CURSOR_FILENAME);
+        let temp_path = format!("{}/{}.tmp", pubky, CURSOR_FILENAME);
+        self.0.write(&temp_path, cursor_value.clone()).await?;
+        self.0.rename(&temp_path, &cursor_path).await?;
         debug!("Cursor value written: {}", cursor_value);
         Ok(())
     }
@@ -639,5 +649,74 @@ mod tests {
 
         // Errors should not cause the function to fail
         // Just verify no panic occurred and the function returns Ok
+    }
+
+    #[tokio::test]
+    async fn test_atomic_cursor_write_no_temp_file_left_behind() {
+        let (storage, temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+
+        // Write cursor multiple times
+        storage
+            .write_cursor(&pubky, "cursor_v1".to_string())
+            .await
+            .unwrap();
+        storage
+            .write_cursor(&pubky, "cursor_v2".to_string())
+            .await
+            .unwrap();
+        storage
+            .write_cursor(&pubky, "cursor_v3".to_string())
+            .await
+            .unwrap();
+
+        // Verify the cursor has the latest value
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert_eq!(cursor, "cursor_v3");
+
+        // Verify no temp file is left behind
+        let temp_file_path = temp_dir.path().join(pubky.to_string()).join("cursor.tmp");
+        assert!(
+            !temp_file_path.exists(),
+            "Temporary cursor file should not exist after atomic write"
+        );
+
+        // Verify actual cursor file exists
+        let cursor_file_path = temp_dir.path().join(pubky.to_string()).join("cursor");
+        assert!(cursor_file_path.exists(), "Cursor file should exist");
+    }
+
+    #[tokio::test]
+    async fn test_atomic_cursor_write_overwrites_previous() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+
+        // Write initial cursor
+        storage
+            .write_cursor(&pubky, "initial_cursor".to_string())
+            .await
+            .unwrap();
+
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert_eq!(cursor, "initial_cursor");
+
+        // Overwrite with new cursor atomically
+        storage
+            .write_cursor(&pubky, "updated_cursor".to_string())
+            .await
+            .unwrap();
+
+        // Verify the cursor was updated atomically
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert_eq!(cursor, "updated_cursor");
+
+        // Write one more time to ensure multiple overwrites work
+        storage
+            .write_cursor(&pubky, "final_cursor".to_string())
+            .await
+            .unwrap();
+
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert_eq!(cursor, "final_cursor");
     }
 }
