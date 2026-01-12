@@ -109,11 +109,6 @@ impl Storage {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    async fn list(&self, path: &str) -> Result<Vec<opendal::Entry>, StorageError> {
-        Ok(self.operator.list(path).await?)
-    }
-
     async fn stat(&self, path: &str) -> Result<opendal::Metadata, StorageError> {
         Ok(self.operator.stat(path).await?)
     }
@@ -130,6 +125,40 @@ impl Storage {
                 source: e,
             }))
         })?;
+        Ok(())
+    }
+
+    /// Append data to a file, creating it if it doesn't exist
+    async fn append(&self, file_path: &str, data: impl Into<Vec<u8>>) -> Result<(), StorageError> {
+        let mut writer = self
+            .operator
+            .writer_with(file_path)
+            .append(true)
+            .await
+            .map_err(|e| {
+                StorageError::OperationFailed(Box::new(OperationFailedError {
+                    operation: "append (open writer)".to_string(),
+                    path: file_path.to_string(),
+                    source: e,
+                }))
+            })?;
+
+        writer.write(data.into()).await.map_err(|e| {
+            StorageError::OperationFailed(Box::new(OperationFailedError {
+                operation: "append (write)".to_string(),
+                path: file_path.to_string(),
+                source: e,
+            }))
+        })?;
+
+        writer.close().await.map_err(|e| {
+            StorageError::OperationFailed(Box::new(OperationFailedError {
+                operation: "append (close)".to_string(),
+                path: file_path.to_string(),
+                source: e,
+            }))
+        })?;
+
         Ok(())
     }
 }
@@ -159,21 +188,10 @@ impl AppDataStorage {
             url,
             error_msg
         );
-
-        // Append to existing error log or create new one
-        let existing_content = match self.logs_storage.read(ERROR_LOG_FILENAME).await {
-            Ok(data) => String::from_utf8_lossy(&data).to_string(),
-            Err(_) => String::new(),
-        };
-
+        error!("{}", log_entry.trim());
         self.logs_storage
-            .write(
-                ERROR_LOG_FILENAME,
-                format!("{}{}", existing_content, log_entry),
-            )
+            .append(ERROR_LOG_FILENAME, log_entry)
             .await?;
-
-        error!("{}", log_entry);
         Ok(())
     }
 
@@ -269,17 +287,8 @@ impl KeyStorage {
             error_msg
         );
 
-        // Append to existing error log or create new one
-        let existing_content = match self.state_storage.read(ERROR_LOG_FILENAME).await {
-            Ok(data) => String::from_utf8_lossy(&data).to_string(),
-            Err(_) => String::new(),
-        };
-
         self.state_storage
-            .write(
-                ERROR_LOG_FILENAME,
-                format!("{}{}", existing_content, log_entry),
-            )
+            .append(ERROR_LOG_FILENAME, log_entry.clone())
             .await?;
 
         error!("[{}] {}", self.pubky, log_entry.trim());
@@ -924,9 +933,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_key_error_logs() {
-        let (storage, _temp_dir) = create_test_storage();
+    async fn test_write_key_error_logs_appends() {
+        let (storage, temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+
+        // Pre-create an error log with existing content (simulating a previous session)
+        let error_log_dir = temp_dir
+            .path()
+            .join(KEYS_DIR_NAME)
+            .join(pubky.to_string())
+            .join(STATE_DIR_NAME);
+        std::fs::create_dir_all(&error_log_dir).unwrap();
+        std::fs::write(
+            error_log_dir.join(ERROR_LOG_FILENAME),
+            "[2024-01-01 00:00:00 UTC] /old/path: Previous session error\n",
+        )
+        .unwrap();
 
         // Write some errors to key-specific log
         storage
@@ -938,8 +960,97 @@ mod tests {
             .await
             .unwrap();
 
-        // Errors should not cause the function to fail
-        // Just verify no panic occurred and the function returns Ok
+        // Read the error log file directly and verify all entries are present
+        let log_content = std::fs::read_to_string(error_log_dir.join(ERROR_LOG_FILENAME)).unwrap();
+
+        // Verify existing content from previous session is preserved
+        assert!(
+            log_content.contains("Previous session error"),
+            "Existing error should be preserved"
+        );
+        // Verify new errors are appended
+        assert!(
+            log_content.contains("Test error 1"),
+            "Log should contain first error"
+        );
+        assert!(
+            log_content.contains("Test error 2"),
+            "Log should contain second error"
+        );
+
+        // Verify the entries are in order (each on its own line)
+        let lines: Vec<&str> = log_content.lines().collect();
+        assert_eq!(lines.len(), 3, "Should have exactly 3 log entries");
+        assert!(
+            lines[0].contains("Previous session error"),
+            "First line should be the old entry"
+        );
+        assert!(
+            lines[1].contains("Test error 1"),
+            "Second line should be the first new entry"
+        );
+        assert!(
+            lines[2].contains("Test error 2"),
+            "Third line should be the second new entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_write_global_error_logs_appends() {
+        let (storage, temp_dir) = create_test_storage();
+
+        // Pre-create a global error log with existing content (simulating a previous session)
+        let logs_dir = temp_dir.path().join(LOGS_DIR_NAME);
+        std::fs::create_dir_all(&logs_dir).unwrap();
+        std::fs::write(
+            logs_dir.join(ERROR_LOG_FILENAME),
+            "[2024-01-01 00:00:00 UTC] Failed to fetch /old/url: Previous session error\n",
+        )
+        .unwrap();
+
+        // Write some errors to global log
+        storage
+            .write_global_error("/some/url", "Global error 1")
+            .await
+            .unwrap();
+        storage
+            .write_global_error("/another/url", "Global error 2")
+            .await
+            .unwrap();
+
+        // Read the error log file directly and verify all entries are present
+        let log_content = std::fs::read_to_string(logs_dir.join(ERROR_LOG_FILENAME)).unwrap();
+
+        // Verify existing content from previous session is preserved
+        assert!(
+            log_content.contains("Previous session error"),
+            "Existing error should be preserved"
+        );
+        // Verify new errors are appended
+        assert!(
+            log_content.contains("Global error 1"),
+            "Log should contain first error"
+        );
+        assert!(
+            log_content.contains("Global error 2"),
+            "Log should contain second error"
+        );
+
+        // Verify the entries are in order
+        let lines: Vec<&str> = log_content.lines().collect();
+        assert_eq!(lines.len(), 3, "Should have exactly 3 log entries");
+        assert!(
+            lines[0].contains("Previous session error"),
+            "First line should be the old entry"
+        );
+        assert!(
+            lines[1].contains("Global error 1"),
+            "Second line should be the first new entry"
+        );
+        assert!(
+            lines[2].contains("Global error 2"),
+            "Third line should be the second new entry"
+        );
     }
 
     #[tokio::test]

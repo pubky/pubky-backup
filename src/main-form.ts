@@ -15,6 +15,7 @@ export class MainForm {
   private static readonly STATUS_POLL_INTERVAL_MS = 200;
   private static readonly SYNC_MESSAGE_UPDATE_INTERVAL_MS = 1000;
   private static readonly TOAST_DISPLAY_DURATION_MS = 2000;
+  private static readonly SNAPSHOT_MESSAGE_DURATION_MS = 3000;
 
   private pubky: string | null = null;
   private developerMode: boolean = false;
@@ -450,12 +451,12 @@ export class MainForm {
     syncMessage.classList.add("snapshot-success");
     syncMessageText.textContent = "Snapshot created";
 
-    // Revert after 3 seconds
+    // Revert after timeout
     this.snapshotMessageTimeout = window.setTimeout(() => {
       syncMessage.classList.remove("snapshot-success");
       this.updateNextSyncCountdown();
       this.snapshotMessageTimeout = null;
-    }, 3000);
+    }, MainForm.SNAPSHOT_MESSAGE_DURATION_MS);
   }
 
   private showSnapshotError(): void {
@@ -471,11 +472,11 @@ export class MainForm {
     syncMessage.classList.add("error");
     syncMessageText.textContent = "Failed to create snapshot";
 
-    // Revert after 3 seconds
+    // Revert after timeout
     this.snapshotMessageTimeout = window.setTimeout(() => {
       syncMessage.classList.remove("error");
       this.updateNextSyncCountdown();
       this.snapshotMessageTimeout = null;
-    }, 3000);
+    }, MainForm.SNAPSHOT_MESSAGE_DURATION_MS);
   }
 }
