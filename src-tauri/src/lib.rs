@@ -186,7 +186,7 @@ async fn get_previous_pubky_keys() -> Result<Vec<String>, BackupAppError> {
     };
 
     // List directories in the data directory to find existing pubky keys
-    match storage.list_pubky_directories().await {
+    match storage.list_pubky_directories() {
         Ok(keys) => Ok(keys),
         Err(e) => Err(BackupAppError::internal(e)),
     }

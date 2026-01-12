@@ -1,17 +1,36 @@
 use crate::error::{OperationFailedError, StorageError};
+use crate::storage_migration::migrate_old_structure;
 use futures_lite::StreamExt;
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
 use pubky::{PubkyResource, PublicKey};
-use std::{fs::File, io::Write, path::{Path, PathBuf}, str::FromStr};
+use std::{
+    fs::File,
+    io::Write,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 
 const APP_DATA_DIR_NAME: &str = ".pubky-backup";
-const CURSOR_FILENAME: &str = "cursor";
-const ERROR_LOG_FILNAME: &str = "error.log";
-const LAST_PUBKY_FILENAME: &str = "last_pubky";
+
+// App-level directory names
+pub(crate) const CONFIG_DIR_NAME: &str = "config";
+pub(crate) const LOGS_DIR_NAME: &str = "logs";
+pub(crate) const KEYS_DIR_NAME: &str = "keys";
+
+// App-level file names
+pub(crate) const LAST_PUBKY_FILENAME: &str = "last_pubky";
+pub(crate) const ERROR_LOG_FILENAME: &str = "error.log";
+
+// Per-key directory names
+pub(crate) const STATE_DIR_NAME: &str = "state";
+pub(crate) const DATA_DIR_NAME: &str = "data";
 const SNAPSHOTS_DIR_NAME: &str = "snapshots";
+
+// Per-key file names
+pub(crate) const CURSOR_FILENAME: &str = "cursor";
 
 /// Get the root data directory for application storage.
 ///
@@ -41,7 +60,7 @@ struct Storage {
 }
 
 impl Storage {
-    fn new(data_dir: &PathBuf) -> Result<Self, StorageError> {
+    fn new(data_dir: &Path) -> Result<Self, StorageError> {
         // Ensure the directory exists
         std::fs::create_dir_all(data_dir).map_err(|e| {
             StorageError::DirectoryCreation(format!("{}: {}", data_dir.display(), e))
@@ -90,6 +109,7 @@ impl Storage {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn list(&self, path: &str) -> Result<Vec<opendal::Entry>, StorageError> {
         Ok(self.operator.list(path).await?)
     }
@@ -114,17 +134,24 @@ impl Storage {
     }
 }
 
-/// Storage for application data (error logs, last_pubky)
-/// Will be expanded to include other program config
-pub struct AppDataStorage(Storage);
+/// Storage for application-level data (config, global logs)
+/// Located at: ~/.pubky-backup/config/ and ~/.pubky-backup/logs/
+pub struct AppDataStorage {
+    config_storage: Storage,
+    logs_storage: Storage,
+}
 
 impl AppDataStorage {
-    fn new(data_dir: &PathBuf) -> Result<Self, StorageError> {
-        Ok(AppDataStorage(Storage::new(data_dir)?))
+    fn new(data_dir: &Path) -> Result<Self, StorageError> {
+        let config_dir = data_dir.join(CONFIG_DIR_NAME);
+        let logs_dir = data_dir.join(LOGS_DIR_NAME);
+        Ok(AppDataStorage {
+            config_storage: Storage::new(&config_dir)?,
+            logs_storage: Storage::new(&logs_dir)?,
+        })
     }
 
-    /// Write error to error log file in app data storage
-    /// TODO: write_append mode?
+    /// Write error to global error log file
     pub async fn write_error(&self, url: &str, error_msg: &str) -> Result<(), StorageError> {
         let log_entry = format!(
             "[{}] Failed to fetch {}: {}\n",
@@ -134,14 +161,14 @@ impl AppDataStorage {
         );
 
         // Append to existing error log or create new one
-        let existing_content = match self.0.read(ERROR_LOG_FILNAME).await {
+        let existing_content = match self.logs_storage.read(ERROR_LOG_FILENAME).await {
             Ok(data) => String::from_utf8_lossy(&data).to_string(),
             Err(_) => String::new(),
         };
 
-        self.0
+        self.logs_storage
             .write(
-                ERROR_LOG_FILNAME,
+                ERROR_LOG_FILENAME,
                 format!("{}{}", existing_content, log_entry),
             )
             .await?;
@@ -152,13 +179,15 @@ impl AppDataStorage {
 
     pub async fn write_last_pubky(&self, pubky: &PublicKey) -> Result<(), StorageError> {
         let pubky_str = pubky.to_string();
-        self.0.write(LAST_PUBKY_FILENAME, pubky_str.clone()).await?;
+        self.config_storage
+            .write(LAST_PUBKY_FILENAME, pubky_str.clone())
+            .await?;
         debug!("Last pubky value written: {}", pubky_str);
         Ok(())
     }
 
     pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
-        match self.0.read(LAST_PUBKY_FILENAME).await {
+        match self.config_storage.read(LAST_PUBKY_FILENAME).await {
             Ok(data) => {
                 let pubky = PublicKey::from_str(&String::from_utf8(data.to_vec())?)
                     .map_err(|e| StorageError::Internal(e.to_string()))?;
@@ -169,93 +198,129 @@ impl AppDataStorage {
     }
 }
 
-/// Storage for User's backed-up data
-pub struct BackupDataStorage(Storage);
+/// Storage for a single Pubky key's backup data
+/// Located at: ~/.pubky-backup/keys/<pubky>/
+///
+/// Structure:
+/// - state/cursor - Sync progress cursor
+/// - state/error.log - Key-specific error log
+/// - data/pub/... - Backed-up resources
+/// - snapshots/<timestamp>.zip - Point-in-time snapshots
+pub struct KeyStorage {
+    /// The public key this storage is for
+    pubky: PublicKey,
+    /// Storage for state files (cursor, error log)
+    state_storage: Storage,
+    /// Storage for backed-up data
+    data_storage: Storage,
+    /// Root directory for this key (for snapshot creation)
+    key_dir: PathBuf,
+}
 
-impl BackupDataStorage {
-    fn new(data_dir: &PathBuf) -> Result<Self, StorageError> {
-        Ok(BackupDataStorage(Storage::new(data_dir)?))
+impl KeyStorage {
+    fn new(keys_dir: &Path, pubky: &PublicKey) -> Result<Self, StorageError> {
+        let key_dir = keys_dir.join(pubky.to_string());
+        let state_dir = key_dir.join(STATE_DIR_NAME);
+        let data_dir = key_dir.join(DATA_DIR_NAME);
+
+        Ok(KeyStorage {
+            pubky: pubky.clone(),
+            state_storage: Storage::new(&state_dir)?,
+            data_storage: Storage::new(&data_dir)?,
+            key_dir,
+        })
     }
 
-    /// Write cursor to track backup progress for a pubky
+    /// Write cursor to track backup progress
     /// Uses atomic write-then-rename to prevent torn writes on crashes
-    pub async fn write_cursor(
-        &self,
-        pubky: &PublicKey,
-        cursor_value: String,
-    ) -> Result<(), StorageError> {
-        let cursor_path = format!("{}/{}", pubky, CURSOR_FILENAME);
-        let temp_path = format!("{}/{}.tmp", pubky, CURSOR_FILENAME);
-        self.0.write(&temp_path, cursor_value.clone()).await?;
-        self.0.rename(&temp_path, &cursor_path).await?;
+    pub async fn write_cursor(&self, cursor_value: String) -> Result<(), StorageError> {
+        let temp_path = format!("{}.tmp", CURSOR_FILENAME);
+        self.state_storage
+            .write(&temp_path, cursor_value.clone())
+            .await?;
+        self.state_storage
+            .rename(&temp_path, CURSOR_FILENAME)
+            .await?;
         debug!("Cursor value written: {}", cursor_value);
         Ok(())
     }
 
-    /// Read existing or create new cursor for a pubky
-    pub async fn read_cursor(&self, pubky: &PublicKey) -> Result<String, StorageError> {
-        match self.0.read(&format!("{}/{}", pubky, CURSOR_FILENAME)).await {
+    /// Read existing or create new cursor
+    pub async fn read_cursor(&self) -> Result<String, StorageError> {
+        match self.state_storage.read(CURSOR_FILENAME).await {
             Ok(cursor_data) => {
                 let cursor_string = String::from_utf8(cursor_data)?;
                 Ok(cursor_string)
             }
             Err(_) => {
-                // TODO:In this case check if data exists. If so then something has gone wrong and we will start backup from the top.
                 info!("Cursor file not found, creating empty cursor file");
-                self.0
-                    .write(&format!("{}/{}", pubky, CURSOR_FILENAME), "")
-                    .await?;
+                self.state_storage.write(CURSOR_FILENAME, "").await?;
                 Ok(String::new())
             }
         }
     }
 
+    /// Write error to key-specific error log
+    pub async fn write_error(&self, url: &str, error_msg: &str) -> Result<(), StorageError> {
+        let log_entry = format!(
+            "[{}] {}: {}\n",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+            url,
+            error_msg
+        );
+
+        // Append to existing error log or create new one
+        let existing_content = match self.state_storage.read(ERROR_LOG_FILENAME).await {
+            Ok(data) => String::from_utf8_lossy(&data).to_string(),
+            Err(_) => String::new(),
+        };
+
+        self.state_storage
+            .write(
+                ERROR_LOG_FILENAME,
+                format!("{}{}", existing_content, log_entry),
+            )
+            .await?;
+
+        error!("[{}] {}", self.pubky, log_entry.trim());
+        Ok(())
+    }
+
     /// Write data to backup storage using PubkyResource path
-    pub async fn write(
+    pub async fn write_data(
         &self,
         resource: &PubkyResource,
         data: Vec<u8>,
-    ) -> Result<String, StorageError> {
-        let file_path = resource.to_string();
-        self.0.write(&file_path, data).await?;
-        Ok(file_path)
+    ) -> Result<(), StorageError> {
+        // Extract path from resource (e.g., "/pub/profile.json")
+        let file_path = resource.path.as_str();
+        self.data_storage.write(file_path, data).await?;
+        Ok(())
     }
 
     /// Delete data from backup storage using PubkyResource path
-    pub async fn delete(&self, resource: &PubkyResource) -> Result<String, StorageError> {
-        let file_path = resource.to_string();
-        self.0.delete(&file_path).await?;
-        Ok(file_path)
+    pub async fn delete_data(&self, resource: &PubkyResource) -> Result<(), StorageError> {
+        let file_path = resource.path.as_str();
+        self.data_storage.delete(file_path).await?;
+        Ok(())
     }
 
     /// Read data from backup storage using PubkyResource path
     #[cfg(test)]
-    pub async fn read(&self, resource: &PubkyResource) -> Result<Vec<u8>, StorageError> {
-        let file_path = resource.to_string();
-        self.0.read(&file_path).await
+    pub async fn read_data(&self, resource: &PubkyResource) -> Result<Vec<u8>, StorageError> {
+        let file_path = resource.path.as_str();
+        self.data_storage.read(file_path).await
     }
 
-    /// List directories in the backup storage root to find previously backed-up public keys
-    pub async fn list_pubky_directories(&self) -> Result<Vec<String>, StorageError> {
-        let mut keys = Vec::new();
-        for entry in self.0.list("").await? {
-            let path = entry.path();
-            if entry.metadata().is_dir() && PublicKey::from_str(path).is_ok() {
-                keys.push(path.trim_end_matches('/').to_string());
-            }
-        }
-        Ok(keys)
-    }
-
-    /// Calculate the total size of data stored for a specific pubky in backup storage
-    pub async fn calculate_pubky_size(&self, pubky: &PublicKey) -> u64 {
-        // Ensure path ends with / for directory listing
-        let path = format!("{}/", pubky);
-
-        match self.calculate_dir_size(&path).await {
+    /// Calculate the total size of backed-up data for this key
+    pub async fn calculate_data_size(&self) -> u64 {
+        match self.calculate_dir_size("").await {
             Ok(size) => size,
             Err(e) => {
-                error!("Failed to calculate data size for pubky {}: {}", pubky, e);
+                error!(
+                    "Failed to calculate data size for pubky {}: {}",
+                    self.pubky, e
+                );
                 0
             }
         }
@@ -265,8 +330,11 @@ impl BackupDataStorage {
     async fn calculate_dir_size(&self, path: &str) -> Result<u64, StorageError> {
         let mut total_size = 0u64;
 
+        // For empty path, we want to list everything
+        let list_path = if path.is_empty() { "/" } else { path };
+
         // Check if directory exists first
-        match self.0.stat(path).await {
+        match self.data_storage.stat(list_path).await {
             Ok(metadata) => {
                 if !metadata.is_dir() {
                     return Ok(0);
@@ -277,7 +345,7 @@ impl BackupDataStorage {
             }
         }
 
-        let mut entries = self.0.lister_recursive(path).await?;
+        let mut entries = self.data_storage.lister_recursive(list_path).await?;
         while let Some(entry) = entries.next().await {
             match entry {
                 Ok(entry) => {
@@ -285,7 +353,7 @@ impl BackupDataStorage {
 
                     if metadata.is_file() {
                         // Get actual file size using stat() since lister metadata.content_length() returns 0
-                        let size = match self.0.stat(entry.path()).await {
+                        let size = match self.data_storage.stat(entry.path()).await {
                             Ok(file_metadata) => file_metadata.content_length(),
                             Err(_) => metadata.content_length(), // Fallback to original metadata
                         };
@@ -300,37 +368,194 @@ impl BackupDataStorage {
         }
         Ok(total_size)
     }
+
+    /// Create a snapshot (zip archive) of the backed-up data
+    pub async fn create_snapshot(&self) -> Result<PathBuf, StorageError> {
+        let key_dir = self.key_dir.clone();
+
+        // Run blocking I/O in a separate thread to avoid blocking the async runtime
+        let result = tokio::task::spawn_blocking(move || Self::create_snapshot_blocking(&key_dir))
+            .await
+            .map_err(|e| StorageError::Internal(format!("Snapshot task failed: {}", e)))?;
+
+        result
+    }
+
+    /// Blocking implementation of snapshot creation.
+    fn create_snapshot_blocking(key_dir: &Path) -> Result<PathBuf, StorageError> {
+        let data_dir = key_dir.join(DATA_DIR_NAME);
+        if !data_dir.exists() {
+            return Err(StorageError::Internal(
+                "No backup data found for this key".to_string(),
+            ));
+        }
+
+        let snapshots_dir = key_dir.join(SNAPSHOTS_DIR_NAME);
+        std::fs::create_dir_all(&snapshots_dir).map_err(|e| {
+            StorageError::DirectoryCreation(format!("{}: {}", snapshots_dir.display(), e))
+        })?;
+
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S%.3f");
+        let snapshot_filename = format!("{}.zip", timestamp);
+        let snapshot_path = snapshots_dir.join(&snapshot_filename);
+
+        let file = File::create(&snapshot_path).map_err(|e| {
+            StorageError::Internal(format!("Failed to create snapshot file: {}", e))
+        })?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options: FileOptions<()> = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+
+        info!("Creating snapshot to {}", snapshot_path.display());
+
+        // Walk the data directory and add files to zip
+        let mut file_count = 0;
+        for entry in WalkDir::new(&data_dir).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let relative_path = path.strip_prefix(&data_dir).map_err(|e| {
+                StorageError::Internal(format!("Failed to get relative path: {}", e))
+            })?;
+
+            if path.is_file() {
+                let file_data = std::fs::read(path).map_err(|e| {
+                    StorageError::Internal(format!("Failed to read file {}: {}", path.display(), e))
+                })?;
+
+                zip.start_file(relative_path.to_string_lossy().to_string(), options)
+                    .map_err(|e| {
+                        StorageError::Internal(format!("Failed to add file to zip: {}", e))
+                    })?;
+
+                zip.write_all(&file_data).map_err(|e| {
+                    StorageError::Internal(format!("Failed to write file to zip: {}", e))
+                })?;
+
+                file_count += 1;
+            }
+        }
+
+        // Check if any files were added
+        if file_count == 0 {
+            // Clean up the empty zip file
+            drop(zip);
+            let _ = std::fs::remove_file(&snapshot_path);
+            return Err(StorageError::Internal("No files to snapshot".to_string()));
+        }
+
+        match zip.finish() {
+            Ok(_) => {
+                info!("Snapshot created successfully: {}", snapshot_path.display());
+                Ok(snapshot_path)
+            }
+            Err(e) => {
+                // Clean up partial zip file on error
+                let _ = std::fs::remove_file(&snapshot_path);
+                Err(StorageError::Internal(format!(
+                    "Failed to finalize zip file: {}",
+                    e
+                )))
+            }
+        }
+    }
 }
 
-/// Application-specific storage that manages both app data and backup data.
+/// Storage for managing multiple Pubky keys
+/// Located at: ~/.pubky-backup/keys/
+pub struct KeysStorage {
+    keys_dir: PathBuf,
+}
+
+impl KeysStorage {
+    fn new(data_dir: &Path) -> Result<Self, StorageError> {
+        let keys_dir = data_dir.join(KEYS_DIR_NAME);
+        // Ensure the keys directory exists
+        std::fs::create_dir_all(&keys_dir).map_err(|e| {
+            StorageError::DirectoryCreation(format!("{}: {}", keys_dir.display(), e))
+        })?;
+        Ok(KeysStorage { keys_dir })
+    }
+
+    /// Get storage for a specific key
+    pub fn get_key_storage(&self, pubky: &PublicKey) -> Result<KeyStorage, StorageError> {
+        KeyStorage::new(&self.keys_dir, pubky)
+    }
+
+    /// List all public keys that have backed-up data
+    pub fn list_keys(&self) -> Result<Vec<String>, StorageError> {
+        let mut keys = Vec::new();
+
+        if !self.keys_dir.exists() {
+            return Ok(keys);
+        }
+
+        for entry in std::fs::read_dir(&self.keys_dir)
+            .map_err(|e| StorageError::Internal(format!("Failed to read keys directory: {}", e)))?
+        {
+            let entry = entry.map_err(|e| {
+                StorageError::Internal(format!("Failed to read directory entry: {}", e))
+            })?;
+
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(name) = path.file_name() {
+                    let name_str = name.to_string_lossy().to_string();
+                    // Verify it's a valid public key
+                    if PublicKey::from_str(&name_str).is_ok() {
+                        keys.push(name_str);
+                    }
+                }
+            }
+        }
+
+        Ok(keys)
+    }
+}
+
+/// Application-specific storage that manages both app data and per-key backup data.
 ///
 /// This is the main storage interface used by [`BackupController`](crate::BackupController).
 /// It handles:
 /// - Writing/reading/deleting backed-up Pubky resources
 /// - Tracking sync progress via cursors
-/// - Logging errors
+/// - Logging errors (both global and per-key)
 /// - Storing application metadata (like the last used pubky)
+/// - Creating point-in-time snapshots
 ///
-/// Errors from write/delete operations are logged to `error.log` and don't cause
-/// the backup process to fail. Other errors are propagated to the caller.
+/// # Automatic Migration
+///
+/// When [`AppStorage::new()`] is called, it automatically detects and migrates data
+/// from the old flat storage structure to the new hierarchical structure. This migration:
+/// - Is safe to run multiple times (idempotent)
+/// - Preserves all data integrity
+/// - Logs migration progress for debugging
+/// - Removes old structure only after successful migration
 ///
 /// # Storage Layout
 ///
 /// ```text
 /// ~/.pubky-backup/
-/// ├── error.log              # Error log for write/delete failures
-/// ├── last_pubky             # Last used public key
-/// └── <pubky>/               # Directory per backed-up pubky
-///     ├── cursor             # Sync progress cursor
-///     └── pub/               # Backed-up resources
-///         ├── profile.json
-///         └── ...
+/// ├── config/                    # App-level configuration
+/// │   └── last_pubky             # Last used pubky
+/// ├── logs/                      # App-level logs
+/// │   └── error.log              # Global error log
+/// └── keys/                      # Per-key data
+///     └── <pubky>/
+///         ├── state/             # Backup state/metadata
+///         │   ├── cursor         # Sync progress
+///         │   └── error.log      # Key-specific errors
+///         ├── data/              # Actual backed-up data
+///         │   └── pub/
+///         │       ├── profile.json
+///         │       └── ...
+///         └── snapshots/         # Key-specific snapshots
+///             └── <timestamp>.zip
 /// ```
 pub struct AppStorage {
-    /// Application's data Eg error.log
+    /// Application's data (config, global logs)
     app_data: AppDataStorage,
-    /// User's backed-up data
-    backup_data: BackupDataStorage,
+    /// Per-key storage manager
+    keys_storage: KeysStorage,
     /// Root data directory path
     data_dir: PathBuf,
 }
@@ -348,35 +573,47 @@ impl AppStorage {
     /// - Storage initialization fails
     pub fn new() -> Result<Self, StorageError> {
         let data_dir = get_data_directory()?;
+        // Migrate from old structure if needed
+        migrate_old_structure(&data_dir)?;
+
         Ok(AppStorage {
             app_data: AppDataStorage::new(&data_dir)?,
-            backup_data: BackupDataStorage::new(&data_dir)?,
+            keys_storage: KeysStorage::new(&data_dir)?,
             data_dir,
         })
     }
 
     #[cfg(test)]
-    pub fn new_with_single_path(data_dir: &PathBuf) -> Result<Self, StorageError> {
+    pub fn new_with_path(data_dir: &PathBuf) -> Result<Self, StorageError> {
+        // Migrate from old structure if needed
+        migrate_old_structure(data_dir)?;
+
         Ok(AppStorage {
             app_data: AppDataStorage::new(data_dir)?,
-            backup_data: BackupDataStorage::new(data_dir)?,
+            keys_storage: KeysStorage::new(data_dir)?,
             data_dir: data_dir.clone(),
         })
     }
 
+    /// Get storage for a specific key
+    pub fn key_storage(&self, pubky: &PublicKey) -> Result<KeyStorage, StorageError> {
+        self.keys_storage.get_key_storage(pubky)
+    }
+
     /// Write data to backup storage using PubkyResource path.
     ///
-    /// Errors are logged to `error.log` but don't cause this method to fail.
+    /// Errors are logged to the key's error log but don't cause this method to fail.
     ///
     /// # Arguments
     ///
     /// * `resource` - The Pubky resource to store
     /// * `data` - The raw data to store
     pub async fn write(&self, resource: &PubkyResource, data: Vec<u8>) -> Result<(), StorageError> {
-        match self.backup_data.write(resource, data).await {
+        let key_storage = self.key_storage(&resource.owner)?;
+        match key_storage.write_data(resource, data).await {
             Ok(_) => Ok(()),
             Err(e) => {
-                self.app_data
+                key_storage
                     .write_error(&resource.to_string(), &format!("Failed to write: {}", e))
                     .await?;
                 Ok(())
@@ -386,16 +623,17 @@ impl AppStorage {
 
     /// Delete data from backup storage using PubkyResource path.
     ///
-    /// Errors are logged to `error.log` but don't cause this method to fail.
+    /// Errors are logged to the key's error log but don't cause this method to fail.
     ///
     /// # Arguments
     ///
     /// * `resource` - The Pubky resource to delete
     pub async fn delete(&self, resource: &PubkyResource) -> Result<(), StorageError> {
-        match self.backup_data.delete(resource).await {
+        let key_storage = self.key_storage(&resource.owner)?;
+        match key_storage.delete_data(resource).await {
             Ok(_) => Ok(()),
             Err(e) => {
-                self.app_data
+                key_storage
                     .write_error(&resource.to_string(), &format!("Failed to delete: {}", e))
                     .await?;
                 Ok(())
@@ -406,7 +644,8 @@ impl AppStorage {
     /// Read data from backup storage using PubkyResource path
     #[cfg(test)]
     pub async fn read(&self, resource: &PubkyResource) -> Result<Vec<u8>, StorageError> {
-        self.backup_data.read(resource).await
+        let key_storage = self.key_storage(&resource.owner)?;
+        key_storage.read_data(resource).await
     }
 
     /// Write cursor to track backup progress for a specific pubky.
@@ -422,7 +661,8 @@ impl AppStorage {
         pubky: &PublicKey,
         cursor_value: String,
     ) -> Result<(), StorageError> {
-        self.backup_data.write_cursor(pubky, cursor_value).await
+        let key_storage = self.key_storage(pubky)?;
+        key_storage.write_cursor(cursor_value).await
     }
 
     /// Read the backup progress cursor for a specific pubky.
@@ -437,24 +677,39 @@ impl AppStorage {
     ///
     /// The cursor value, or an empty string if no cursor exists yet
     pub async fn read_cursor(&self, pubky: &PublicKey) -> Result<String, StorageError> {
-        self.backup_data.read_cursor(pubky).await
+        let key_storage = self.key_storage(pubky)?;
+        key_storage.read_cursor().await
     }
 
-    /// Write an error to the error log file.
+    /// Write an error to the key-specific error log file.
     ///
     /// Used to log non-critical errors that don't stop the backup process.
     ///
     /// # Arguments
     ///
+    /// * `pubky` - The public key this error relates to
     /// * `url` - The URL or resource that caused the error
     /// * `error_msg` - The error message to log
-    pub async fn write_error(&self, url: &str, error_msg: &str) -> Result<(), StorageError> {
+    pub async fn write_error(
+        &self,
+        pubky: &PublicKey,
+        url: &str,
+        error_msg: &str,
+    ) -> Result<(), StorageError> {
+        let key_storage = self.key_storage(pubky)?;
+        key_storage.write_error(url, error_msg).await
+    }
+
+    /// Write an error to the global error log file.
+    ///
+    /// Used for errors not specific to any key.
+    pub async fn write_global_error(&self, url: &str, error_msg: &str) -> Result<(), StorageError> {
         self.app_data.write_error(url, error_msg).await
     }
 
     /// Calculate the total size of data stored for a specific pubky.
     ///
-    /// Recursively traverses the pubky's directory and sums file sizes.
+    /// Recursively traverses the pubky's data directory and sums file sizes.
     ///
     /// # Arguments
     ///
@@ -464,27 +719,30 @@ impl AppStorage {
     ///
     /// Total size in bytes, or 0 if the directory doesn't exist or an error occurs
     pub async fn calculate_pubky_size(&self, pubky: &PublicKey) -> u64 {
-        self.backup_data.calculate_pubky_size(pubky).await
+        match self.key_storage(pubky) {
+            Ok(key_storage) => key_storage.calculate_data_size().await,
+            Err(_) => 0,
+        }
     }
 
     /// List all public keys that have backed-up data.
     ///
-    /// Scans the backup storage root for directories that are valid public keys.
+    /// Scans the keys directory for directories that are valid public keys.
     ///
     /// # Returns
     ///
     /// Vector of public key strings
-    pub async fn list_pubky_directories(&self) -> Result<Vec<String>, StorageError> {
-        self.backup_data.list_pubky_directories().await
+    pub fn list_pubky_directories(&self) -> Result<Vec<String>, StorageError> {
+        self.keys_storage.list_keys()
     }
 
     /// Get the data directory path.
     ///
     /// # Returns
     ///
-    /// Path to the backup data directory
+    /// Path to the root data directory
     pub fn get_backup_data_dir(&self) -> Result<PathBuf, StorageError> {
-        get_data_directory()
+        Ok(self.data_dir.clone())
     }
 
     /// Write the last used pubky to storage.
@@ -510,7 +768,7 @@ impl AppStorage {
     /// Create a snapshot (zip archive) of the backed-up data for a specific pubky.
     ///
     /// Creates a compressed zip file containing all data for the given pubky.
-    /// The snapshot is stored in `<data_dir>/snapshots/` with a timestamped filename.
+    /// The snapshot is stored in `keys/<pubky>/snapshots/` with a timestamped filename.
     ///
     /// # Arguments
     ///
@@ -523,115 +781,13 @@ impl AppStorage {
     /// # Errors
     ///
     /// Returns `StorageError` if:
-    /// - The pubky directory doesn't exist
-    /// - The pubky directory is empty (no files to snapshot)
+    /// - The pubky's data directory doesn't exist
+    /// - The data directory is empty (no files to snapshot)
     /// - The snapshots directory cannot be created
     /// - The zip file cannot be created or written
     pub async fn create_snapshot(&self, pubky: &PublicKey) -> Result<PathBuf, StorageError> {
-        let data_dir = self.data_dir.clone();
-        let pubky_str = pubky.to_string();
-
-        // Run blocking I/O in a separate thread to avoid blocking the async runtime
-        let result = tokio::task::spawn_blocking(move || {
-            Self::create_snapshot_blocking(&data_dir, &pubky_str)
-        })
-        .await
-        .map_err(|e| StorageError::Internal(format!("Snapshot task failed: {}", e)))?;
-
-        result
-    }
-
-    /// Blocking implementation of snapshot creation.
-    /// Called from spawn_blocking to avoid blocking the async runtime.
-    fn create_snapshot_blocking(
-        data_dir: &Path,
-        pubky_str: &str,
-    ) -> Result<PathBuf, StorageError> {
-        let pubky_dir = data_dir.join(pubky_str);
-        if !pubky_dir.exists() {
-            return Err(StorageError::Internal(format!(
-                "No backup data found for pubky: {}",
-                pubky_str
-            )));
-        }
-
-        let snapshots_dir = data_dir.join(SNAPSHOTS_DIR_NAME);
-        std::fs::create_dir_all(&snapshots_dir).map_err(|e| {
-            StorageError::DirectoryCreation(format!("{}: {}", snapshots_dir.display(), e))
-        })?;
-        let timestamp = chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S");
-        let pubky_prefix = if pubky_str.len() > 10 {
-            &pubky_str[..10]
-        } else {
-            pubky_str
-        };
-        let snapshot_filename = format!("snapshot_{}_{}.zip", pubky_prefix, timestamp);
-        let snapshot_path = snapshots_dir.join(&snapshot_filename);
-
-        let file = File::create(&snapshot_path).map_err(|e| {
-            StorageError::Internal(format!("Failed to create snapshot file: {}", e))
-        })?;
-        let mut zip = zip::ZipWriter::new(file);
-        let options: FileOptions<()> = FileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .unix_permissions(0o644);
-
-        info!(
-            "Creating snapshot of {} to {}",
-            pubky_str,
-            snapshot_path.display()
-        );
-
-        // Walk the pubky directory and add files to zip
-        let mut file_count = 0;
-        for entry in WalkDir::new(&pubky_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            let relative_path = path.strip_prefix(&pubky_dir).map_err(|e| {
-                StorageError::Internal(format!("Failed to get relative path: {}", e))
-            })?;
-
-            if path.is_file() {
-                let file_data = std::fs::read(path).map_err(|e| {
-                    StorageError::Internal(format!(
-                        "Failed to read file {}: {}",
-                        path.display(),
-                        e
-                    ))
-                })?;
-
-                zip.start_file(relative_path.to_string_lossy().to_string(), options)
-                    .map_err(|e| {
-                        StorageError::Internal(format!("Failed to add file to zip: {}", e))
-                    })?;
-
-                zip.write_all(&file_data).map_err(|e| {
-                    StorageError::Internal(format!("Failed to write file to zip: {}", e))
-                })?;
-
-                file_count += 1;
-            }
-        }
-
-        // Check if any files were added
-        if file_count == 0 {
-            // Clean up the empty zip file
-            drop(zip);
-            let _ = std::fs::remove_file(&snapshot_path);
-            return Err(StorageError::Internal(format!(
-                "No files to snapshot for pubky: {}",
-                pubky_str
-            )));
-        }
-
-        zip.finish().map_err(|e| {
-            StorageError::Internal(format!("Failed to finalize zip file: {}", e))
-        })?;
-
-        info!("Snapshot created successfully: {}", snapshot_path.display());
-        Ok(snapshot_path)
+        let key_storage = self.key_storage(pubky)?;
+        key_storage.create_snapshot().await
     }
 }
 
@@ -645,7 +801,7 @@ mod tests {
 
     fn create_test_storage() -> (AppStorage, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let storage = AppStorage::new_with_single_path(&temp_dir.path().to_path_buf()).unwrap();
+        let storage = AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap();
         (storage, temp_dir)
     }
 
@@ -750,7 +906,7 @@ mod tests {
             PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
 
         // Initially should be empty
-        let dirs = storage.list_pubky_directories().await.unwrap();
+        let dirs = storage.list_pubky_directories().unwrap();
         assert_eq!(dirs.len(), 0);
 
         // Write data for two different pubkys
@@ -761,23 +917,24 @@ mod tests {
         storage.write(&resource2, b"data2".to_vec()).await.unwrap();
 
         // Should now list both pubky directories
-        let dirs = storage.list_pubky_directories().await.unwrap();
+        let dirs = storage.list_pubky_directories().unwrap();
         assert_eq!(dirs.len(), 2);
         assert!(dirs.contains(&pubky1.to_string()));
         assert!(dirs.contains(&pubky2.to_string()));
     }
 
     #[tokio::test]
-    async fn test_write_error_logs() {
+    async fn test_write_key_error_logs() {
         let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        // Write some errors
+        // Write some errors to key-specific log
         storage
-            .write_error("/pub/test1.json", "Test error 1")
+            .write_error(&pubky, "/pub/test1.json", "Test error 1")
             .await
             .unwrap();
         storage
-            .write_error("/pub/test2.json", "Test error 2")
+            .write_error(&pubky, "/pub/test2.json", "Test error 2")
             .await
             .unwrap();
 
@@ -809,14 +966,24 @@ mod tests {
         assert_eq!(cursor, "cursor_v3");
 
         // Verify no temp file is left behind
-        let temp_file_path = temp_dir.path().join(pubky.to_string()).join("cursor.tmp");
+        let temp_file_path = temp_dir
+            .path()
+            .join(KEYS_DIR_NAME)
+            .join(pubky.to_string())
+            .join(STATE_DIR_NAME)
+            .join("cursor.tmp");
         assert!(
             !temp_file_path.exists(),
             "Temporary cursor file should not exist after atomic write"
         );
 
         // Verify actual cursor file exists
-        let cursor_file_path = temp_dir.path().join(pubky.to_string()).join("cursor");
+        let cursor_file_path = temp_dir
+            .path()
+            .join(KEYS_DIR_NAME)
+            .join(pubky.to_string())
+            .join(STATE_DIR_NAME)
+            .join("cursor");
         assert!(cursor_file_path.exists(), "Cursor file should exist");
     }
 
@@ -887,19 +1054,28 @@ mod tests {
             snapshot_path.display()
         );
 
-        // Verify it's in the snapshots directory
+        // Verify it's in the key's snapshots directory
+        let expected_snapshots_dir = temp_dir
+            .path()
+            .join(KEYS_DIR_NAME)
+            .join(pubky.to_string())
+            .join(SNAPSHOTS_DIR_NAME);
         assert!(
-            snapshot_path.parent().unwrap().ends_with("snapshots"),
-            "Snapshot should be in snapshots directory"
+            snapshot_path.starts_with(&expected_snapshots_dir),
+            "Snapshot should be in key's snapshots directory"
         );
 
-        // Verify filename format
+        // Verify filename format (just timestamp now)
         let filename = snapshot_path.file_name().unwrap().to_str().unwrap();
         assert!(
-            filename.starts_with("snapshot_"),
-            "Filename should start with 'snapshot_'"
+            filename.ends_with(".zip"),
+            "Filename should end with '.zip'"
         );
-        assert!(filename.ends_with(".zip"), "Filename should end with '.zip'");
+        // Should be in format YYYY-MM-DD_HH-MM-SS.zip
+        assert!(
+            filename.len() > 4, // At least longer than ".zip"
+            "Filename should have timestamp"
+        );
 
         // Verify the snapshot is a valid zip file and contains correct files
         let file = std::fs::File::open(&snapshot_path).unwrap();
@@ -931,14 +1107,12 @@ mod tests {
 
             if name.contains("test1.json") {
                 assert_eq!(
-                    contents,
-                    b"content_one",
+                    contents, b"content_one",
                     "test1.json should have correct content"
                 );
             } else if name.contains("test2.json") {
                 assert_eq!(
-                    contents,
-                    b"content_two",
+                    contents, b"content_two",
                     "test2.json should have correct content"
                 );
             }
@@ -954,16 +1128,17 @@ mod tests {
         let pubky =
             PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
 
-        // Try to create snapshot for non-existent pubky
+        // Try to create snapshot for pubky with no data written
+        // Note: key_storage() creates directories eagerly, so this results in
+        // "No files to snapshot" rather than "No backup data found"
         let result = storage.create_snapshot(&pubky).await;
 
         assert!(result.is_err(), "Should fail when no backup data exists");
+        let error_msg = result.unwrap_err().to_string();
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("No backup data found"),
-            "Error should mention no backup data"
+            error_msg.contains("No files to snapshot"),
+            "Error should mention no files to snapshot, got: {}",
+            error_msg
         );
     }
 
@@ -972,17 +1147,18 @@ mod tests {
         let (storage, temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        // Create the pubky directory but don't add any files
-        let pubky_dir = temp_dir.path().join(pubky.to_string());
-        std::fs::create_dir_all(&pubky_dir).unwrap();
+        // Create the pubky's data directory but don't add any files
+        let data_dir = temp_dir
+            .path()
+            .join(KEYS_DIR_NAME)
+            .join(pubky.to_string())
+            .join(DATA_DIR_NAME);
+        std::fs::create_dir_all(&data_dir).unwrap();
 
         // Try to create snapshot for empty pubky directory
         let result = storage.create_snapshot(&pubky).await;
 
-        assert!(
-            result.is_err(),
-            "Should fail when pubky directory is empty"
-        );
+        assert!(result.is_err(), "Should fail when pubky directory is empty");
         assert!(
             result
                 .unwrap_err()
@@ -992,15 +1168,63 @@ mod tests {
         );
 
         // Verify no orphaned zip file was left behind
-        let snapshots_dir = temp_dir.path().join("snapshots");
+        let snapshots_dir = temp_dir
+            .path()
+            .join(KEYS_DIR_NAME)
+            .join(pubky.to_string())
+            .join(SNAPSHOTS_DIR_NAME);
         if snapshots_dir.exists() {
-            let entries: Vec<_> = std::fs::read_dir(&snapshots_dir)
-                .unwrap()
-                .collect();
+            let entries: Vec<_> = std::fs::read_dir(&snapshots_dir).unwrap().collect();
             assert!(
                 entries.is_empty(),
                 "No snapshot file should be left behind for empty directory"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_storage_directory_structure() {
+        let (storage, temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+
+        // Write some data to trigger directory creation
+        let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
+        storage.write(&resource, b"test".to_vec()).await.unwrap();
+
+        // Write last pubky to trigger config directory creation
+        storage.write_last_pubky(&pubky).await.unwrap();
+
+        // Verify directory structure
+        let root = temp_dir.path();
+
+        // App-level directories
+        assert!(root.join(CONFIG_DIR_NAME).exists(), "config/ should exist");
+        assert!(
+            root.join(CONFIG_DIR_NAME)
+                .join(LAST_PUBKY_FILENAME)
+                .exists(),
+            "config/last_pubky should exist"
+        );
+        assert!(root.join(LOGS_DIR_NAME).exists(), "logs/ should exist");
+
+        // Per-key directories
+        let key_dir = root.join(KEYS_DIR_NAME).join(pubky.to_string());
+        assert!(key_dir.exists(), "keys/<pubky>/ should exist");
+        assert!(
+            key_dir.join(STATE_DIR_NAME).exists(),
+            "keys/<pubky>/state/ should exist"
+        );
+        assert!(
+            key_dir.join(DATA_DIR_NAME).exists(),
+            "keys/<pubky>/data/ should exist"
+        );
+        assert!(
+            key_dir
+                .join(DATA_DIR_NAME)
+                .join("pub")
+                .join("test.json")
+                .exists(),
+            "keys/<pubky>/data/pub/test.json should exist"
+        );
     }
 }

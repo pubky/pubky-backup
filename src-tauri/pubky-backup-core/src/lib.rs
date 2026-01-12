@@ -1,6 +1,7 @@
 mod error;
 mod events;
 mod storage;
+mod storage_migration;
 mod utils;
 
 pub use error::{BackupError, EventsError, StorageError};
@@ -269,7 +270,7 @@ impl BackupController {
                     // Other errors (e.g., InvalidResponse) are critical
                     error!("Critical sync error: {}", e);
                     self.storage
-                        .write_error("/events/", &format!("Critical error: {}", e))
+                        .write_error(&self.pubky, "/events/", &format!("Critical error: {}", e))
                         .await?;
                     return Err(e.into());
                 }
@@ -300,7 +301,7 @@ impl BackupController {
             match event {
                 Event::Invalid { url, error } => {
                     // Log invalid events and continue
-                    let _ = self.storage.write_error(url, error).await;
+                    let _ = self.storage.write_error(&self.pubky, url, error).await;
                     warn!("Invalid event: {} - {}", url, error);
                     continue;
                 }
@@ -328,6 +329,7 @@ impl BackupController {
                                     // Log fetch errors and continue processing other events
                                     self.storage
                                         .write_error(
+                                            &self.pubky,
                                             &resource.to_string(),
                                             &format!("Fetch failed: {}", e),
                                         )
@@ -423,7 +425,7 @@ mod tests {
     // Test helper to create a storage instance with a temporary directory
     fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let storage = AppStorage::new_with_single_path(&temp_dir.path().to_path_buf()).unwrap();
+        let storage = AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap();
         (Arc::new(storage), temp_dir)
     }
 

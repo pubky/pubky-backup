@@ -420,8 +420,7 @@ export class MainForm {
   }
 
   private updateSnapshotButtonState(): void {
-    const snapshotBtn =
-      getElementByIdStrict<HTMLButtonElement>("snapshot-btn");
+    const snapshotBtn = getElementByIdStrict<HTMLButtonElement>("snapshot-btn");
 
     // Disable snapshot button during sync or while creating snapshot
     if (this.isSyncing || this.isCreatingSnapshot) {
