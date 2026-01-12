@@ -407,6 +407,10 @@ button:active {
   background-color: #b95ce8;
 }
 
+.status-badge.snapshot {
+  background-color: #0085ff;
+}
+
 .status-badge-text {
   font-family: "Inter Tight", Inter, sans-serif;
   font-size: 10px;
@@ -422,6 +426,10 @@ button:active {
 }
 
 .status-badge.syncing .status-badge-text {
+  color: #ffffff;
+}
+
+.status-badge.snapshot .status-badge-text {
   color: #ffffff;
 }
 
@@ -663,6 +671,10 @@ button:active {
 }
 
 .sync-message.snapshot-success .sync-message-text {
+  color: #0085ff;
+}
+
+.sync-message.snapshot-success .sync-message-icon {
   color: #0085ff;
 }
 

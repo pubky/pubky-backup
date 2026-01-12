@@ -350,7 +350,7 @@ impl KeyStorage {
                 }
             }
             Err(_) => {
-                return Ok(0); // Directory doesn't exist, return 0 size
+                return Ok(0);
             }
         }
 
@@ -381,13 +381,9 @@ impl KeyStorage {
     /// Create a snapshot (zip archive) of the backed-up data
     pub async fn create_snapshot(&self) -> Result<PathBuf, StorageError> {
         let key_dir = self.key_dir.clone();
-
-        // Run blocking I/O in a separate thread to avoid blocking the async runtime
-        let result = tokio::task::spawn_blocking(move || Self::create_snapshot_blocking(&key_dir))
+        tokio::task::spawn_blocking(move || Self::create_snapshot_blocking(&key_dir))
             .await
-            .map_err(|e| StorageError::Internal(format!("Snapshot task failed: {}", e)))?;
-
-        result
+            .map_err(|e| StorageError::Internal(format!("Snapshot task failed: {}", e)))?
     }
 
     /// Blocking implementation of snapshot creation.
@@ -430,16 +426,13 @@ impl KeyStorage {
                 let file_data = std::fs::read(path).map_err(|e| {
                     StorageError::Internal(format!("Failed to read file {}: {}", path.display(), e))
                 })?;
-
                 zip.start_file(relative_path.to_string_lossy().to_string(), options)
                     .map_err(|e| {
                         StorageError::Internal(format!("Failed to add file to zip: {}", e))
                     })?;
-
                 zip.write_all(&file_data).map_err(|e| {
                     StorageError::Internal(format!("Failed to write file to zip: {}", e))
                 })?;
-
                 file_count += 1;
             }
         }

@@ -403,17 +403,14 @@ async fn create_snapshot() -> Result<String, BackupAppError> {
         let state = APP_STATE
             .lock()
             .map_err(|_| BackupAppError::lock_failed())?;
-
         let pubky = state
             .pubky
             .clone()
             .ok_or_else(|| BackupAppError::internal("Pubky not available in AppState"))?;
-
         let storage = state
             .storage
             .clone()
             .ok_or_else(|| BackupAppError::internal("Storage not available in AppState"))?;
-
         (pubky, storage)
     };
 

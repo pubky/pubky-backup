@@ -29,6 +29,8 @@ export class MainForm {
   private syncMessageInterval: number | null = null;
   private isCreatingSnapshot: boolean = false;
   private snapshotMessageTimeout: number | null = null;
+  private statusMessageMode: "sync" | "snapshot-success" | "snapshot-error" =
+    "sync";
 
   init(): void {
     this.bindEvents();
@@ -48,6 +50,7 @@ export class MainForm {
       clearTimeout(this.snapshotMessageTimeout);
       this.snapshotMessageTimeout = null;
     }
+    this.statusMessageMode = "sync";
   }
 
   private bindEvents(): void {
@@ -238,6 +241,11 @@ export class MainForm {
   }
 
   private updateSyncStatus(): void {
+    // Other messages shouldnt be overridden by sync messages
+    if (this.statusMessageMode !== "sync") {
+      return;
+    }
+
     const statusBadge = getElementByIdStrict<HTMLElement>("status-badge");
     const statusText = getElementByIdStrict<HTMLElement>("status-text");
     const syncMessage = getElementByIdStrict<HTMLElement>("sync-message");
@@ -290,7 +298,8 @@ export class MainForm {
   }
 
   private updateNextSyncCountdown(): void {
-    if (this.isSyncing) {
+    // Other messages shouldnt be overridden by sync messages
+    if (this.isSyncing || this.statusMessageMode !== "sync") {
       return;
     }
 
@@ -442,20 +451,32 @@ export class MainForm {
     const syncMessage = getElementByIdStrict<HTMLElement>("sync-message");
     const syncMessageText =
       getElementByIdStrict<HTMLElement>("sync-message-text");
+    const statusBadge = getElementByIdStrict<HTMLElement>("status-badge");
+    const statusText = getElementByIdStrict<HTMLElement>("status-text");
 
     // Clear any existing snapshot message timeout
     this.clearSnapshotMessageTimeout();
+    this.statusMessageMode = "snapshot-success";
 
-    // Show success state
+    // Show success state on sync message
     syncMessage.classList.remove("error", "syncing");
     syncMessage.classList.add("snapshot-success");
     syncMessageText.textContent = "Snapshot created";
 
+    // Update status badge to show SNAPSHOT!
+    statusBadge.classList.remove("synced", "syncing");
+    statusBadge.classList.add("snapshot");
+    statusText.textContent = "SNAPSHOT!";
+
     // Revert after timeout
     this.snapshotMessageTimeout = window.setTimeout(() => {
       syncMessage.classList.remove("snapshot-success");
-      this.updateNextSyncCountdown();
+      statusBadge.classList.remove("snapshot");
+      statusBadge.classList.add("synced");
+      statusText.textContent = "SYNCED";
+      this.statusMessageMode = "sync";
       this.snapshotMessageTimeout = null;
+      this.updateNextSyncCountdown();
     }, MainForm.SNAPSHOT_MESSAGE_DURATION_MS);
   }
 
@@ -463,20 +484,29 @@ export class MainForm {
     const syncMessage = getElementByIdStrict<HTMLElement>("sync-message");
     const syncMessageText =
       getElementByIdStrict<HTMLElement>("sync-message-text");
+    const statusBadge = getElementByIdStrict<HTMLElement>("status-badge");
+    const statusText = getElementByIdStrict<HTMLElement>("status-text");
 
     // Clear any existing snapshot message timeout
     this.clearSnapshotMessageTimeout();
+    this.statusMessageMode = "snapshot-error";
 
     // Show error state
     syncMessage.classList.remove("syncing", "snapshot-success");
     syncMessage.classList.add("error");
     syncMessageText.textContent = "Failed to create snapshot";
 
+    // Ensure status badge shows synced state (in case snapshot state was showing)
+    statusBadge.classList.remove("snapshot", "syncing");
+    statusBadge.classList.add("synced");
+    statusText.textContent = "SYNCED";
+
     // Revert after timeout
     this.snapshotMessageTimeout = window.setTimeout(() => {
       syncMessage.classList.remove("error");
-      this.updateNextSyncCountdown();
+      this.statusMessageMode = "sync";
       this.snapshotMessageTimeout = null;
+      this.updateNextSyncCountdown();
     }, MainForm.SNAPSHOT_MESSAGE_DURATION_MS);
   }
 }
