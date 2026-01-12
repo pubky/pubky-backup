@@ -5,6 +5,7 @@ import {
   openDataDir,
   getDataDirPath,
   backupControllerClose,
+  createSnapshot,
 } from "@/types/tauri-commands";
 import { getElementByIdStrict, getElementById } from "@/types/dom-helpers";
 
@@ -25,6 +26,8 @@ export class MainForm {
   private lastSyncTime: number | null = null;
   private statusInterval: number | null = null;
   private syncMessageInterval: number | null = null;
+  private isCreatingSnapshot: boolean = false;
+  private snapshotMessageTimeout: number | null = null;
 
   init(): void {
     this.bindEvents();
@@ -36,6 +39,14 @@ export class MainForm {
   cleanup(): void {
     this.stopStatusPolling();
     this.stopSyncMessageUpdates();
+    this.clearSnapshotMessageTimeout();
+  }
+
+  private clearSnapshotMessageTimeout(): void {
+    if (this.snapshotMessageTimeout !== null) {
+      clearTimeout(this.snapshotMessageTimeout);
+      this.snapshotMessageTimeout = null;
+    }
   }
 
   private bindEvents(): void {
@@ -94,6 +105,30 @@ export class MainForm {
           await openDataDir();
         } catch (error: unknown) {
           console.error("Failed to open data directory:", error);
+        }
+      },
+    );
+
+    // Snapshot button
+    getElementByIdStrict<HTMLButtonElement>("snapshot-btn").addEventListener(
+      "click",
+      async () => {
+        const snapshotBtn =
+          getElementByIdStrict<HTMLButtonElement>("snapshot-btn");
+        try {
+          snapshotBtn.disabled = true;
+          this.isCreatingSnapshot = true;
+          this.updateSnapshotButtonState();
+          const snapshotPath = await createSnapshot();
+          console.log("Snapshot created:", snapshotPath);
+          this.showSnapshotSuccess();
+        } catch (error: unknown) {
+          console.error("Snapshot creation failed:", error);
+          this.showSnapshotError();
+        } finally {
+          this.isCreatingSnapshot = false;
+          snapshotBtn.disabled = false;
+          this.updateSnapshotButtonState();
         }
       },
     );
@@ -248,6 +283,9 @@ export class MainForm {
       forceSyncBtn.disabled = false;
       forceSyncBtn.classList.remove("activated");
     }
+
+    // Update snapshot button state
+    this.updateSnapshotButtonState();
   }
 
   private updateNextSyncCountdown(): void {
@@ -379,5 +417,66 @@ export class MainForm {
     } catch (error: unknown) {
       console.error("Error returning to startup:", error);
     }
+  }
+
+  private updateSnapshotButtonState(): void {
+    const snapshotBtn =
+      getElementByIdStrict<HTMLButtonElement>("snapshot-btn");
+
+    // Disable snapshot button during sync or while creating snapshot
+    if (this.isSyncing || this.isCreatingSnapshot) {
+      snapshotBtn.disabled = true;
+    } else {
+      snapshotBtn.disabled = false;
+    }
+
+    // Add visual state class when creating snapshot
+    if (this.isCreatingSnapshot) {
+      snapshotBtn.classList.add("creating");
+    } else {
+      snapshotBtn.classList.remove("creating");
+    }
+  }
+
+  private showSnapshotSuccess(): void {
+    const syncMessage = getElementByIdStrict<HTMLElement>("sync-message");
+    const syncMessageText =
+      getElementByIdStrict<HTMLElement>("sync-message-text");
+
+    // Clear any existing snapshot message timeout
+    this.clearSnapshotMessageTimeout();
+
+    // Show success state
+    syncMessage.classList.remove("error", "syncing");
+    syncMessage.classList.add("snapshot-success");
+    syncMessageText.textContent = "Snapshot created";
+
+    // Revert after 3 seconds
+    this.snapshotMessageTimeout = window.setTimeout(() => {
+      syncMessage.classList.remove("snapshot-success");
+      this.updateNextSyncCountdown();
+      this.snapshotMessageTimeout = null;
+    }, 3000);
+  }
+
+  private showSnapshotError(): void {
+    const syncMessage = getElementByIdStrict<HTMLElement>("sync-message");
+    const syncMessageText =
+      getElementByIdStrict<HTMLElement>("sync-message-text");
+
+    // Clear any existing snapshot message timeout
+    this.clearSnapshotMessageTimeout();
+
+    // Show error state
+    syncMessage.classList.remove("syncing", "snapshot-success");
+    syncMessage.classList.add("error");
+    syncMessageText.textContent = "Failed to create snapshot";
+
+    // Revert after 3 seconds
+    this.snapshotMessageTimeout = window.setTimeout(() => {
+      syncMessage.classList.remove("error");
+      this.updateNextSyncCountdown();
+      this.snapshotMessageTimeout = null;
+    }, 3000);
   }
 }

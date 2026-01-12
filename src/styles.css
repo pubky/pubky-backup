@@ -600,6 +600,72 @@ button:active {
   align-self: stretch;
 }
 
+/* Action buttons row container */
+.action-buttons-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  align-self: stretch;
+  gap: 12px;
+  margin: 0;
+}
+
+/* Snapshot button - outline variant */
+.snapshot-btn {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 32px;
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid #303034;
+  border-radius: 9999px;
+  box-shadow: 0px 1px 2px 0px rgba(5, 5, 10, 0.2);
+  cursor: pointer;
+  transition: all 0.2s;
+  margin: 0;
+  flex: 1;
+}
+
+.snapshot-btn:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.snapshot-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.snapshot-btn.creating {
+  opacity: 0.7;
+}
+
+.snapshot-btn-text {
+  font-family: "Inter Tight", Inter, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.428em;
+  color: #ffffff;
+  margin: 0;
+}
+
+.snapshot-icon {
+  width: 16px;
+  height: 16px;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+/* Snapshot success state for sync message */
+.sync-message.snapshot-success {
+  background-color: rgba(0, 133, 255, 0.16);
+}
+
+.sync-message.snapshot-success .sync-message-text {
+  color: #0085ff;
+}
+
 /* Toast notification */
 .toast {
   position: fixed;

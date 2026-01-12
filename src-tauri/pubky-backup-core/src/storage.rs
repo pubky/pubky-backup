@@ -3,12 +3,15 @@ use futures_lite::StreamExt;
 use log::{debug, error, info};
 use opendal::{services::Fs, Operator};
 use pubky::{PubkyResource, PublicKey};
-use std::{path::PathBuf, str::FromStr};
+use std::{fs::File, io::Write, path::{Path, PathBuf}, str::FromStr};
+use walkdir::WalkDir;
+use zip::write::FileOptions;
 
 const APP_DATA_DIR_NAME: &str = ".pubky-backup";
 const CURSOR_FILENAME: &str = "cursor";
 const ERROR_LOG_FILNAME: &str = "error.log";
 const LAST_PUBKY_FILENAME: &str = "last_pubky";
+const SNAPSHOTS_DIR_NAME: &str = "snapshots";
 
 /// Get the root data directory for application storage.
 ///
@@ -328,6 +331,8 @@ pub struct AppStorage {
     app_data: AppDataStorage,
     /// User's backed-up data
     backup_data: BackupDataStorage,
+    /// Root data directory path
+    data_dir: PathBuf,
 }
 
 impl AppStorage {
@@ -346,6 +351,7 @@ impl AppStorage {
         Ok(AppStorage {
             app_data: AppDataStorage::new(&data_dir)?,
             backup_data: BackupDataStorage::new(&data_dir)?,
+            data_dir,
         })
     }
 
@@ -354,6 +360,7 @@ impl AppStorage {
         Ok(AppStorage {
             app_data: AppDataStorage::new(data_dir)?,
             backup_data: BackupDataStorage::new(data_dir)?,
+            data_dir: data_dir.clone(),
         })
     }
 
@@ -498,6 +505,133 @@ impl AppStorage {
     /// The last used public key, or `None` if none has been stored
     pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
         self.app_data.read_last_pubky().await
+    }
+
+    /// Create a snapshot (zip archive) of the backed-up data for a specific pubky.
+    ///
+    /// Creates a compressed zip file containing all data for the given pubky.
+    /// The snapshot is stored in `<data_dir>/snapshots/` with a timestamped filename.
+    ///
+    /// # Arguments
+    ///
+    /// * `pubky` - The public key to create a snapshot for
+    ///
+    /// # Returns
+    ///
+    /// Path to the created snapshot file
+    ///
+    /// # Errors
+    ///
+    /// Returns `StorageError` if:
+    /// - The pubky directory doesn't exist
+    /// - The pubky directory is empty (no files to snapshot)
+    /// - The snapshots directory cannot be created
+    /// - The zip file cannot be created or written
+    pub async fn create_snapshot(&self, pubky: &PublicKey) -> Result<PathBuf, StorageError> {
+        let data_dir = self.data_dir.clone();
+        let pubky_str = pubky.to_string();
+
+        // Run blocking I/O in a separate thread to avoid blocking the async runtime
+        let result = tokio::task::spawn_blocking(move || {
+            Self::create_snapshot_blocking(&data_dir, &pubky_str)
+        })
+        .await
+        .map_err(|e| StorageError::Internal(format!("Snapshot task failed: {}", e)))?;
+
+        result
+    }
+
+    /// Blocking implementation of snapshot creation.
+    /// Called from spawn_blocking to avoid blocking the async runtime.
+    fn create_snapshot_blocking(
+        data_dir: &Path,
+        pubky_str: &str,
+    ) -> Result<PathBuf, StorageError> {
+        let pubky_dir = data_dir.join(pubky_str);
+        if !pubky_dir.exists() {
+            return Err(StorageError::Internal(format!(
+                "No backup data found for pubky: {}",
+                pubky_str
+            )));
+        }
+
+        let snapshots_dir = data_dir.join(SNAPSHOTS_DIR_NAME);
+        std::fs::create_dir_all(&snapshots_dir).map_err(|e| {
+            StorageError::DirectoryCreation(format!("{}: {}", snapshots_dir.display(), e))
+        })?;
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d_%H-%M-%S");
+        let pubky_prefix = if pubky_str.len() > 10 {
+            &pubky_str[..10]
+        } else {
+            pubky_str
+        };
+        let snapshot_filename = format!("snapshot_{}_{}.zip", pubky_prefix, timestamp);
+        let snapshot_path = snapshots_dir.join(&snapshot_filename);
+
+        let file = File::create(&snapshot_path).map_err(|e| {
+            StorageError::Internal(format!("Failed to create snapshot file: {}", e))
+        })?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options: FileOptions<()> = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+
+        info!(
+            "Creating snapshot of {} to {}",
+            pubky_str,
+            snapshot_path.display()
+        );
+
+        // Walk the pubky directory and add files to zip
+        let mut file_count = 0;
+        for entry in WalkDir::new(&pubky_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            let relative_path = path.strip_prefix(&pubky_dir).map_err(|e| {
+                StorageError::Internal(format!("Failed to get relative path: {}", e))
+            })?;
+
+            if path.is_file() {
+                let file_data = std::fs::read(path).map_err(|e| {
+                    StorageError::Internal(format!(
+                        "Failed to read file {}: {}",
+                        path.display(),
+                        e
+                    ))
+                })?;
+
+                zip.start_file(relative_path.to_string_lossy().to_string(), options)
+                    .map_err(|e| {
+                        StorageError::Internal(format!("Failed to add file to zip: {}", e))
+                    })?;
+
+                zip.write_all(&file_data).map_err(|e| {
+                    StorageError::Internal(format!("Failed to write file to zip: {}", e))
+                })?;
+
+                file_count += 1;
+            }
+        }
+
+        // Check if any files were added
+        if file_count == 0 {
+            // Clean up the empty zip file
+            drop(zip);
+            let _ = std::fs::remove_file(&snapshot_path);
+            return Err(StorageError::Internal(format!(
+                "No files to snapshot for pubky: {}",
+                pubky_str
+            )));
+        }
+
+        zip.finish().map_err(|e| {
+            StorageError::Internal(format!("Failed to finalize zip file: {}", e))
+        })?;
+
+        info!("Snapshot created successfully: {}", snapshot_path.display());
+        Ok(snapshot_path)
     }
 }
 
@@ -718,5 +852,155 @@ mod tests {
 
         let cursor = storage.read_cursor(&pubky).await.unwrap();
         assert_eq!(cursor, "final_cursor");
+    }
+
+    #[tokio::test]
+    async fn test_create_snapshot() {
+        use std::io::Read;
+
+        let (storage, temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+
+        // Create some test data first
+        let resource1 = PubkyResource::new(pubky.clone(), "/pub/test1.json").unwrap();
+        let resource2 = PubkyResource::new(pubky.clone(), "/pub/nested/test2.json").unwrap();
+
+        storage
+            .write(&resource1, b"content_one".to_vec())
+            .await
+            .unwrap();
+        storage
+            .write(&resource2, b"content_two".to_vec())
+            .await
+            .unwrap();
+
+        // Create a snapshot
+        let snapshot_path = storage.create_snapshot(&pubky).await.unwrap();
+
+        // Verify snapshot file exists
+        assert!(snapshot_path.exists(), "Snapshot file should exist");
+
+        // Verify snapshot is in the temp directory (not home directory)
+        assert!(
+            snapshot_path.starts_with(temp_dir.path()),
+            "Snapshot should be in temp directory, not home directory. Path: {}",
+            snapshot_path.display()
+        );
+
+        // Verify it's in the snapshots directory
+        assert!(
+            snapshot_path.parent().unwrap().ends_with("snapshots"),
+            "Snapshot should be in snapshots directory"
+        );
+
+        // Verify filename format
+        let filename = snapshot_path.file_name().unwrap().to_str().unwrap();
+        assert!(
+            filename.starts_with("snapshot_"),
+            "Filename should start with 'snapshot_'"
+        );
+        assert!(filename.ends_with(".zip"), "Filename should end with '.zip'");
+
+        // Verify the snapshot is a valid zip file and contains correct files
+        let file = std::fs::File::open(&snapshot_path).unwrap();
+        let mut zip_archive = zip::ZipArchive::new(file).unwrap();
+
+        // Collect file names from archive
+        let file_names: Vec<String> = (0..zip_archive.len())
+            .map(|i| zip_archive.by_index(i).unwrap().name().to_string())
+            .collect();
+
+        // Verify expected files are in the archive
+        assert!(
+            file_names.iter().any(|n| n.contains("test1.json")),
+            "Archive should contain test1.json. Found: {:?}",
+            file_names
+        );
+        assert!(
+            file_names.iter().any(|n| n.contains("test2.json")),
+            "Archive should contain test2.json. Found: {:?}",
+            file_names
+        );
+
+        // Verify file contents
+        for i in 0..zip_archive.len() {
+            let mut file = zip_archive.by_index(i).unwrap();
+            let name = file.name().to_string();
+            let mut contents = Vec::new();
+            file.read_to_end(&mut contents).unwrap();
+
+            if name.contains("test1.json") {
+                assert_eq!(
+                    contents,
+                    b"content_one",
+                    "test1.json should have correct content"
+                );
+            } else if name.contains("test2.json") {
+                assert_eq!(
+                    contents,
+                    b"content_two",
+                    "test2.json should have correct content"
+                );
+            }
+        }
+
+        // Clean up
+        std::fs::remove_file(&snapshot_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_create_snapshot_no_data() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky =
+            PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
+
+        // Try to create snapshot for non-existent pubky
+        let result = storage.create_snapshot(&pubky).await;
+
+        assert!(result.is_err(), "Should fail when no backup data exists");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No backup data found"),
+            "Error should mention no backup data"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_snapshot_empty_directory() {
+        let (storage, temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+
+        // Create the pubky directory but don't add any files
+        let pubky_dir = temp_dir.path().join(pubky.to_string());
+        std::fs::create_dir_all(&pubky_dir).unwrap();
+
+        // Try to create snapshot for empty pubky directory
+        let result = storage.create_snapshot(&pubky).await;
+
+        assert!(
+            result.is_err(),
+            "Should fail when pubky directory is empty"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No files to snapshot"),
+            "Error should mention no files to snapshot"
+        );
+
+        // Verify no orphaned zip file was left behind
+        let snapshots_dir = temp_dir.path().join("snapshots");
+        if snapshots_dir.exists() {
+            let entries: Vec<_> = std::fs::read_dir(&snapshots_dir)
+                .unwrap()
+                .collect();
+            assert!(
+                entries.is_empty(),
+                "No snapshot file should be left behind for empty directory"
+            );
+        }
     }
 }

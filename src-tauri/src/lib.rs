@@ -396,6 +396,35 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppErro
         .map_err(BackupAppError::internal)
 }
 
+/// Create a snapshot (zip archive) of the current pubky's backed-up data
+#[tauri::command]
+async fn create_snapshot() -> Result<String, BackupAppError> {
+    let (pubky, storage) = {
+        let state = APP_STATE
+            .lock()
+            .map_err(|_| BackupAppError::lock_failed())?;
+
+        let pubky = state
+            .pubky
+            .clone()
+            .ok_or_else(|| BackupAppError::internal("Pubky not available in AppState"))?;
+
+        let storage = state
+            .storage
+            .clone()
+            .ok_or_else(|| BackupAppError::internal("Storage not available in AppState"))?;
+
+        (pubky, storage)
+    };
+
+    let snapshot_path = storage
+        .create_snapshot(&pubky)
+        .await
+        .map_err(BackupAppError::internal)?;
+
+    Ok(snapshot_path.to_string_lossy().to_string())
+}
+
 /// Update tray icon based on sync status
 fn update_tray_icon(state: &AppState) {
     if let Some(app_handle) = &state.app_handle {
@@ -497,7 +526,8 @@ pub fn run() {
             backup_controller_close,
             force_sync_now,
             get_data_dir_path,
-            open_data_dir
+            open_data_dir,
+            create_snapshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
