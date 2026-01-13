@@ -122,6 +122,19 @@ export async function openDataDir(): Promise<void> {
 }
 
 /**
+ * Create a snapshot (zip archive) of the current pubky's backed-up data
+ * @returns Path to the created snapshot file
+ * @throws {BackendError} If creating snapshot fails
+ */
+export async function createSnapshot(): Promise<string> {
+  try {
+    return await invoke<string>("create_snapshot");
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
  * Normalize unknown errors to BackendError
  * If the error is already a BackendError, return it as-is
  * Otherwise, wrap it in an Internal error
