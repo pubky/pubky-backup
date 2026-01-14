@@ -525,17 +525,14 @@ mod tests {
             .write(&resource, b"test data".to_vec())
             .await
             .unwrap();
-        storage
-            .write_cursor(&pubky, "new_cursor".to_string())
-            .await
-            .unwrap();
+        storage.write_cursor(&pubky, 12345).await.unwrap();
 
         // Run migration again (should be idempotent)
         migrate_old_structure(temp_dir.path()).unwrap();
 
         // Verify nothing changed
         let cursor = storage.read_cursor(&pubky).await.unwrap();
-        assert_eq!(cursor, "new_cursor");
+        assert_eq!(cursor, Some(12345));
 
         let data = storage.read(&resource).await.unwrap();
         assert_eq!(data, b"test data");
