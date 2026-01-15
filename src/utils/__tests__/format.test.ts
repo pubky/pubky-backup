@@ -53,10 +53,13 @@ describe("formatFileSize", () => {
     expect(formatFileSize(100 * 1024)).toBe("100.0 KB");
   });
 
-  it("should handle very large numbers", () => {
+  it("should handle very large numbers by capping at TB", () => {
     const petabyte = 1024 * 1024 * 1024 * 1024 * 1024;
-    // Falls back to TB for very large numbers (index maxes out at 4 = TB)
-    expect(formatFileSize(petabyte)).toBe("1.00 TB");
+    // Caps at TB, so 1 PB = 1024 TB
+    expect(formatFileSize(petabyte)).toBe("1024.0 TB");
+
+    const twoPetabytes = 2 * petabyte;
+    expect(formatFileSize(twoPetabytes)).toBe("2048.0 TB");
   });
 
   it("should handle fractional bytes gracefully", () => {

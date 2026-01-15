@@ -1,15 +1,14 @@
-import { useUIStore } from "@/stores/useUIStore";
-import { StartupForm } from "@/components/organisms/StartupForm";
-import { DashboardForm } from "@/components/organisms/DashboardForm";
-import { Toast } from "@/components/molecules/Toast";
+import * as Stores from "@/stores";
+import * as Organisms from "@/components/organisms";
+import * as Molecules from "@/components/molecules";
 
 export function App() {
-  const currentScreen = useUIStore((s) => s.currentScreen);
+  const currentScreen = Stores.useUIStore((s) => s.currentScreen);
 
   return (
     <>
-      {currentScreen === "startup" ? <StartupForm /> : <DashboardForm />}
-      <Toast />
+      {currentScreen === "startup" ? <Organisms.StartupForm /> : <Organisms.DashboardForm />}
+      <Molecules.Toast />
     </>
   );
 }

@@ -3,6 +3,7 @@ export { IconButton, type IconButtonProps } from "./IconButton";
 export { PubkyLogo } from "./PubkyLogo";
 export { Spinner, type SpinnerProps } from "./Spinner";
 export {
+  type IconProps,
   SearchIcon,
   BackIcon,
   CopyIcon,

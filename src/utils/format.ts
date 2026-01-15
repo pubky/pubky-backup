@@ -1,19 +1,18 @@
 /**
  * Format a byte count into a human-readable string
- * Note: Values beyond TB (petabytes+) will display as TB equivalent
  */
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
 
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB", "TB"] as const;
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const maxIndex = sizes.length - 1;
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), maxIndex);
 
   const size = bytes / Math.pow(k, i);
   const decimals = i === 0 ? 0 : size < 10 ? 2 : 1;
 
-  // For values beyond TB, fall back to TB (sizes[4])
-  return `${size.toFixed(decimals)} ${sizes[i] ?? "TB"}`;
+  return `${size.toFixed(decimals)} ${sizes[i]}`;
 }
 
 /**

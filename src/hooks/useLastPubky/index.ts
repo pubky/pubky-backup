@@ -1,0 +1,1 @@
+export { useLastPubky } from "./useLastPubky";

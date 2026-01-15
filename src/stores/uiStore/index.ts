@@ -1,4 +1,4 @@
-export { useUIStore } from "./uiStore";
+export { useUIStore } from "./uiStore.store";
 export type {
   Screen,
   StatusMessageMode,
@@ -6,4 +6,4 @@ export type {
   UIState,
   UIActions,
   UIStore,
-} from "./uiStore";
+} from "./uiStore.types";
