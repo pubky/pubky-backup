@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     environment: 'happy-dom', // Lightweight DOM for tests
     globals: true,
+    setupFiles: ['./src/test-setup.ts'],
   },
   resolve: {
     alias: {

@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+@theme {
+  /* Pubky brand colors */
+  --color-pubky-purple: #b95ce8;
+  --color-pubky-green: #c8ff00;
+  --color-pubky-blue: #0085ff;
+  --color-pubky-red: #ff5350;
+
+  /* Background/surface colors (dark theme) */
+  --color-surface-dark: #1d1d20;
+  --color-surface-light: #303034;
+  --color-border: #303034;
+  --color-border-dashed: #525252;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #89898f;
+  --color-text-muted: #eeeef6;
+
+  /* Status colors with transparency */
+  --color-status-synced-bg: rgba(200, 255, 0, 0.16);
+  --color-status-syncing-bg: rgba(185, 92, 232, 0.16);
+  --color-status-error-bg: rgba(255, 83, 80, 0.16);
+  --color-status-snapshot-bg: rgba(0, 133, 255, 0.16);
+  --color-button-hover-bg: rgba(255, 255, 255, 0.05);
+  --color-button-active-bg: rgba(255, 255, 255, 0.08);
+
+  /* Font family */
+  --font-family-sans:
+    "Inter Tight", Inter, Avenir, Helvetica, Arial, sans-serif;
+}
+
+/* Base styles */
+html {
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #2f2f2f;
+  color: #f6f6f6;
+  font-family: var(--font-family-sans);
+}
+
+/* Utility for hiding elements */
+.hidden {
+  display: none !important;
+}
+
+/* Spin animation for loading states */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}

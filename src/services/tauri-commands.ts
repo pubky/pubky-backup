@@ -4,10 +4,10 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { AppState } from "./app-state";
-import { isAppState } from "./app-state";
-import type { BackendError } from "./backend-errors";
-import { isBackendError } from "./backend-errors";
+import type { AppState } from "@/types/app-state";
+import { isAppState } from "@/types/app-state";
+import type { BackendError } from "@/types/backend-errors";
+import { isBackendError } from "@/types/backend-errors";
 
 /**
  * Initialize the app state with a pubky string

@@ -1,0 +1,62 @@
+export function PubkyLogo() {
+  return (
+    <div className="flex items-center justify-center gap-px w-[272px] h-12">
+      <svg
+        className="w-[38px] h-[60px] shrink-0 drop-shadow-[0_5px_8px_rgba(0,0,0,0.6)] -mb-1"
+        viewBox="0 0 34 44"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <g filter="url(#filter0_d_23413_16300)">
+          <path
+            d="M17 11.3496C20.8073 11.3496 23.8935 14.4921 23.8936 18.3682C23.8936 20.0455 23.315 21.5838 22.3535 22.7891L24.9912 31H9.00879L11.6465 22.7891C10.685 21.5838 10.1064 20.0455 10.1064 18.3682C10.1065 14.4921 13.1927 11.3496 17 11.3496ZM17 14.6553C14.9857 14.6553 13.3526 16.3179 13.3525 18.3682C13.3525 19.7891 14.1374 21.0243 15.29 21.6484L15.4082 21.7119L13.4863 27.6943H20.5137L18.5918 21.7119L18.71 21.6484C19.8626 21.0243 20.6475 19.7891 20.6475 18.3682C20.6474 16.3179 19.0143 14.6553 17 14.6553ZM17 3L17.0029 3.00391L19.1758 5.9043L21.9775 4.10742L22.748 7.13281L26 6.4375L23.042 11.3555C21.4296 9.91423 19.3162 9.04078 17.0029 9.04004H16.9971C14.6838 9.04078 12.5704 9.91423 10.958 11.3555L8 6.4375L11.252 7.13281L12.0225 4.10742L14.8242 5.9043L17 3Z"
+            fill="#B95CE8"
+          />
+        </g>
+        <defs>
+          <filter
+            id="filter0_d_23413_16300"
+            x="0"
+            y="0"
+            width="34"
+            height="44"
+            filterUnits="userSpaceOnUse"
+            colorInterpolationFilters="sRGB"
+          >
+            <feFlood floodOpacity="0" result="BackgroundImageFix" />
+            <feColorMatrix
+              in="SourceAlpha"
+              type="matrix"
+              values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"
+              result="hardAlpha"
+            />
+            <feOffset dy="5" />
+            <feGaussianBlur stdDeviation="4" />
+            <feComposite in2="hardAlpha" operator="out" />
+            <feColorMatrix
+              type="matrix"
+              values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.6 0"
+            />
+            <feBlend
+              mode="normal"
+              in2="BackgroundImageFix"
+              result="effect1_dropShadow_23413_16300"
+            />
+            <feBlend
+              mode="normal"
+              in="SourceGraphic"
+              in2="effect1_dropShadow_23413_16300"
+              result="shape"
+            />
+          </filter>
+        </defs>
+      </svg>
+      <span className="font-sans text-[32px] font-bold leading-tight tracking-tight text-white">
+        Pubky
+      </span>
+      <span className="font-sans text-[32px] font-light leading-tight tracking-tight text-white">
+        Backup
+      </span>
+    </div>
+  );
+}

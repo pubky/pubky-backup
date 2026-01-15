@@ -3,10 +3,10 @@
  */
 
 import { isBackendError } from "@/types/backend-errors";
-import { getElementById } from "@/types/dom-helpers";
 
 /**
  * Handle backend errors with type-safe discriminated union
+ * Shows an alert with the error message
  * @param error - The error from the backend (unknown type for safety)
  */
 export function handleBackendError(error: unknown): void {
@@ -21,11 +21,6 @@ export function handleBackendError(error: unknown): void {
       alert(
         `Invalid Format: ${error.message || "Please check your pubky format"}`,
       );
-      // Highlight the input field if it exists
-      const pubkyInput = getElementById<HTMLInputElement>("pubky-input");
-      if (pubkyInput !== null) {
-        pubkyInput.focus();
-      }
       break;
 
     case "HomeserverNotFound":

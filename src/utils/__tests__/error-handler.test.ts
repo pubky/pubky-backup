@@ -45,23 +45,7 @@ describe("handleBackendError", () => {
       );
     });
 
-    it("should focus input element when it exists", () => {
-      document.body.innerHTML = '<input id="pubky-input" type="text" />';
-      const input = document.getElementById("pubky-input") as HTMLInputElement;
-      const focusSpy = vi.spyOn(input, "focus");
-
-      const error: BackendError = {
-        type: "InvalidPubkyFormat",
-        message: "Invalid format",
-      };
-
-      handleBackendError(error);
-
-      expect(focusSpy).toHaveBeenCalledOnce();
-      focusSpy.mockRestore();
-    });
-
-    it("should not throw when input element does not exist", () => {
+    it("should not throw when handling InvalidPubkyFormat", () => {
       const error: BackendError = {
         type: "InvalidPubkyFormat",
         message: "Invalid format",
