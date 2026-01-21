@@ -7,7 +7,11 @@ export function App() {
 
   return (
     <>
-      {currentScreen === "startup" ? <Organisms.StartupForm /> : <Organisms.DashboardForm />}
+      {currentScreen === "startup" ? (
+        <Organisms.StartupForm />
+      ) : (
+        <Organisms.DashboardForm />
+      )}
       <Molecules.Toast />
     </>
   );

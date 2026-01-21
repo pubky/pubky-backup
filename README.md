@@ -39,6 +39,26 @@ PUBKY_DEVELOPER_MODE=1 cargo tauri dev
 ```
 
 
+## Testing
+
+Run frontend tests (watch mode):
+
+```
+npm test
+```
+
+Run frontend tests once:
+
+```
+npm run test:run
+```
+
+Run Rust tests:
+
+```
+cargo test
+```
+
 ## Build
 
 For executable build:

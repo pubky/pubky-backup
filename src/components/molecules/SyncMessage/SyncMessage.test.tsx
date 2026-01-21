@@ -27,7 +27,9 @@ describe("SyncMessage", () => {
   });
 
   it("should apply blue styling for snapshot-success status", () => {
-    render(<SyncMessage status="snapshot-success" message="Snapshot created" />);
+    render(
+      <SyncMessage status="snapshot-success" message="Snapshot created" />,
+    );
     const text = screen.getByText("Snapshot created");
     expect(text).toHaveClass("text-pubky-blue");
   });

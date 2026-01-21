@@ -13,11 +13,7 @@ describe("PubkyInput", () => {
 
   it("should render with custom placeholder", () => {
     render(
-      <PubkyInput
-        value=""
-        onChange={() => {}}
-        placeholder="g1b6wp8bhhxt..."
-      />,
+      <PubkyInput value="" onChange={() => {}} placeholder="g1b6wp8bhhxt..." />,
     );
 
     expect(screen.getByPlaceholderText("g1b6wp8bhhxt...")).toBeInTheDocument();

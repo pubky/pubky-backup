@@ -20,7 +20,11 @@ export function DashboardHeader({
           <Atoms.BackIcon size={16} />
         </Atoms.IconButton>
         <h4 className="text-base font-bold text-white m-0">{pubkyDisplay}</h4>
-        <Atoms.IconButton variant="inline" onClick={onCopy} title="Copy full pubky">
+        <Atoms.IconButton
+          variant="inline"
+          onClick={onCopy}
+          title="Copy full pubky"
+        >
           <Atoms.CopyIcon size={16} />
         </Atoms.IconButton>
       </div>

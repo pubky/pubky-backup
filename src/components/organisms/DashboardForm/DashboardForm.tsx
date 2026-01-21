@@ -38,7 +38,9 @@ export function DashboardForm() {
     } catch (error: unknown) {
       // Intentionally not using handleBackendError here - we want to navigate
       // back regardless of whether the controller was already stopped
-      Logger.error("DashboardForm", "Backup controller already stopped", { error });
+      Logger.error("DashboardForm", "Backup controller already stopped", {
+        error,
+      });
     }
     setScreen("startup");
   }, [backupCloseMutation, setScreen]);
@@ -176,7 +178,9 @@ export function DashboardForm() {
               icon={<Atoms.ClockIcon size={18} />}
               label="Last Sync"
               value={
-                lastSyncTime !== null ? Utils.formatTimestamp(lastSyncTime) : "--"
+                lastSyncTime !== null
+                  ? Utils.formatTimestamp(lastSyncTime)
+                  : "--"
               }
             />
           </div>

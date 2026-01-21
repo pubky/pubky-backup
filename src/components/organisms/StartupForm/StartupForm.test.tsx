@@ -17,7 +17,11 @@ function createWrapper() {
     },
   });
   return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(QueryClientProvider, { client: queryClient }, children);
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children,
+    );
   };
 }
 
@@ -49,9 +53,7 @@ describe("StartupForm", () => {
     expect(
       screen.getByText("Securely mirror your Pubky data."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /backup/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /backup/i })).toBeInTheDocument();
   });
 
   it("should disable backup button when input is empty", () => {
@@ -144,7 +146,9 @@ describe("StartupForm", () => {
     render(<StartupForm />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText("g1b6wp8bhhxt...")).toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText("g1b6wp8bhhxt..."),
+      ).toBeInTheDocument();
     });
   });
 
@@ -186,13 +190,17 @@ describe("StartupForm", () => {
       render(<StartupForm />, { wrapper: createWrapper() });
 
       await waitFor(() => {
-        expect(services.initAppState).toHaveBeenCalledWith("pk:saved-pubky-123");
+        expect(services.initAppState).toHaveBeenCalledWith(
+          "pk:saved-pubky-123",
+        );
         expect(services.backupControllerBegin).toHaveBeenCalled();
       });
 
       await waitFor(() => {
         expect(useUIStore.getState().currentScreen).toBe("dashboard");
-        expect(useUIStore.getState().pubkyInputValue).toBe("pk:saved-pubky-123");
+        expect(useUIStore.getState().pubkyInputValue).toBe(
+          "pk:saved-pubky-123",
+        );
         expect(useUIStore.getState().hasAutoLoaded).toBe(true);
       });
     });

@@ -44,7 +44,13 @@ export function StartupForm() {
       setPubkyInputValue(lastPubky);
       void handleInitialize(lastPubky);
     }
-  }, [lastPubky, hasAutoLoaded, setHasAutoLoaded, setPubkyInputValue, handleInitialize]);
+  }, [
+    lastPubky,
+    hasAutoLoaded,
+    setHasAutoLoaded,
+    setPubkyInputValue,
+    handleInitialize,
+  ]);
 
   const handleSubmit = () => {
     void handleInitialize(pubkyInputValue);

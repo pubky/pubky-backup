@@ -53,7 +53,12 @@ describe("InfoCard", () => {
 
   it("should apply text ellipsis to value when fullWidth is true", () => {
     render(
-      <InfoCard icon={mockIcon} label="Label" value="Very Long Value" fullWidth />,
+      <InfoCard
+        icon={mockIcon}
+        label="Label"
+        value="Very Long Value"
+        fullWidth
+      />,
     );
 
     const value = screen.getByText("Very Long Value");

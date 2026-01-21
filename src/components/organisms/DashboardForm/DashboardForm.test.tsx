@@ -1,25 +1,45 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  cleanup,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
 import { DashboardForm } from "./DashboardForm";
 import { useUIStore } from "@/stores";
 import * as services from "@/services";
+import * as hooks from "@/hooks";
 import type { AppState } from "@/types/app-state";
 
 vi.mock("@/services");
+// Mock all hooks to prevent memory issues from polling/intervals (useAppState, useCountdown)
+vi.mock("@/hooks", () => ({
+  useAppState: vi.fn(),
+  useCountdown: vi.fn(),
+  useDataDirPath: vi.fn(),
+  useForceSync: vi.fn(),
+  useCreateSnapshot: vi.fn(),
+  useBackupControllerClose: vi.fn(),
+  useLastSyncTime: vi.fn(),
+}));
 
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
         retry: false,
-        refetchInterval: false,
       },
     },
   });
   return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(QueryClientProvider, { client: queryClient }, children);
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      children,
+    );
   };
 }
 
@@ -45,20 +65,45 @@ describe("DashboardForm", () => {
     });
     // Mock window.alert
     window.alert = vi.fn();
-    // Default mocks
-    vi.mocked(services.fetchState).mockResolvedValue(mockAppState);
-    vi.mocked(services.getDataDirPath).mockResolvedValue(
-      "/home/user/.local/share/pubky-backup",
-    );
-    vi.mocked(services.backupControllerClose).mockResolvedValue(undefined);
-    vi.mocked(services.forceSyncNow).mockResolvedValue(undefined);
-    vi.mocked(services.createSnapshot).mockResolvedValue(
-      "/path/to/snapshot.zip",
-    );
+    // Mock useAppState to avoid 200ms polling that causes memory issues
+    vi.mocked(hooks.useAppState).mockReturnValue({
+      data: mockAppState,
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof hooks.useAppState>);
+    // Mock useCountdown to avoid 1-second interval
+    vi.mocked(hooks.useCountdown).mockReturnValue("Next backup in 1 minute...");
+    // Mock useLastSyncTime
+    vi.mocked(hooks.useLastSyncTime).mockReturnValue(null);
+    // Mock useDataDirPath
+    vi.mocked(hooks.useDataDirPath).mockReturnValue({
+      data: "/home/user/.local/share/pubky-backup",
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof hooks.useDataDirPath>);
+    // Mock mutation hooks
+    vi.mocked(hooks.useForceSync).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue(undefined),
+      isPending: false,
+    } as unknown as ReturnType<typeof hooks.useForceSync>);
+    vi.mocked(hooks.useCreateSnapshot).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue("/path/to/snapshot.zip"),
+      isPending: false,
+    } as unknown as ReturnType<typeof hooks.useCreateSnapshot>);
+    vi.mocked(hooks.useBackupControllerClose).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue(undefined),
+      isPending: false,
+    } as unknown as ReturnType<typeof hooks.useBackupControllerClose>);
+    // Default service mocks
     vi.mocked(services.openDataDir).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
   });
 
@@ -98,10 +143,13 @@ describe("DashboardForm", () => {
   });
 
   it("should show SYNCING badge when syncing", async () => {
-    vi.mocked(services.fetchState).mockResolvedValue({
-      ...mockAppState,
-      is_syncing: true,
-    });
+    vi.mocked(hooks.useAppState).mockReturnValue({
+      data: { ...mockAppState, is_syncing: true },
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof hooks.useAppState>);
 
     render(<DashboardForm />, { wrapper: createWrapper() });
 
@@ -119,6 +167,12 @@ describe("DashboardForm", () => {
   });
 
   it("should navigate back when back button is clicked", async () => {
+    const mockMutateAsync = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(hooks.useBackupControllerClose).mockReturnValue({
+      mutateAsync: mockMutateAsync,
+      isPending: false,
+    } as unknown as ReturnType<typeof hooks.useBackupControllerClose>);
+
     render(<DashboardForm />, { wrapper: createWrapper() });
 
     await waitFor(() => {
@@ -129,12 +183,18 @@ describe("DashboardForm", () => {
     fireEvent.click(backButton);
 
     await waitFor(() => {
-      expect(services.backupControllerClose).toHaveBeenCalled();
+      expect(mockMutateAsync).toHaveBeenCalled();
       expect(useUIStore.getState().currentScreen).toBe("startup");
     });
   });
 
   it("should call force sync when force sync button is clicked", async () => {
+    const mockMutateAsync = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(hooks.useForceSync).mockReturnValue({
+      mutateAsync: mockMutateAsync,
+      isPending: false,
+    } as unknown as ReturnType<typeof hooks.useForceSync>);
+
     render(<DashboardForm />, { wrapper: createWrapper() });
 
     await waitFor(() => {
@@ -147,11 +207,17 @@ describe("DashboardForm", () => {
     fireEvent.click(forceSyncButton);
 
     await waitFor(() => {
-      expect(services.forceSyncNow).toHaveBeenCalled();
+      expect(mockMutateAsync).toHaveBeenCalled();
     });
   });
 
   it("should create snapshot when snapshot button is clicked", async () => {
+    const mockMutateAsync = vi.fn().mockResolvedValue("/path/to/snapshot.zip");
+    vi.mocked(hooks.useCreateSnapshot).mockReturnValue({
+      mutateAsync: mockMutateAsync,
+      isPending: false,
+    } as unknown as ReturnType<typeof hooks.useCreateSnapshot>);
+
     render(<DashboardForm />, { wrapper: createWrapper() });
 
     await waitFor(() => {
@@ -166,11 +232,16 @@ describe("DashboardForm", () => {
     fireEvent.click(snapshotButton);
 
     await waitFor(() => {
-      expect(services.createSnapshot).toHaveBeenCalled();
+      expect(mockMutateAsync).toHaveBeenCalled();
     });
   });
 
   it("should show snapshot success message after creation", async () => {
+    vi.mocked(hooks.useCreateSnapshot).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue("/path/to/snapshot.zip"),
+      isPending: false,
+    } as unknown as ReturnType<typeof hooks.useCreateSnapshot>);
+
     render(<DashboardForm />, { wrapper: createWrapper() });
 
     await waitFor(() => {
@@ -190,9 +261,10 @@ describe("DashboardForm", () => {
   });
 
   it("should show snapshot error message on failure", async () => {
-    vi.mocked(services.createSnapshot).mockRejectedValue(
-      new Error("Disk full"),
-    );
+    vi.mocked(hooks.useCreateSnapshot).mockReturnValue({
+      mutateAsync: vi.fn().mockRejectedValue(new Error("Disk full")),
+      isPending: false,
+    } as unknown as ReturnType<typeof hooks.useCreateSnapshot>);
 
     render(<DashboardForm />, { wrapper: createWrapper() });
 
@@ -213,10 +285,13 @@ describe("DashboardForm", () => {
   });
 
   it("should disable action buttons when syncing", async () => {
-    vi.mocked(services.fetchState).mockResolvedValue({
-      ...mockAppState,
-      is_syncing: true,
-    });
+    vi.mocked(hooks.useAppState).mockReturnValue({
+      data: { ...mockAppState, is_syncing: true },
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof hooks.useAppState>);
 
     render(<DashboardForm />, { wrapper: createWrapper() });
 
@@ -231,10 +306,13 @@ describe("DashboardForm", () => {
   });
 
   it("should handle backup controller error by showing alert and navigating back", async () => {
-    vi.mocked(services.fetchState).mockResolvedValue({
-      ...mockAppState,
-      backup_controller_error: "Connection lost",
-    });
+    vi.mocked(hooks.useAppState).mockReturnValue({
+      data: { ...mockAppState, backup_controller_error: "Connection lost" },
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof hooks.useAppState>);
 
     render(<DashboardForm />, { wrapper: createWrapper() });
 
