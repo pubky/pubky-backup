@@ -34,10 +34,8 @@ describe("StartupForm", () => {
       statusMessageMode: "sync",
       pubkyInputValue: "",
       hasAutoLoaded: false,
-      toast: { visible: false, pubkyText: "" },
+      toast: { visible: false, pubkyText: "", type: "success", message: "" },
     });
-    // Mock window.alert
-    window.alert = vi.fn();
     // Default mocks
     vi.mocked(services.getPreviousPubkyKeys).mockResolvedValue([]);
     vi.mocked(services.getLastPubky).mockResolvedValue(null);
@@ -101,7 +99,7 @@ describe("StartupForm", () => {
     });
   });
 
-  it("should show error alert on initialization failure", async () => {
+  it("should show error toast on initialization failure", async () => {
     const mockError = { type: "InvalidPubkyFormat", message: "Bad format" };
     vi.mocked(services.initAppState).mockRejectedValue(mockError);
 
@@ -112,7 +110,9 @@ describe("StartupForm", () => {
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(window.alert).toHaveBeenCalled();
+      const toast = useUIStore.getState().toast;
+      expect(toast.visible).toBe(true);
+      expect(toast.type).toBe("error");
     });
 
     // Should stay on startup screen
@@ -248,7 +248,9 @@ describe("StartupForm", () => {
       });
 
       await waitFor(() => {
-        expect(window.alert).toHaveBeenCalled();
+        const toast = useUIStore.getState().toast;
+        expect(toast.visible).toBe(true);
+        expect(toast.type).toBe("error");
       });
 
       // Should stay on startup screen after error

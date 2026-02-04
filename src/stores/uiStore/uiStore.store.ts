@@ -39,10 +39,26 @@ export const useUIStore = create<UIStore>()(
             toast: {
               visible: true,
               pubkyText,
+              type: "success",
+              message: "Pubky copied to clipboard",
             },
           },
           false,
           UIActionTypes.SHOW_TOAST,
+        ),
+
+      showErrorToast: (message: string) =>
+        set(
+          {
+            toast: {
+              visible: true,
+              pubkyText: "",
+              type: "error",
+              message,
+            },
+          },
+          false,
+          UIActionTypes.SHOW_ERROR_TOAST,
         ),
 
       hideToast: () =>

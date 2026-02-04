@@ -11,9 +11,12 @@ describe("Toast", () => {
       currentScreen: "startup",
       statusMessageMode: "sync",
       pubkyInputValue: "",
+      hasAutoLoaded: false,
       toast: {
         visible: false,
         pubkyText: "",
+        type: "success",
+        message: "",
       },
     });
   });
@@ -25,8 +28,7 @@ describe("Toast", () => {
   it("should render with hidden state by default", () => {
     render(<Toast />);
 
-    const toast = screen.getByText("Pubky copied to clipboard").parentElement
-      ?.parentElement;
+    const toast = screen.getByRole("status");
     expect(toast).toHaveClass("opacity-0");
     expect(toast).toHaveClass("pointer-events-none");
   });
@@ -35,8 +37,7 @@ describe("Toast", () => {
     it("should have translate-y-5 when hidden", () => {
       render(<Toast />);
 
-      const toast = screen.getByText("Pubky copied to clipboard").parentElement
-        ?.parentElement;
+      const toast = screen.getByRole("status");
       expect(toast).toHaveClass("translate-y-5");
       expect(toast).not.toHaveClass("translate-y-0");
     });
@@ -46,8 +47,7 @@ describe("Toast", () => {
 
       render(<Toast />);
 
-      const toast = screen.getByText("Pubky copied to clipboard").parentElement
-        ?.parentElement;
+      const toast = screen.getByRole("status");
       expect(toast).toHaveClass("translate-y-0");
       expect(toast).not.toHaveClass("translate-y-5");
     });
@@ -55,8 +55,7 @@ describe("Toast", () => {
     it("should have transition classes for animation", () => {
       render(<Toast />);
 
-      const toast = screen.getByText("Pubky copied to clipboard").parentElement
-        ?.parentElement;
+      const toast = screen.getByRole("status");
       expect(toast).toHaveClass("transition-all");
       expect(toast).toHaveClass("duration-300");
       expect(toast).toHaveClass("ease-out");
@@ -65,8 +64,7 @@ describe("Toast", () => {
     it("should transition from hidden to visible state", () => {
       const { rerender } = render(<Toast />);
 
-      const toast = screen.getByText("Pubky copied to clipboard").parentElement
-        ?.parentElement;
+      const toast = screen.getByRole("status");
 
       // Initially hidden
       expect(toast).toHaveClass("opacity-0");
@@ -87,8 +85,7 @@ describe("Toast", () => {
       useUIStore.getState().showToast("test-pubky");
       const { rerender } = render(<Toast />);
 
-      const toast = screen.getByText("Pubky copied to clipboard").parentElement
-        ?.parentElement;
+      const toast = screen.getByRole("status");
 
       // Initially visible
       expect(toast).toHaveClass("opacity-100");
@@ -111,8 +108,7 @@ describe("Toast", () => {
 
     render(<Toast />);
 
-    const toast = screen.getByText("Pubky copied to clipboard").parentElement
-      ?.parentElement;
+    const toast = screen.getByRole("status");
     expect(toast).toHaveClass("opacity-100");
     expect(toast).not.toHaveClass("pointer-events-none");
   });

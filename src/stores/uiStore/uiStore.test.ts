@@ -12,6 +12,8 @@ describe("useUIStore", () => {
       toast: {
         visible: false,
         pubkyText: "",
+        type: "success",
+        message: "",
       },
     });
   });
@@ -36,6 +38,8 @@ describe("useUIStore", () => {
       const state = useUIStore.getState();
       expect(state.toast.visible).toBe(false);
       expect(state.toast.pubkyText).toBe("");
+      expect(state.toast.type).toBe("success");
+      expect(state.toast.message).toBe("");
     });
 
     it("should have hasAutoLoaded as false by default", () => {
@@ -114,6 +118,8 @@ describe("useUIStore", () => {
       const state = useUIStore.getState();
       expect(state.toast.visible).toBe(true);
       expect(state.toast.pubkyText).toBe("my-pubky-12345");
+      expect(state.toast.type).toBe("success");
+      expect(state.toast.message).toBe("Pubky copied to clipboard");
     });
 
     it("should update toast text when called multiple times", () => {
@@ -123,6 +129,27 @@ describe("useUIStore", () => {
       const state = useUIStore.getState();
       expect(state.toast.visible).toBe(true);
       expect(state.toast.pubkyText).toBe("second-pubky");
+    });
+  });
+
+  describe("showErrorToast", () => {
+    it("should show error toast with message", () => {
+      useUIStore.getState().showErrorToast("Something went wrong");
+
+      const state = useUIStore.getState();
+      expect(state.toast.visible).toBe(true);
+      expect(state.toast.type).toBe("error");
+      expect(state.toast.message).toBe("Something went wrong");
+      expect(state.toast.pubkyText).toBe("");
+    });
+
+    it("should update error message when called multiple times", () => {
+      useUIStore.getState().showErrorToast("First error");
+      useUIStore.getState().showErrorToast("Second error");
+
+      const state = useUIStore.getState();
+      expect(state.toast.visible).toBe(true);
+      expect(state.toast.message).toBe("Second error");
     });
   });
 

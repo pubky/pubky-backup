@@ -1,9 +1,12 @@
 export type Screen = "startup" | "dashboard";
 export type StatusMessageMode = "sync" | "snapshot-success" | "snapshot-error";
+export type ToastType = "success" | "error";
 
 export interface ToastState {
   visible: boolean;
   pubkyText: string;
+  type: ToastType;
+  message: string;
 }
 
 export interface UIState {
@@ -20,6 +23,7 @@ export interface UIActions {
   setPubkyInputValue: (value: string) => void;
   setHasAutoLoaded: (value: boolean) => void;
   showToast: (pubkyText: string) => void;
+  showErrorToast: (message: string) => void;
   hideToast: () => void;
 }
 
@@ -33,6 +37,8 @@ export const uiInitialState: UIState = {
   toast: {
     visible: false,
     pubkyText: "",
+    type: "success",
+    message: "",
   },
 };
 
@@ -42,5 +48,6 @@ export enum UIActionTypes {
   SET_PUBKY_INPUT_VALUE = "SET_PUBKY_INPUT_VALUE",
   SET_HAS_AUTO_LOADED = "SET_HAS_AUTO_LOADED",
   SHOW_TOAST = "SHOW_TOAST",
+  SHOW_ERROR_TOAST = "SHOW_ERROR_TOAST",
   HIDE_TOAST = "HIDE_TOAST",
 }

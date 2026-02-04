@@ -24,6 +24,7 @@ vi.mock("@/hooks", () => ({
   useCreateSnapshot: vi.fn(),
   useBackupControllerClose: vi.fn(),
   useLastSyncTime: vi.fn(),
+  useOpenDataDir: vi.fn(),
 }));
 
 function createWrapper() {
@@ -61,10 +62,9 @@ describe("DashboardForm", () => {
       currentScreen: "dashboard",
       statusMessageMode: "sync",
       pubkyInputValue: "",
-      toast: { visible: false, pubkyText: "" },
+      hasAutoLoaded: false,
+      toast: { visible: false, pubkyText: "", type: "success", message: "" },
     });
-    // Mock window.alert
-    window.alert = vi.fn();
     // Mock useAppState to avoid 200ms polling that causes memory issues
     vi.mocked(hooks.useAppState).mockReturnValue({
       data: mockAppState,
@@ -98,6 +98,10 @@ describe("DashboardForm", () => {
       mutateAsync: vi.fn().mockResolvedValue(undefined),
       isPending: false,
     } as unknown as ReturnType<typeof hooks.useBackupControllerClose>);
+    vi.mocked(hooks.useOpenDataDir).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue(undefined),
+      isPending: false,
+    } as unknown as ReturnType<typeof hooks.useOpenDataDir>);
     // Default service mocks
     vi.mocked(services.openDataDir).mockResolvedValue(undefined);
   });
@@ -305,7 +309,7 @@ describe("DashboardForm", () => {
     });
   });
 
-  it("should handle backup controller error by showing alert and navigating back", async () => {
+  it("should handle backup controller error by showing error toast and navigating back", async () => {
     vi.mocked(hooks.useAppState).mockReturnValue({
       data: { ...mockAppState, backup_controller_error: "Connection lost" },
       isLoading: false,
@@ -317,7 +321,9 @@ describe("DashboardForm", () => {
     render(<DashboardForm />, { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(window.alert).toHaveBeenCalled();
+      const toast = useUIStore.getState().toast;
+      expect(toast.visible).toBe(true);
+      expect(toast.type).toBe("error");
       expect(useUIStore.getState().currentScreen).toBe("startup");
     });
   });

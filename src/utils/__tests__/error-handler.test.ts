@@ -1,18 +1,28 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { handleBackendError } from "../error-handler";
+import { useUIStore } from "@/stores";
 import type { BackendError } from "@/types/backend-errors";
 
 describe("handleBackendError", () => {
-  let alertSpy: ReturnType<typeof vi.fn>;
+  const getLastErrorToast = () => useUIStore.getState().toast;
 
   beforeEach(() => {
-    // Mock window.alert since it doesn't exist in happy-dom
-    window.alert = vi.fn();
-    alertSpy = window.alert as ReturnType<typeof vi.fn>;
+    // Reset store to initial state
+    useUIStore.setState({
+      currentScreen: "startup",
+      statusMessageMode: "sync",
+      pubkyInputValue: "",
+      hasAutoLoaded: false,
+      toast: {
+        visible: false,
+        pubkyText: "",
+        type: "success",
+        message: "",
+      },
+    });
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
     document.body.innerHTML = "";
   });
 
@@ -25,10 +35,10 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith(
-        "Invalid Format: Invalid pubky key format",
-      );
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.type).toBe("error");
+      expect(toast.message).toBe("Invalid Format: Invalid pubky key format");
     });
 
     it("should use fallback message when message is empty", () => {
@@ -39,8 +49,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith(
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe(
         "Invalid Format: Please check your pubky format",
       );
     });
@@ -52,7 +63,7 @@ describe("handleBackendError", () => {
       };
 
       expect(() => handleBackendError(error)).not.toThrow();
-      expect(alertSpy).toHaveBeenCalledOnce();
+      expect(getLastErrorToast().visible).toBe(true);
     });
   });
 
@@ -65,8 +76,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith(
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe(
         "Homeserver Not Found: Could not reach homeserver at example.com",
       );
     });
@@ -79,8 +91,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith(
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe(
         "Homeserver Not Found: Could not connect to your homeserver. Please check your pubky.",
       );
     });
@@ -95,10 +108,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith(
-        "No Data Found: No backup found for this key",
-      );
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("No Data Found: No backup found for this key");
     });
 
     it("should use fallback message when message is empty", () => {
@@ -109,8 +121,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith(
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe(
         "No Data Found: No backup data exists for this pubky yet.",
       );
     });
@@ -125,10 +138,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith(
-        "Error: Database connection failed",
-      );
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: Database connection failed");
     });
 
     it("should use fallback message when message is empty", () => {
@@ -139,8 +151,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: An error occurred");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: An error occurred");
     });
   });
 
@@ -153,8 +166,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: Failed to write to disk");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: Failed to write to disk");
     });
 
     it("should use fallback message when message is empty", () => {
@@ -165,8 +179,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: An error occurred");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: An error occurred");
     });
   });
 
@@ -179,8 +194,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: Event processing failed");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: Event processing failed");
     });
 
     it("should use fallback message when message is empty", () => {
@@ -191,8 +207,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: An error occurred");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: An error occurred");
     });
   });
 
@@ -205,8 +222,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: Backup sync interrupted");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: Backup sync interrupted");
     });
 
     it("should use fallback message when message is empty", () => {
@@ -217,8 +235,9 @@ describe("handleBackendError", () => {
 
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: An error occurred");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: An error occurred");
     });
   });
 
@@ -226,45 +245,51 @@ describe("handleBackendError", () => {
     it("should handle string errors", () => {
       handleBackendError("Something went wrong");
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: Something went wrong");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: Something went wrong");
     });
 
     it("should handle Error objects", () => {
       const error = new Error("System error");
       handleBackendError(error);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: Error: System error");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: Error: System error");
     });
 
     it("should handle null", () => {
       handleBackendError(null);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: null");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: null");
     });
 
     it("should handle undefined", () => {
       handleBackendError(undefined);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: undefined");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: undefined");
     });
 
     it("should handle numbers", () => {
       handleBackendError(404);
 
-      expect(alertSpy).toHaveBeenCalledOnce();
-      expect(alertSpy).toHaveBeenCalledWith("Error: 404");
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
+      expect(toast.message).toBe("Error: 404");
     });
 
     it("should handle objects without type field", () => {
       handleBackendError({ message: "Some error" });
 
-      expect(alertSpy).toHaveBeenCalledOnce();
+      const toast = getLastErrorToast();
+      expect(toast.visible).toBe(true);
       // String() on an object returns "[object Object]"
-      expect(alertSpy).toHaveBeenCalledWith("Error: [object Object]");
+      expect(toast.message).toBe("Error: [object Object]");
     });
   });
 });
