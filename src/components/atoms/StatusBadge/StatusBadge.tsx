@@ -22,13 +22,14 @@ export interface StatusBadgeProps
   className?: string;
 }
 
+const statusTextMap = {
+  syncing: "SYNCING",
+  snapshot: "SNAPSHOT!",
+  synced: "SYNCED",
+} as const;
+
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  const text =
-    status === "syncing"
-      ? "SYNCING"
-      : status === "snapshot"
-        ? "SNAPSHOT!"
-        : "SYNCED";
+  const text = statusTextMap[status ?? "synced"];
 
   return (
     <div className={cn(statusBadgeVariants({ status }), className)}>{text}</div>

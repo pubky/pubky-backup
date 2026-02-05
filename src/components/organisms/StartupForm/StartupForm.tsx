@@ -1,4 +1,5 @@
 import { useEffect, useCallback } from "react";
+import { useShallow } from "zustand/react/shallow";
 import * as Atoms from "@/components/atoms";
 import * as Molecules from "@/components/molecules";
 import * as Stores from "@/stores";
@@ -7,13 +8,14 @@ import * as Utils from "@/utils";
 import { cn, Logger } from "@/lib";
 
 export function StartupForm() {
-  const {
-    pubkyInputValue,
-    setPubkyInputValue,
-    setScreen,
-    hasAutoLoaded,
-    setHasAutoLoaded,
-  } = Stores.useUIStore();
+  const { pubkyInputValue, hasAutoLoaded } = Stores.useUIStore(
+    useShallow((s) => ({
+      pubkyInputValue: s.pubkyInputValue,
+      hasAutoLoaded: s.hasAutoLoaded,
+    })),
+  );
+  const { setPubkyInputValue, setScreen, setHasAutoLoaded } =
+    Stores.useUIStore.getState();
   const initializeMutation = Hooks.useInitialize();
   const { data: previousKeys = [] } = Hooks.usePreviousPubkyKeys();
   const { data: lastPubky } = Hooks.useLastPubky();
@@ -62,14 +64,7 @@ export function StartupForm() {
 
   return (
     <main className="flex flex-col items-center justify-start text-center relative">
-      <div
-        className={cn(
-          "w-[360px] min-h-[380px] flex flex-col justify-center items-stretch",
-          "p-4 pb-5 px-5 gap-3",
-          "bg-surface-dark border border-border rounded-lg",
-          "shadow-[0_8px_10px_rgba(5,5,10,0.25),0_20px_25px_rgba(5,5,10,0.5)]",
-        )}
-      >
+      <Atoms.Card>
         {/* Header */}
         <div className="flex flex-col items-center gap-2 py-4">
           <Atoms.PubkyLogo />
@@ -87,20 +82,13 @@ export function StartupForm() {
             placeholder={placeholder}
           />
 
-          <button
-            type="button"
+          <Atoms.Button
             onClick={handleSubmit}
             disabled={!hasValue || isLoading}
             className={cn(
-              "flex justify-center items-center gap-2",
-              "py-5 px-8 rounded-full",
-              "bg-pubky-purple/15 border border-pubky-purple",
-              "shadow-[0_1px_2px_rgba(5,5,10,0.2)]",
-              "cursor-pointer transition-all duration-200",
               !hasValue && "opacity-30",
-              hasValue && !isLoading && "opacity-100 hover:opacity-80",
+              hasValue && !isLoading && "opacity-100",
               isLoading && "opacity-100 bg-surface-dark border-border",
-              "disabled:cursor-not-allowed",
             )}
           >
             <span className="text-sm font-bold text-pubky-purple">Backup</span>
@@ -111,9 +99,9 @@ export function StartupForm() {
               )}
               size={16}
             />
-          </button>
+          </Atoms.Button>
         </div>
-      </div>
+      </Atoms.Card>
     </main>
   );
 }

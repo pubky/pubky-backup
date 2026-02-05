@@ -1,24 +1,28 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import * as Atoms from "@/components/atoms";
 import * as Molecules from "@/components/molecules";
 import { ActionButtons } from "../ActionButtons";
 import * as Stores from "@/stores";
 import * as Hooks from "@/hooks";
-import * as Services from "@/services";
 import * as Utils from "@/utils";
-import { cn, Logger } from "@/lib";
+import { Logger } from "@/lib";
 
 const SNAPSHOT_MESSAGE_DURATION_MS = 3000;
 
 export function DashboardForm() {
-  const { setScreen, showToast, statusMessageMode, setStatusMessageMode } =
-    Stores.useUIStore();
+  const { statusMessageMode } = Stores.useUIStore(
+    useShallow((s) => ({ statusMessageMode: s.statusMessageMode })),
+  );
+  const { setScreen, showToast, setStatusMessageMode } =
+    Stores.useUIStore.getState();
 
   const { data: appState } = Hooks.useAppState();
   const { data: dataDirPath } = Hooks.useDataDirPath(appState?.pubky !== null);
   const forceSyncMutation = Hooks.useForceSync();
   const snapshotMutation = Hooks.useCreateSnapshot();
   const backupCloseMutation = Hooks.useBackupControllerClose();
+  const openDataDirMutation = Hooks.useOpenDataDir();
 
   const pubky = appState?.pubky ?? null;
   const isSyncing = appState?.is_syncing ?? false;
@@ -45,13 +49,17 @@ export function DashboardForm() {
     setScreen("startup");
   }, [backupCloseMutation, setScreen]);
 
+  // Ref to avoid re-running effect when handleBack changes
+  const handleBackRef = useRef(handleBack);
+  handleBackRef.current = handleBack;
+
   // Handle backup controller errors
   useEffect(() => {
     if (backupControllerError !== null) {
       Utils.handleBackendError(backupControllerError);
-      void handleBack();
+      void handleBackRef.current();
     }
-  }, [backupControllerError, handleBack]);
+  }, [backupControllerError]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -112,58 +120,57 @@ export function DashboardForm() {
 
   const handleOpenDataDir = async () => {
     try {
-      await Services.openDataDir();
+      await openDataDirMutation.mutateAsync();
     } catch (error: unknown) {
       Logger.error("DashboardForm", "Failed to open data directory", { error });
     }
   };
 
-  // Determine status badge state
-  const getStatusBadgeStatus = () => {
-    if (statusMessageMode === "snapshot-success") return "snapshot";
-    if (isSyncing) return "syncing";
-    return "synced";
-  };
-
-  // Determine sync message state
-  const getSyncMessageStatus = () => {
-    if (statusMessageMode === "snapshot-success") return "snapshot-success";
-    if (statusMessageMode === "snapshot-error") return "error";
-    if (isSyncing) return "syncing";
-    return "synced";
-  };
-
-  // Determine sync message text
-  const getSyncMessageText = () => {
-    if (statusMessageMode === "snapshot-success") return "Snapshot created";
-    if (statusMessageMode === "snapshot-error")
-      return "Failed to create snapshot";
-    if (isSyncing) return "Syncing data...";
-    return countdownText;
-  };
+  // Consolidated status information derived from state
+  const statusInfo = useMemo(() => {
+    if (statusMessageMode === "snapshot-success") {
+      return {
+        badge: "snapshot" as const,
+        message: "snapshot-success" as const,
+        text: "Snapshot created",
+      };
+    }
+    if (statusMessageMode === "snapshot-error") {
+      return {
+        badge: "synced" as const,
+        message: "error" as const,
+        text: "Failed to create snapshot",
+      };
+    }
+    if (isSyncing) {
+      return {
+        badge: "syncing" as const,
+        message: "syncing" as const,
+        text: "Syncing data...",
+      };
+    }
+    return {
+      badge: "synced" as const,
+      message: "synced" as const,
+      text: countdownText,
+    };
+  }, [statusMessageMode, isSyncing, countdownText]);
 
   return (
     <main className="flex flex-col items-center justify-start text-center relative">
-      <div
-        className={cn(
-          "w-[360px] min-h-[380px] flex flex-col justify-center items-stretch",
-          "p-4 pb-5 px-5 gap-3",
-          "bg-surface-dark border border-border rounded-lg",
-          "shadow-[0_8px_10px_rgba(5,5,10,0.25),0_20px_25px_rgba(5,5,10,0.5)]",
-        )}
-      >
+      <Atoms.Card>
         {/* Header */}
         <Molecules.DashboardHeader
           pubkyDisplay={Utils.displayPubky(pubky)}
-          status={getStatusBadgeStatus()}
+          status={statusInfo.badge}
           onBack={() => void handleBack()}
           onCopy={handleCopy}
         />
 
         {/* Sync message banner */}
         <Molecules.SyncMessage
-          status={getSyncMessageStatus()}
-          message={getSyncMessageText()}
+          status={statusInfo.message}
+          message={statusInfo.text}
         />
 
         {/* Info cards */}
@@ -209,7 +216,7 @@ export function DashboardForm() {
           onSnapshot={() => void handleSnapshot()}
           onForceSync={() => void handleForceSync()}
         />
-      </div>
+      </Atoms.Card>
     </main>
   );
 }
