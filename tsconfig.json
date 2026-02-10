@@ -12,6 +12,7 @@
     "module": "ESNext",
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
     "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -20,6 +21,6 @@
       "@/*": ["./*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"],
   "exclude": ["node_modules", "dist", "src-tauri"]
 }

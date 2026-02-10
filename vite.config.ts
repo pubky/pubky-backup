@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 import path from 'path'
 
 export default defineConfig({
-  plugins: [],
+  plugins: [react()],
   root: 'src',
   clearScreen: false,
   resolve: {
