@@ -110,6 +110,8 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
     // Check for old app-level files
     let old_last_pubky = data_dir.join(LAST_PUBKY_FILENAME);
     let old_error_log = data_dir.join(ERROR_LOG_FILENAME);
+    let keys_dir = data_dir.join(KEYS_DIR_NAME);
+
     // Nothing to migrate
     if old_pubky_dirs.is_empty() && !old_last_pubky.exists() && !old_error_log.exists() {
         return Ok(());
@@ -166,13 +168,14 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
     }
 
     // Migrate each old pubky directory
-    let keys_dir = data_dir.join(KEYS_DIR_NAME);
     let mut migrated_count = 0;
 
     for (pubky_str, old_pubky_dir) in &old_pubky_dirs {
-        info!("Migrating key: {}...", pubky_str);
+        let pubky = PublicKey::from_str(pubky_str).expect("Already validated");
+        let z32_name = pubky.z32();
+        info!("Migrating key: {} -> {}...", pubky_str, z32_name);
 
-        let new_key_dir = keys_dir.join(pubky_str);
+        let new_key_dir = keys_dir.join(&z32_name);
         let new_state_dir = new_key_dir.join(STATE_DIR_NAME);
         let new_data_dir = new_key_dir.join(DATA_DIR_NAME);
 
@@ -638,5 +641,48 @@ mod tests {
             invalid_dir2.exists(),
             "Invalid directory should be left alone"
         );
+    }
+
+    #[test]
+    fn test_list_keys_normalizes_to_z32() {
+        let temp_dir = TempDir::new().unwrap();
+        let z32_key = DEV_MODE_PUBKY;
+        let prefixed_key = format!("pubky{}", z32_key);
+
+        // Create keys directory with prefixed directory name
+        let keys_dir = temp_dir.path().join(KEYS_DIR_NAME);
+        let prefixed_dir = keys_dir.join(&prefixed_key);
+        std::fs::create_dir_all(&prefixed_dir).unwrap();
+
+        // Create KeysStorage and list keys
+        let keys_storage = crate::storage::KeysStorage::new_with_path(&keys_dir).unwrap();
+        let keys = keys_storage.list_keys().unwrap();
+
+        // Should return the z32 format, not the prefixed format
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0], z32_key);
+        assert!(!keys[0].starts_with("pubky"));
+    }
+
+    #[test]
+    fn test_old_structure_migration_uses_z32_for_new_dirs() {
+        let temp_dir = TempDir::new().unwrap();
+        let pubky_str = DEV_MODE_PUBKY;
+
+        // Setup old structure
+        create_old_structure(
+            temp_dir.path(),
+            pubky_str,
+            Some("cursor_123"),
+            None,
+            &[("test.json", b"data")],
+        );
+
+        // Run migration
+        migrate_old_structure(temp_dir.path()).unwrap();
+
+        // Verify the new directory uses z32 format (same as input since input was z32)
+        let new_key_dir = temp_dir.path().join(KEYS_DIR_NAME).join(pubky_str);
+        assert!(new_key_dir.exists(), "key directory should use z32 format");
     }
 }

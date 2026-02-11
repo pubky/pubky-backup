@@ -237,7 +237,7 @@ pub struct KeyStorage {
 
 impl KeyStorage {
     fn new(keys_dir: &Path, pubky: &PublicKey) -> Result<Self, StorageError> {
-        let key_dir = keys_dir.join(pubky.to_string());
+        let key_dir = keys_dir.join(pubky.z32());
         let state_dir = key_dir.join(STATE_DIR_NAME);
         let data_dir = key_dir.join(DATA_DIR_NAME);
 
@@ -498,12 +498,23 @@ impl KeysStorage {
         Ok(KeysStorage { keys_dir })
     }
 
+    /// Create a KeysStorage with a specific keys directory path.
+    /// Used for testing.
+    #[cfg(test)]
+    pub fn new_with_path(keys_dir: &Path) -> Result<Self, StorageError> {
+        Ok(KeysStorage {
+            keys_dir: keys_dir.to_path_buf(),
+        })
+    }
+
     /// Get storage for a specific key
     pub fn get_key_storage(&self, pubky: &PublicKey) -> Result<KeyStorage, StorageError> {
         KeyStorage::new(&self.keys_dir, pubky)
     }
 
     /// List all public keys that have backed-up data
+    ///
+    /// Returns keys in normalized z32 format (no prefix).
     pub fn list_keys(&self) -> Result<Vec<String>, StorageError> {
         let mut keys = Vec::new();
 
@@ -523,8 +534,8 @@ impl KeysStorage {
                 if let Some(name) = path.file_name() {
                     let name_str = name.to_string_lossy().to_string();
                     // Verify it's a valid public key
-                    if PublicKey::from_str(&name_str).is_ok() {
-                        keys.push(name_str);
+                    if let Ok(pubky) = PublicKey::from_str(&name_str) {
+                        keys.push(pubky.z32());
                     }
                 }
             }
@@ -861,7 +872,7 @@ mod tests {
         let cursor_path = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(STATE_DIR_NAME)
             .join(CURSOR_FILENAME);
         std::fs::create_dir_all(cursor_path.parent().unwrap()).unwrap();
@@ -881,7 +892,7 @@ mod tests {
         let cursor_path = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(STATE_DIR_NAME)
             .join(CURSOR_FILENAME);
         std::fs::create_dir_all(cursor_path.parent().unwrap()).unwrap();
@@ -978,11 +989,11 @@ mod tests {
         storage.write(&resource1, b"data1".to_vec()).await.unwrap();
         storage.write(&resource2, b"data2".to_vec()).await.unwrap();
 
-        // Should now list both pubky directories
+        // Should now list both pubky directories (in z32 format)
         let dirs = storage.list_pubky_directories().unwrap();
         assert_eq!(dirs.len(), 2);
-        assert!(dirs.contains(&pubky1.to_string()));
-        assert!(dirs.contains(&pubky2.to_string()));
+        assert!(dirs.contains(&pubky1.z32()));
+        assert!(dirs.contains(&pubky2.z32()));
     }
 
     #[tokio::test]
@@ -994,7 +1005,7 @@ mod tests {
         let error_log_dir = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(STATE_DIR_NAME);
         std::fs::create_dir_all(&error_log_dir).unwrap();
         std::fs::write(
@@ -1124,7 +1135,7 @@ mod tests {
         let temp_file_path = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(STATE_DIR_NAME)
             .join("cursor.tmp");
         assert!(
@@ -1136,7 +1147,7 @@ mod tests {
         let cursor_file_path = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(STATE_DIR_NAME)
             .join("cursor");
         assert!(cursor_file_path.exists(), "Cursor file should exist");
@@ -1204,7 +1215,7 @@ mod tests {
         let expected_snapshots_dir = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(SNAPSHOTS_DIR_NAME);
         assert!(
             snapshot_path.starts_with(&expected_snapshots_dir),
@@ -1353,8 +1364,8 @@ mod tests {
         );
         assert!(root.join(LOGS_DIR_NAME).exists(), "logs/ should exist");
 
-        // Per-key directories
-        let key_dir = root.join(KEYS_DIR_NAME).join(pubky.to_string());
+        // Per-key directories (using z32 format for directory naming)
+        let key_dir = root.join(KEYS_DIR_NAME).join(pubky.z32());
         assert!(key_dir.exists(), "keys/<pubky>/ should exist");
         assert!(
             key_dir.join(STATE_DIR_NAME).exists(),
