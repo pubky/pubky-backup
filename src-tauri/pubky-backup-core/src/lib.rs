@@ -314,11 +314,11 @@ impl BackupController {
                 }
                 Err(e) => {
                     error!("Event stream error: {}", e);
-                    // Save progress before returning
+                    // Save progress and break out of stream loop. The next sync interval will reconnect
                     if let Some(c) = last_cursor {
                         self.storage.write_cursor(&self.pubky, c).await?;
                     }
-                    return Err(e.into());
+                    break;
                 }
             }
         }
