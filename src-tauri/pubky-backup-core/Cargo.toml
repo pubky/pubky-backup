@@ -21,3 +21,4 @@ walkdir = "2.5"
 
 [dev-dependencies]
 tempfile = "3.14"
+pubky-testnet = { path = "/home/tw/pubky-core/pubky-testnet", features = ["embedded-postgres"] }

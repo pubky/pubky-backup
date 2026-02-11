@@ -264,8 +264,12 @@ impl BackupController {
         }
     }
 
-    /// Process events by streaming from the homeserver (or mock stream in developer mode)
-    async fn perform_sync_batch(&self) -> Result<ControlFlow<(), usize>, BackupError> {
+    /// Process events by streaming from the homeserver (or mock stream in developer mode).
+    ///
+    /// This method performs a single sync batch, fetching events from the cursor position
+    /// and processing them. Returns `ControlFlow::Continue(count)` if more events are available,
+    /// or `ControlFlow::Break(())` if sync is complete.
+    pub async fn perform_sync_batch(&self) -> Result<ControlFlow<(), usize>, BackupError> {
         let cursor = self.storage.read_cursor(&self.pubky).await?;
 
         // Get event stream - mock stream in developer mode, real stream otherwise
