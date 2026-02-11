@@ -13,7 +13,7 @@ pub use pubky::{Event, EventType};
 
 use futures_util::StreamExt;
 use log::{debug, error, info, warn};
-use pubky::{Pubky, PubkyResource, PublicKey, PublicStorage};
+use pubky::{Pubky, PubkyResource, PublicKey};
 use std::env;
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -385,9 +385,9 @@ impl BackupController {
             return Ok(get_mock_pubky_resource_data(&resource.to_string()));
         }
 
+        let public_storage = self.pubky_client.public_storage();
         let response = match retry_with_backoff(|| async {
-            PublicStorage::new()
-                .map_err(|e| format!("Failed to create PublicStorage: {}", e))?
+            public_storage
                 .get(resource)
                 .await
                 .map_err(|e| format!("{}", e))
