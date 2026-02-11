@@ -43,6 +43,4 @@ impl std::fmt::Display for OperationFailedError {
 pub enum EventsError {
     #[error("Failed to fetch events: {0}")]
     FetchFailed(String),
-    #[error("Invalid response: {0}")]
-    InvalidResponse(String),
 }

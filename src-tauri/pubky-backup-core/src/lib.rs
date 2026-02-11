@@ -24,6 +24,8 @@ use tokio::time;
 /// Developer mode mock pubky (for testing without real pubky)
 pub const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
 const SYNC_INTERVAL_SECONDS: u64 = 30;
+/// Batch size for event stream processing and cursor save frequency
+pub const EVENT_BATCH_SIZE: u16 = 100;
 
 /// Check if developer mode is enabled via environment variable.
 ///
@@ -267,29 +269,32 @@ impl BackupController {
         let cursor = self.storage.read_cursor(&self.pubky).await?;
 
         // Get event stream - mock stream in developer mode, real stream otherwise
-        let mut event_stream = if is_developer_mode() {
+        let event_stream = if is_developer_mode() {
             events::create_mock_event_stream(cursor)
         } else {
             match events::create_event_stream(&self.pubky_client, &self.pubky, cursor).await {
                 Ok(stream) => stream,
-                Err(crate::EventsError::FetchFailed(msg)) => {
-                    error!("Sync events fetch failed: {}", msg);
+                Err(e) => {
+                    error!("Sync events fetch failed: {}", e);
                     // Treat network fetch failures as recoverable - retry on next sync interval
                     return Ok(ControlFlow::Break(()));
-                }
-                Err(e) => {
-                    // Other errors are critical
-                    error!("Critical sync error: {}", e);
-                    self.storage
-                        .write_error(&self.pubky, "/events/", &format!("Critical error: {}", e))
-                        .await?;
-                    return Err(e.into());
                 }
             }
         };
 
+        self.process_event_stream(event_stream, cursor).await
+    }
+
+    /// Process events from a stream, saving cursor progress periodically and on error.
+    async fn process_event_stream(
+        &self,
+        mut event_stream: std::pin::Pin<
+            Box<dyn futures_util::Stream<Item = Result<Event, EventsError>> + Send>,
+        >,
+        initial_cursor: Option<u64>,
+    ) -> Result<ControlFlow<(), usize>, BackupError> {
         let mut events_processed = 0;
-        let mut last_cursor: Option<u64> = cursor;
+        let mut last_cursor: Option<u64> = initial_cursor;
 
         // Process events as they stream in
         while let Some(event_result) = event_stream.next().await {
@@ -300,8 +305,8 @@ impl BackupController {
                     events_processed += 1;
                     last_cursor = Some(event_cursor);
 
-                    // Save cursor periodically (every 100 events)
-                    if events_processed % 100 == 0 {
+                    // Save cursor periodically (every EVENT_BATCH_SIZE events)
+                    if events_processed % EVENT_BATCH_SIZE as usize == 0 {
                         if let Some(c) = last_cursor {
                             self.storage.write_cursor(&self.pubky, c).await?;
                         }
@@ -733,6 +738,44 @@ mod tests {
         let stream = events::create_mock_event_stream(Some(6));
         let events: Vec<_> = stream.collect().await;
         assert_eq!(events.len(), 0, "Exhausted stream should have 0 events");
+
+        // Test stream with cursor=4 yields 1 event (DELETE at cursor 5)
+        let mut stream = events::create_mock_event_stream(Some(4));
+        let mut events: Vec<Event> = vec![];
+        while let Some(result) = stream.next().await {
+            events.push(result.unwrap());
+        }
+        assert_eq!(events.len(), 1, "cursor=4 should yield 1 remaining event");
+        assert_eq!(events[0].cursor.id(), 5);
+        assert_eq!(events[0].event_type, EventType::Delete);
+    }
+
+    #[tokio::test]
+    async fn test_stream_error_saves_cursor_progress() {
+        enable_developer_mode();
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky_client = create_test_pubky_client();
+
+        let controller =
+            BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
+
+        // Create a stream that yields 3 events then fails
+        let failing_stream = events::create_failing_mock_event_stream(3);
+
+        // Process the stream - should fail after processing 3 events
+        let result = controller.process_event_stream(failing_stream, None).await;
+
+        // Should return an error
+        assert!(result.is_err(), "Should return error from failed stream");
+
+        // Cursor should have been saved at the last successful event (cursor=3)
+        let saved_cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert_eq!(
+            saved_cursor,
+            Some(3),
+            "Cursor should be saved at last successful event before error"
+        );
     }
 
     #[tokio::test]

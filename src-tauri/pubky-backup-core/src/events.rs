@@ -1,5 +1,5 @@
 use crate::error::EventsError;
-use crate::DEV_MODE_PUBKY;
+use crate::{DEV_MODE_PUBKY, EVENT_BATCH_SIZE};
 use futures_util::Stream;
 use pubky::{Event, EventCursor, EventType, Pubky, PubkyResource, PublicKey};
 use std::pin::Pin;
@@ -22,7 +22,7 @@ pub async fn create_event_stream(
         .map_err(|e| {
             EventsError::FetchFailed(format!("Failed to add user to event stream: {}", e))
         })?
-        .limit(100)
+        .limit(EVENT_BATCH_SIZE)
         .subscribe()
         .await
         .map_err(|e| {
@@ -82,12 +82,15 @@ pub fn create_mock_event_stream(
             }
             events
         }
-        Some(3) => {
+        Some(3) | Some(4) => {
             // Second batch - includes a DELETE
-            vec![
-                make_event(EventType::Put, "/pub/posts/003", 4),
-                make_event(EventType::Delete, "/pub/posts/001", 5),
-            ]
+            // cursor=3 means "after event 3", cursor=4 means "after event 4"
+            let mut events = vec![];
+            if cursor == Some(3) {
+                events.push(make_event(EventType::Put, "/pub/posts/003", 4));
+            }
+            events.push(make_event(EventType::Delete, "/pub/posts/001", 5));
+            events
         }
         Some(5) => {
             // Third batch
@@ -100,4 +103,34 @@ pub fn create_mock_event_stream(
     };
 
     Box::pin(futures_util::stream::iter(events.into_iter().map(Ok)))
+}
+
+/// Create a mock event stream that fails after yielding some events.
+/// Used for testing error recovery and cursor persistence.
+#[cfg(test)]
+pub fn create_failing_mock_event_stream(
+    fail_after: usize,
+) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
+    let mock_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Mock pubky should be valid");
+    let mock_pubky_z32 = mock_pubky.z32();
+
+    let make_event = |cursor_id: u64| -> Event {
+        let url = format!("pubky://{}/pub/posts/{:03}", mock_pubky_z32, cursor_id);
+        let resource = PubkyResource::from_str(&url).expect("Mock URL should be valid");
+        Event {
+            event_type: EventType::Put,
+            resource,
+            cursor: EventCursor::new(cursor_id),
+            content_hash: None,
+        }
+    };
+
+    // Create events that succeed, then an error
+    let mut items: Vec<Result<Event, EventsError>> =
+        (1..=fail_after as u64).map(|i| Ok(make_event(i))).collect();
+    items.push(Err(EventsError::FetchFailed(
+        "Simulated stream error".to_string(),
+    )));
+
+    Box::pin(futures_util::stream::iter(items))
 }
