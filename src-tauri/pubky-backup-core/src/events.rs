@@ -22,6 +22,7 @@ pub async fn create_event_stream(
         .map_err(|e| {
             EventsError::FetchFailed(format!("Failed to add user to event stream: {}", e))
         })?
+        .limit(100)
         .subscribe()
         .await
         .map_err(|e| {

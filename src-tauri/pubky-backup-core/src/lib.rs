@@ -444,6 +444,11 @@ mod tests {
     use std::str::FromStr;
     use tempfile::TempDir;
 
+    /// Helper to enable developer mode for tests that need mock data
+    fn enable_developer_mode() {
+        std::env::set_var("PUBKY_DEVELOPER_MODE", "1");
+    }
+
     // Test helper to create a storage instance with a temporary directory
     fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
@@ -458,6 +463,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_controller_runs_and_can_be_cancelled() {
+        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
@@ -499,6 +505,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_controller_force_sync() {
+        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
@@ -533,6 +540,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_perform_sync_batch_initial_sync() {
+        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
@@ -552,6 +560,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_perform_sync_batch_completes() {
+        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
@@ -579,6 +588,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_perform_sync_batch_stores_data() {
+        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
@@ -596,6 +606,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_single_event_handles_put() {
+        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
@@ -753,6 +764,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_pubky_resource_data_developer_mode() {
+        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
