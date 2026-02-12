@@ -30,7 +30,7 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = "3"
-pubky = { path = "/home/tw/pubky-core/pubky-sdk" }
+pubky = { git = "https://github.com/pubky/pubky-core", tag = "v0.7.0-rc.1" }
 log = "0.4.28"
 env_logger = "0.11.8"
 thiserror = "2.0.16"

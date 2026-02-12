@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-pubky = { path = "/home/tw/pubky-core/pubky-sdk" }
+pubky = { git = "https://github.com/pubky/pubky-core", tag = "v0.7.0-rc.1" }
 opendal = { version = "0.54.0", features = ["services-fs"] }
 log = "0.4.28"
 chrono = { version = "0.4", features = ["serde"] }

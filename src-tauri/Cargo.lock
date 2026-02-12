@@ -3705,7 +3705,8 @@ checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 
 [[package]]
 name = "pubky"
-version = "0.6.0"
+version = "0.7.0-rc.1"
+source = "git+https://github.com/pubky/pubky-core?tag=v0.7.0-rc.1#8fb8cc87218e07adee7710e94c7347d0022d2f59"
 dependencies = [
  "base64 0.22.1",
  "cookie",
@@ -3768,7 +3769,8 @@ dependencies = [
 
 [[package]]
 name = "pubky-common"
-version = "0.6.0"
+version = "0.7.0-rc.1"
+source = "git+https://github.com/pubky/pubky-core?tag=v0.7.0-rc.1#8fb8cc87218e07adee7710e94c7347d0022d2f59"
 dependencies = [
  "argon2",
  "base32",
