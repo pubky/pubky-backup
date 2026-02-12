@@ -1,7 +1,7 @@
 mod error;
 
 use log::{debug, error, info};
-use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
+use pubky::{Pkdns, Pubky, PubkyResource, PublicKey, PublicStorage};
 use serde::Serialize;
 use serde_with::{serde_as, DisplayFromStr};
 
@@ -115,18 +115,13 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
     })?;
 
     // Check pubky is discoverable
-    let homeserver_pubky_str = Pkdns::new()
+    let homeserver_pubky = Pkdns::new()
         .map_err(BackupAppError::internal)?
         .get_homeserver_of(&pubky)
         .await
         .ok_or_else(|| BackupAppError::HomeserverNotFound {
             message: "Failed to find Homeserver for pubky".to_string(),
         })?;
-    let homeserver_pubky = PublicKey::from_str(&homeserver_pubky_str).map_err(|e| {
-        BackupAppError::InvalidPubkyFormat {
-            message: e.to_string(),
-        }
-    })?;
 
     // Check Pubky has /pub/ data on Homeserver
     let pubky_storage = PublicStorage::new().map_err(BackupAppError::internal)?;
@@ -310,9 +305,17 @@ async fn backup_controller_begin() -> Result<(), BackupAppError> {
         }
     });
 
+    // Create Pubky client for SDK calls
+    let pubky_client = Arc::new(Pubky::new().map_err(BackupAppError::internal)?);
+
     // Spawn the backup controller
-    let controller =
-        BackupController::new(pubky, storage, Some(backup_control_rx), Some(status_tx));
+    let controller = BackupController::new(
+        pubky,
+        storage,
+        pubky_client,
+        Some(backup_control_rx),
+        Some(status_tx),
+    );
 
     // Keep the sender alive by moving it into the spawned task
     // This prevents the channel from closing if state.backup_process is temporarily cleared for whatever reason

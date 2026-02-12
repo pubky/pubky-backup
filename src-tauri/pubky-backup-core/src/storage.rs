@@ -1,7 +1,7 @@
 use crate::error::{OperationFailedError, StorageError};
 use crate::storage_migration::migrate_old_structure;
 use futures_lite::StreamExt;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use opendal::{services::Fs, Operator};
 use pubky::{PubkyResource, PublicKey};
 use std::{
@@ -237,7 +237,7 @@ pub struct KeyStorage {
 
 impl KeyStorage {
     fn new(keys_dir: &Path, pubky: &PublicKey) -> Result<Self, StorageError> {
-        let key_dir = keys_dir.join(pubky.to_string());
+        let key_dir = keys_dir.join(pubky.z32());
         let state_dir = key_dir.join(STATE_DIR_NAME);
         let data_dir = key_dir.join(DATA_DIR_NAME);
 
@@ -251,10 +251,10 @@ impl KeyStorage {
 
     /// Write cursor to track backup progress
     /// Uses atomic write-then-rename to prevent torn writes on crashes
-    pub async fn write_cursor(&self, cursor_value: String) -> Result<(), StorageError> {
+    pub async fn write_cursor(&self, cursor_value: u64) -> Result<(), StorageError> {
         let temp_path = format!("{}.tmp", CURSOR_FILENAME);
         self.state_storage
-            .write(&temp_path, cursor_value.clone())
+            .write(&temp_path, cursor_value.to_string())
             .await?;
         self.state_storage
             .rename(&temp_path, CURSOR_FILENAME)
@@ -264,16 +264,36 @@ impl KeyStorage {
     }
 
     /// Read existing or create new cursor
-    pub async fn read_cursor(&self) -> Result<String, StorageError> {
+    ///
+    /// Handles migration from old string-stored cursors by parsing the string as u64.
+    /// The cursor value from the API was always u64, just previously stored as String.
+    pub async fn read_cursor(&self) -> Result<Option<u64>, StorageError> {
         match self.state_storage.read(CURSOR_FILENAME).await {
             Ok(cursor_data) => {
                 let cursor_string = String::from_utf8(cursor_data)?;
-                Ok(cursor_string)
+                let cursor_string = cursor_string.trim();
+                if cursor_string.is_empty() {
+                    Ok(None)
+                } else {
+                    match cursor_string.parse::<u64>() {
+                        Ok(cursor) => Ok(Some(cursor)),
+                        Err(_) => {
+                            // Cursor value is not a valid u64 - this shouldn't happen with real
+                            // homeserver data, but could occur with old mock/test cursors.
+                            // Reset to None and delete the invalid cursor file.
+                            warn!(
+                                "Invalid cursor value '{}' cannot be parsed as u64, resetting cursor",
+                                cursor_string
+                            );
+                            let _ = self.state_storage.delete(CURSOR_FILENAME).await;
+                            Ok(None)
+                        }
+                    }
+                }
             }
             Err(_) => {
-                info!("Cursor file not found, creating empty cursor file");
-                self.state_storage.write(CURSOR_FILENAME, "").await?;
-                Ok(String::new())
+                info!("Cursor file not found");
+                Ok(None)
             }
         }
     }
@@ -478,12 +498,23 @@ impl KeysStorage {
         Ok(KeysStorage { keys_dir })
     }
 
+    /// Create a KeysStorage with a specific keys directory path.
+    /// Used for testing.
+    #[cfg(test)]
+    pub fn new_with_path(keys_dir: &Path) -> Result<Self, StorageError> {
+        Ok(KeysStorage {
+            keys_dir: keys_dir.to_path_buf(),
+        })
+    }
+
     /// Get storage for a specific key
     pub fn get_key_storage(&self, pubky: &PublicKey) -> Result<KeyStorage, StorageError> {
         KeyStorage::new(&self.keys_dir, pubky)
     }
 
     /// List all public keys that have backed-up data
+    ///
+    /// Returns keys in normalized z32 format (no prefix).
     pub fn list_keys(&self) -> Result<Vec<String>, StorageError> {
         let mut keys = Vec::new();
 
@@ -503,8 +534,8 @@ impl KeysStorage {
                 if let Some(name) = path.file_name() {
                     let name_str = name.to_string_lossy().to_string();
                     // Verify it's a valid public key
-                    if PublicKey::from_str(&name_str).is_ok() {
-                        keys.push(name_str);
+                    if let Ok(pubky) = PublicKey::from_str(&name_str) {
+                        keys.push(pubky.z32());
                     }
                 }
             }
@@ -657,11 +688,11 @@ impl AppStorage {
     /// # Arguments
     ///
     /// * `pubky` - The public key to track progress for
-    /// * `cursor_value` - The cursor value from the last processed event
+    /// * `cursor_value` - The cursor value (event ID) from the last processed event
     pub async fn write_cursor(
         &self,
         pubky: &PublicKey,
-        cursor_value: String,
+        cursor_value: u64,
     ) -> Result<(), StorageError> {
         let key_storage = self.key_storage(pubky)?;
         key_storage.write_cursor(cursor_value).await
@@ -669,16 +700,14 @@ impl AppStorage {
 
     /// Read the backup progress cursor for a specific pubky.
     ///
-    /// Creates an empty cursor file if one doesn't exist.
-    ///
     /// # Arguments
     ///
     /// * `pubky` - The public key to read the cursor for
     ///
     /// # Returns
     ///
-    /// The cursor value, or an empty string if no cursor exists yet
-    pub async fn read_cursor(&self, pubky: &PublicKey) -> Result<String, StorageError> {
+    /// The cursor value, or `None` if no cursor exists yet
+    pub async fn read_cursor(&self, pubky: &PublicKey) -> Result<Option<u64>, StorageError> {
         let key_storage = self.key_storage(pubky)?;
         key_storage.read_cursor().await
     }
@@ -813,28 +842,70 @@ mod tests {
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
         // Write cursor
-        storage
-            .write_cursor(&pubky, "test_cursor_123".to_string())
-            .await
-            .unwrap();
+        storage.write_cursor(&pubky, 123).await.unwrap();
 
         // Read cursor back
         let cursor = storage.read_cursor(&pubky).await.unwrap();
-        assert_eq!(cursor, "test_cursor_123");
+        assert_eq!(cursor, Some(123));
     }
 
     #[tokio::test]
-    async fn test_read_cursor_creates_empty_if_not_exists() {
+    async fn test_read_cursor_returns_none_if_not_exists() {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        // Read cursor before writing - should create empty cursor
+        // Read cursor before writing - should return None
         let cursor = storage.read_cursor(&pubky).await.unwrap();
-        assert_eq!(cursor, "");
+        assert_eq!(cursor, None);
 
         // Should be able to read it again
         let cursor2 = storage.read_cursor(&pubky).await.unwrap();
-        assert_eq!(cursor2, "");
+        assert_eq!(cursor2, None);
+    }
+
+    #[tokio::test]
+    async fn test_read_cursor_parses_old_string_stored_u64() {
+        let (storage, temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+
+        // Manually write an old cursor file that stored u64 as string
+        let cursor_path = temp_dir
+            .path()
+            .join(KEYS_DIR_NAME)
+            .join(pubky.z32())
+            .join(STATE_DIR_NAME)
+            .join(CURSOR_FILENAME);
+        std::fs::create_dir_all(cursor_path.parent().unwrap()).unwrap();
+        std::fs::write(&cursor_path, "98765").unwrap();
+
+        // Read cursor - should parse the string as u64
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert_eq!(cursor, Some(98765));
+    }
+
+    #[tokio::test]
+    async fn test_read_cursor_resets_invalid_format() {
+        let (storage, temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+
+        // Manually write an invalid cursor file (non-numeric)
+        let cursor_path = temp_dir
+            .path()
+            .join(KEYS_DIR_NAME)
+            .join(pubky.z32())
+            .join(STATE_DIR_NAME)
+            .join(CURSOR_FILENAME);
+        std::fs::create_dir_all(cursor_path.parent().unwrap()).unwrap();
+        std::fs::write(&cursor_path, "invalid_cursor").unwrap();
+
+        // Read cursor - should detect invalid format and return None
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert_eq!(cursor, None);
+
+        // Now write a valid cursor and verify it works
+        storage.write_cursor(&pubky, 12345).await.unwrap();
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert_eq!(cursor, Some(12345));
     }
 
     #[tokio::test]
@@ -918,11 +989,11 @@ mod tests {
         storage.write(&resource1, b"data1".to_vec()).await.unwrap();
         storage.write(&resource2, b"data2".to_vec()).await.unwrap();
 
-        // Should now list both pubky directories
+        // Should now list both pubky directories (in z32 format)
         let dirs = storage.list_pubky_directories().unwrap();
         assert_eq!(dirs.len(), 2);
-        assert!(dirs.contains(&pubky1.to_string()));
-        assert!(dirs.contains(&pubky2.to_string()));
+        assert!(dirs.contains(&pubky1.z32()));
+        assert!(dirs.contains(&pubky2.z32()));
     }
 
     #[tokio::test]
@@ -934,7 +1005,7 @@ mod tests {
         let error_log_dir = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(STATE_DIR_NAME);
         std::fs::create_dir_all(&error_log_dir).unwrap();
         std::fs::write(
@@ -1052,28 +1123,19 @@ mod tests {
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
         // Write cursor multiple times
-        storage
-            .write_cursor(&pubky, "cursor_v1".to_string())
-            .await
-            .unwrap();
-        storage
-            .write_cursor(&pubky, "cursor_v2".to_string())
-            .await
-            .unwrap();
-        storage
-            .write_cursor(&pubky, "cursor_v3".to_string())
-            .await
-            .unwrap();
+        storage.write_cursor(&pubky, 1).await.unwrap();
+        storage.write_cursor(&pubky, 2).await.unwrap();
+        storage.write_cursor(&pubky, 3).await.unwrap();
 
         // Verify the cursor has the latest value
         let cursor = storage.read_cursor(&pubky).await.unwrap();
-        assert_eq!(cursor, "cursor_v3");
+        assert_eq!(cursor, Some(3));
 
         // Verify no temp file is left behind
         let temp_file_path = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(STATE_DIR_NAME)
             .join("cursor.tmp");
         assert!(
@@ -1085,7 +1147,7 @@ mod tests {
         let cursor_file_path = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(STATE_DIR_NAME)
             .join("cursor");
         assert!(cursor_file_path.exists(), "Cursor file should exist");
@@ -1097,32 +1159,23 @@ mod tests {
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
         // Write initial cursor
-        storage
-            .write_cursor(&pubky, "initial_cursor".to_string())
-            .await
-            .unwrap();
+        storage.write_cursor(&pubky, 100).await.unwrap();
 
         let cursor = storage.read_cursor(&pubky).await.unwrap();
-        assert_eq!(cursor, "initial_cursor");
+        assert_eq!(cursor, Some(100));
 
         // Overwrite with new cursor atomically
-        storage
-            .write_cursor(&pubky, "updated_cursor".to_string())
-            .await
-            .unwrap();
+        storage.write_cursor(&pubky, 200).await.unwrap();
 
         // Verify the cursor was updated atomically
         let cursor = storage.read_cursor(&pubky).await.unwrap();
-        assert_eq!(cursor, "updated_cursor");
+        assert_eq!(cursor, Some(200));
 
         // Write one more time to ensure multiple overwrites work
-        storage
-            .write_cursor(&pubky, "final_cursor".to_string())
-            .await
-            .unwrap();
+        storage.write_cursor(&pubky, 300).await.unwrap();
 
         let cursor = storage.read_cursor(&pubky).await.unwrap();
-        assert_eq!(cursor, "final_cursor");
+        assert_eq!(cursor, Some(300));
     }
 
     #[tokio::test]
@@ -1162,7 +1215,7 @@ mod tests {
         let expected_snapshots_dir = temp_dir
             .path()
             .join(KEYS_DIR_NAME)
-            .join(pubky.to_string())
+            .join(pubky.z32())
             .join(SNAPSHOTS_DIR_NAME);
         assert!(
             snapshot_path.starts_with(&expected_snapshots_dir),
@@ -1311,8 +1364,8 @@ mod tests {
         );
         assert!(root.join(LOGS_DIR_NAME).exists(), "logs/ should exist");
 
-        // Per-key directories
-        let key_dir = root.join(KEYS_DIR_NAME).join(pubky.to_string());
+        // Per-key directories (using z32 format for directory naming)
+        let key_dir = root.join(KEYS_DIR_NAME).join(pubky.z32());
         assert!(key_dir.exists(), "keys/<pubky>/ should exist");
         assert!(
             key_dir.join(STATE_DIR_NAME).exists(),

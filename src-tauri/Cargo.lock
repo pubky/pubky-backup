@@ -126,12 +126,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arc-swap"
-version = "1.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
-
-[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1337,6 +1331,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "eventsource-stream"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74fef4569247a5f429d9156b9d0a2599914385dd189c539334c625d8099d90ab"
+dependencies = [
+ "futures-core",
+ "nom",
  "pin-project-lite",
 ]
 
@@ -2726,6 +2731,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "minimal-lexical"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2821,6 +2832,16 @@ name = "nodrop"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72ef4a56884ca558e5ddb05a1d1e7e1bfd9a68d9ed024c21704cc98872dae1bb"
+
+[[package]]
+name = "nom"
+version = "7.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
+dependencies = [
+ "memchr",
+ "minimal-lexical",
+]
 
 [[package]]
 name = "ntimestamp"
@@ -3684,14 +3705,12 @@ checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 
 [[package]]
 name = "pubky"
-version = "0.6.0-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fab7bf8bb59d7730b473480f33f26bfcfde6d8df364a8f8139bc8459aceed19"
+version = "0.7.0-rc.1"
+source = "git+https://github.com/pubky/pubky-core?tag=v0.7.0-rc.1#8fb8cc87218e07adee7710e94c7347d0022d2f59"
 dependencies = [
- "arc-swap",
  "base64 0.22.1",
- "bytes",
  "cookie",
+ "eventsource-stream",
  "flume",
  "futures-lite",
  "futures-util",
@@ -3705,6 +3724,7 @@ dependencies = [
  "tracing",
  "url",
  "wasm-bindgen-futures",
+ "web-time",
 ]
 
 [[package]]
@@ -3733,6 +3753,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "futures-lite",
+ "futures-util",
  "log",
  "opendal",
  "pubky",
@@ -3748,9 +3769,8 @@ dependencies = [
 
 [[package]]
 name = "pubky-common"
-version = "0.6.0-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3633a0aeb0cea9ae136b2657f4999122eae95a176f841168837b9860e32d29d"
+version = "0.7.0-rc.1"
+source = "git+https://github.com/pubky/pubky-core?tag=v0.7.0-rc.1#8fb8cc87218e07adee7710e94c7347d0022d2f59"
 dependencies = [
  "argon2",
  "base32",
