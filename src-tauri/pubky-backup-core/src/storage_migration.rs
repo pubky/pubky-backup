@@ -13,6 +13,33 @@ use pubky::PublicKey;
 use std::path::Path;
 use std::str::FromStr;
 
+/// Move a file from src to dst, using rename if possible, copy+delete as fallback.
+/// Returns Ok(true) if moved successfully, Ok(false) if destination already exists.
+/// Note: Source file cleanup is best-effort; may be left behind on permission errors.
+fn move_file(src: &Path, dst: &Path) -> Result<bool, StorageError> {
+    if dst.exists() {
+        // Destination already exists, clean up source
+        let _ = std::fs::remove_file(src);
+        return Ok(false);
+    }
+
+    if std::fs::rename(src, dst).is_ok() {
+        return Ok(true);
+    }
+
+    // Fallback to copy + delete for cross-filesystem moves
+    std::fs::copy(src, dst).map_err(|e| {
+        StorageError::Internal(format!(
+            "Failed to copy {} to {}: {}",
+            src.display(),
+            dst.display(),
+            e
+        ))
+    })?;
+    let _ = std::fs::remove_file(src);
+    Ok(true)
+}
+
 /// Recursively copy directory contents from src to dst
 /// Used for legacy directory structure migration
 fn recursive_copy_dir(src: &Path, dst: &Path) -> Result<(), StorageError> {
@@ -131,18 +158,10 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
         })?;
 
         let new_last_pubky = config_dir.join(LAST_PUBKY_FILENAME);
-        if !new_last_pubky.exists() {
+        if move_file(&old_last_pubky, &new_last_pubky)? {
             info!("Migrating last_pubky to config/last_pubky");
-            if std::fs::rename(&old_last_pubky, &new_last_pubky).is_err() {
-                // Fallback to copy + delete for cross-filesystem
-                std::fs::copy(&old_last_pubky, &new_last_pubky).map_err(|e| {
-                    StorageError::Internal(format!("Failed to copy last_pubky: {}", e))
-                })?;
-                let _ = std::fs::remove_file(&old_last_pubky);
-            }
         } else {
             info!("Skipping last_pubky migration: destination already exists");
-            let _ = std::fs::remove_file(&old_last_pubky);
         }
     }
 
@@ -153,17 +172,10 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
         })?;
 
         let new_error_log = logs_dir.join(ERROR_LOG_FILENAME);
-        if !new_error_log.exists() {
+        if move_file(&old_error_log, &new_error_log)? {
             info!("Migrating error.log to logs/error.log");
-            if std::fs::rename(&old_error_log, &new_error_log).is_err() {
-                std::fs::copy(&old_error_log, &new_error_log).map_err(|e| {
-                    StorageError::Internal(format!("Failed to copy error.log: {}", e))
-                })?;
-                let _ = std::fs::remove_file(&old_error_log);
-            }
         } else {
             info!("Skipping error.log migration: destination already exists");
-            let _ = std::fs::remove_file(&old_error_log);
         }
     }
 
@@ -195,18 +207,9 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
         let old_cursor = old_pubky_dir.join(CURSOR_FILENAME);
         if old_cursor.exists() {
             let new_cursor = new_state_dir.join(CURSOR_FILENAME);
-            if !new_cursor.exists() {
-                if std::fs::rename(&old_cursor, &new_cursor).is_err() {
-                    if let Err(e) = std::fs::copy(&old_cursor, &new_cursor) {
-                        error!("Failed to migrate cursor for {}: {}", pubky_str, e);
-                        migration_success = false;
-                    } else {
-                        let _ = std::fs::remove_file(&old_cursor);
-                    }
-                }
-            } else {
-                // Destination exists, just remove old file
-                let _ = std::fs::remove_file(&old_cursor);
+            if let Err(e) = move_file(&old_cursor, &new_cursor) {
+                error!("Failed to migrate cursor for {}: {}", pubky_str, e);
+                migration_success = false;
             }
         }
 
@@ -214,17 +217,9 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
         let old_key_error_log = old_pubky_dir.join(ERROR_LOG_FILENAME);
         if old_key_error_log.exists() {
             let new_key_error_log = new_state_dir.join(ERROR_LOG_FILENAME);
-            if !new_key_error_log.exists() {
-                if std::fs::rename(&old_key_error_log, &new_key_error_log).is_err() {
-                    if let Err(e) = std::fs::copy(&old_key_error_log, &new_key_error_log) {
-                        error!("Failed to migrate error.log for {}: {}", pubky_str, e);
-                        migration_success = false;
-                    } else {
-                        let _ = std::fs::remove_file(&old_key_error_log);
-                    }
-                }
-            } else {
-                let _ = std::fs::remove_file(&old_key_error_log);
+            if let Err(e) = move_file(&old_key_error_log, &new_key_error_log) {
+                error!("Failed to migrate error.log for {}: {}", pubky_str, e);
+                migration_success = false;
             }
         }
 

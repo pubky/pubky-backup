@@ -285,6 +285,14 @@ impl BackupController {
         self.process_event_stream(event_stream, cursor).await
     }
 
+    /// Save cursor progress if we have a cursor value.
+    async fn save_cursor_if_present(&self, cursor: Option<u64>) -> Result<(), BackupError> {
+        if let Some(c) = cursor {
+            self.storage.write_cursor(&self.pubky, c).await?;
+        }
+        Ok(())
+    }
+
     /// Process events from a stream, saving cursor progress periodically and on error.
     async fn process_event_stream(
         &self,
@@ -307,17 +315,13 @@ impl BackupController {
 
                     // Save cursor periodically (every EVENT_BATCH_SIZE events)
                     if events_processed % EVENT_BATCH_SIZE as usize == 0 {
-                        if let Some(c) = last_cursor {
-                            self.storage.write_cursor(&self.pubky, c).await?;
-                        }
+                        self.save_cursor_if_present(last_cursor).await?;
                     }
                 }
                 Err(e) => {
                     error!("Event stream error: {}", e);
                     // Save progress and break out of stream loop. The next sync interval will reconnect
-                    if let Some(c) = last_cursor {
-                        self.storage.write_cursor(&self.pubky, c).await?;
-                    }
+                    self.save_cursor_if_present(last_cursor).await?;
                     break;
                 }
             }
@@ -326,10 +330,8 @@ impl BackupController {
         info!("Processed {} events", events_processed);
 
         // Save final cursor
-        if let Some(c) = last_cursor {
-            if events_processed > 0 {
-                self.storage.write_cursor(&self.pubky, c).await?;
-            }
+        if events_processed > 0 {
+            self.save_cursor_if_present(last_cursor).await?;
         }
 
         if events_processed > 0 {
@@ -763,11 +765,22 @@ mod tests {
         // Create a stream that yields 3 events then fails
         let failing_stream = events::create_failing_mock_event_stream(3);
 
-        // Process the stream - should fail after processing 3 events
+        // Process the stream - should handle error gracefully (log and continue)
         let result = controller.process_event_stream(failing_stream, None).await;
 
-        // Should return an error
-        assert!(result.is_err(), "Should return error from failed stream");
+        // Should return Ok (stream errors are handled gracefully, not propagated)
+        assert!(
+            result.is_ok(),
+            "Stream errors should be handled gracefully, not propagated"
+        );
+
+        // Should indicate events were processed
+        let events_processed = result.unwrap();
+        assert!(
+            matches!(events_processed, ControlFlow::Continue(3)),
+            "Should indicate 3 events were processed, got {:?}",
+            events_processed
+        );
 
         // Cursor should have been saved at the last successful event (cursor=3)
         let saved_cursor = storage.read_cursor(&pubky).await.unwrap();

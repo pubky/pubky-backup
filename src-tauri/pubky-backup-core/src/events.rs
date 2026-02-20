@@ -5,6 +5,18 @@ use pubky::{Event, EventCursor, EventType, Pubky, PubkyResource, PublicKey};
 use std::pin::Pin;
 use std::str::FromStr;
 
+/// Create a mock event for testing purposes.
+fn make_mock_event(pubky_z32: &str, event_type: EventType, path: &str, cursor_id: u64) -> Event {
+    let url = format!("pubky://{}{}", pubky_z32, path);
+    let resource = PubkyResource::from_str(&url).expect("Mock URL should be valid");
+    Event {
+        event_type,
+        resource,
+        cursor: EventCursor::new(cursor_id),
+        content_hash: None,
+    }
+}
+
 /// Create an event stream for a given pubky
 ///
 /// Returns a stream of events starting from the given cursor position.
@@ -45,40 +57,29 @@ pub fn create_mock_event_stream(
     cursor: Option<u64>,
 ) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
     let mock_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Mock pubky should be valid");
-    let mock_pubky_z32 = mock_pubky.z32();
-
-    let make_event = |event_type: EventType, path: &str, cursor_id: u64| -> Event {
-        let url = format!("pubky://{}{}", mock_pubky_z32, path);
-        let resource = PubkyResource::from_str(&url).expect("Mock URL should be valid");
-        Event {
-            event_type,
-            resource,
-            cursor: EventCursor::new(cursor_id),
-            content_hash: None,
-        }
-    };
+    let z32 = mock_pubky.z32();
 
     // Generate events based on cursor position to simulate event progression
     let events: Vec<Event> = match cursor {
         None => {
             // Initial sync - return first batch
             vec![
-                make_event(EventType::Put, "/pub/posts/001", 1),
-                make_event(EventType::Put, "/pub/posts/002", 2),
-                make_event(EventType::Put, "/pub/profile", 3),
+                make_mock_event(&z32, EventType::Put, "/pub/posts/001", 1),
+                make_mock_event(&z32, EventType::Put, "/pub/posts/002", 2),
+                make_mock_event(&z32, EventType::Put, "/pub/profile", 3),
             ]
         }
         Some(c) if c < 3 => {
             // Partial first batch - return remaining events
             let mut events = vec![];
             if c < 1 {
-                events.push(make_event(EventType::Put, "/pub/posts/001", 1));
+                events.push(make_mock_event(&z32, EventType::Put, "/pub/posts/001", 1));
             }
             if c < 2 {
-                events.push(make_event(EventType::Put, "/pub/posts/002", 2));
+                events.push(make_mock_event(&z32, EventType::Put, "/pub/posts/002", 2));
             }
             if c < 3 {
-                events.push(make_event(EventType::Put, "/pub/profile", 3));
+                events.push(make_mock_event(&z32, EventType::Put, "/pub/profile", 3));
             }
             events
         }
@@ -87,14 +88,19 @@ pub fn create_mock_event_stream(
             // cursor=3 means "after event 3", cursor=4 means "after event 4"
             let mut events = vec![];
             if cursor == Some(3) {
-                events.push(make_event(EventType::Put, "/pub/posts/003", 4));
+                events.push(make_mock_event(&z32, EventType::Put, "/pub/posts/003", 4));
             }
-            events.push(make_event(EventType::Delete, "/pub/posts/001", 5));
+            events.push(make_mock_event(
+                &z32,
+                EventType::Delete,
+                "/pub/posts/001",
+                5,
+            ));
             events
         }
         Some(5) => {
             // Third batch
-            vec![make_event(EventType::Put, "/pub/posts/004", 6)]
+            vec![make_mock_event(&z32, EventType::Put, "/pub/posts/004", 6)]
         }
         _ => {
             // No more events
@@ -112,22 +118,15 @@ pub fn create_failing_mock_event_stream(
     fail_after: usize,
 ) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
     let mock_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Mock pubky should be valid");
-    let mock_pubky_z32 = mock_pubky.z32();
-
-    let make_event = |cursor_id: u64| -> Event {
-        let url = format!("pubky://{}/pub/posts/{:03}", mock_pubky_z32, cursor_id);
-        let resource = PubkyResource::from_str(&url).expect("Mock URL should be valid");
-        Event {
-            event_type: EventType::Put,
-            resource,
-            cursor: EventCursor::new(cursor_id),
-            content_hash: None,
-        }
-    };
+    let z32 = mock_pubky.z32();
 
     // Create events that succeed, then an error
-    let mut items: Vec<Result<Event, EventsError>> =
-        (1..=fail_after as u64).map(|i| Ok(make_event(i))).collect();
+    let mut items: Vec<Result<Event, EventsError>> = (1..=fail_after as u64)
+        .map(|i| {
+            let path = format!("/pub/posts/{:03}", i);
+            Ok(make_mock_event(&z32, EventType::Put, &path, i))
+        })
+        .collect();
     items.push(Err(EventsError::FetchFailed(
         "Simulated stream error".to_string(),
     )));
