@@ -41,6 +41,8 @@ PUBKY_DEVELOPER_MODE=1 cargo tauri dev
 
 ## Testing
 
+### Frontend Tests
+
 Run frontend tests (watch mode):
 
 ```
@@ -53,11 +55,23 @@ Run frontend tests once:
 npm run test:run
 ```
 
-Run Rust tests:
+### Rust Unit Tests
+
+Run Rust unit tests:
 
 ```
-cargo test
+cargo test --lib
 ```
+
+### Rust Integration Tests
+
+Integration tests use a real `pubky-testnet` with an ephemeral homeserver and embedded PostgreSQL.
+
+```bash
+cargo test -p pubky-backup-core --test integration_tests
+```
+
+Note: The first run will download PostgreSQL binaries (~50-100MB), which are cached for subsequent runs.
 
 ## Build
 
