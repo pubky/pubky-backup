@@ -57,7 +57,7 @@ npm run test:run
 
 ### Rust Unit Tests
 
-Run Rust unit tests (no external dependencies):
+Run Rust unit tests:
 
 ```
 cargo test --lib
@@ -65,7 +65,7 @@ cargo test --lib
 
 ### Rust Integration Tests
 
-Integration tests use a real `pubky-testnet` with an ephemeral homeserver and embedded PostgreSQL (no external dependencies required).
+Integration tests use a real `pubky-testnet` with an ephemeral homeserver and embedded PostgreSQL.
 
 ```bash
 cargo test -p pubky-backup-core --test integration_tests
