@@ -620,14 +620,14 @@ impl AppStorage {
     /// Create AppStorage with a custom data directory path.
     ///
     /// This is primarily useful for testing with temporary directories.
-    pub fn new_with_path(data_dir: &PathBuf) -> Result<Self, StorageError> {
+    pub fn new_with_path(data_dir: &Path) -> Result<Self, StorageError> {
         // Migrate from old structure if needed
         migrate_old_structure(data_dir)?;
 
         Ok(AppStorage {
             app_data: AppDataStorage::new(data_dir)?,
             keys_storage: KeysStorage::new(data_dir)?,
-            data_dir: data_dir.clone(),
+            data_dir: data_dir.to_path_buf(),
         })
     }
 

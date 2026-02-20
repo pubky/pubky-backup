@@ -6,15 +6,16 @@
 //! # Running the tests
 //!
 //! ```bash
-//! cargo test --test integration_tests
+//! cargo test -p pubky-backup-core --test integration_tests
 //! ```
 //!
 //! # Note
 //!
 //! The first run will download PostgreSQL binaries (~50-100MB), which are cached
 //! for subsequent runs.
+//!
+//! Tests are combined where possible to minimize testnet startup overhead.
 
-use futures_util::StreamExt;
 use pubky::{Keypair, PubkyResource, PublicKey};
 use pubky_backup_core::{
     AppStorage, BackupController, BackupControllerMessage, BackupControllerStatus,
@@ -41,8 +42,29 @@ async fn create_testnet() -> EphemeralTestnet {
         .expect("Failed to start testnet with embedded postgres")
 }
 
+/// Helper to run sync batches until completion (with 30 second timeout)
+async fn sync_until_complete(controller: &BackupController) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            match controller.perform_sync_batch().await.unwrap() {
+                std::ops::ControlFlow::Continue(_) => continue,
+                std::ops::ControlFlow::Break(()) => break,
+            }
+        }
+    })
+    .await
+    .expect("Sync should complete within 30 seconds")
+}
+
+/// Tests core backup functionality: PUT sync, DELETE sync, cursor persistence, and event stream.
+///
+/// This test combines several related scenarios to minimize testnet overhead:
+/// 1. Event stream receives real events from homeserver
+/// 2. Syncing PUT events backs up data correctly
+/// 3. Syncing DELETE events removes backed up data
+/// 4. Cursor persists and advances across sync operations
 #[tokio::test]
-async fn test_backup_controller_syncs_real_data() {
+async fn test_backup_sync_put_delete_and_cursor() {
     let testnet = create_testnet().await;
     let pubky_client = Arc::new(testnet.sdk().unwrap());
     let homeserver_pk = testnet.homeserver_app().public_key();
@@ -53,7 +75,7 @@ async fn test_backup_controller_syncs_real_data() {
     let session = signer.signup(&homeserver_pk.into(), None).await.unwrap();
     let user_pk: PublicKey = keypair.public_key().into();
 
-    // Write test data
+    // === Part 1: Write test data ===
     session
         .storage()
         .put("/pub/test/file.txt", "hello world")
@@ -67,8 +89,37 @@ async fn test_backup_controller_syncs_real_data() {
         )
         .await
         .unwrap();
+    session
+        .storage()
+        .put("/pub/to_delete.txt", "this will be deleted")
+        .await
+        .unwrap();
 
-    // Create backup controller
+    // === Part 2: Test event stream receives real events ===
+    {
+        use futures_util::StreamExt;
+
+        let mut stream = pubky_client
+            .event_stream()
+            .add_user(&user_pk, None)
+            .unwrap()
+            .limit(10)
+            .subscribe()
+            .await
+            .unwrap();
+
+        // Should receive at least one event (the PUTs we just did)
+        let event = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("Should receive event within timeout");
+
+        assert!(event.is_some(), "Should receive at least one event");
+        let event = event.unwrap().unwrap();
+        assert_eq!(event.resource.owner, user_pk);
+    }
+
+    // === Part 3: Test PUT sync ===
+    // Create backup controller and sync
     let (storage, _temp_dir) = create_test_storage();
     let controller = BackupController::new(
         user_pk.clone(),
@@ -77,17 +128,7 @@ async fn test_backup_controller_syncs_real_data() {
         None,
         None,
     );
-
-    // Run sync batch - may need multiple batches to get all events
-    loop {
-        let result = controller.perform_sync_batch().await;
-        assert!(result.is_ok(), "Sync should succeed: {:?}", result.err());
-
-        match result.unwrap() {
-            std::ops::ControlFlow::Continue(_) => continue,
-            std::ops::ControlFlow::Break(()) => break,
-        }
-    }
+    sync_until_complete(&controller).await;
 
     // Verify data was backed up
     let resource = PubkyResource::new(user_pk.clone(), "/pub/test/file.txt").unwrap();
@@ -97,33 +138,25 @@ async fn test_backup_controller_syncs_real_data() {
     let resource = PubkyResource::new(user_pk.clone(), "/pub/posts/001.json").unwrap();
     let backed_up_data = storage.as_ref().read(&resource).await.unwrap();
     assert!(String::from_utf8_lossy(&backed_up_data).contains("First post"));
-}
 
-#[tokio::test]
-async fn test_backup_controller_handles_deletes() {
-    let testnet = create_testnet().await;
-    let pubky_client = Arc::new(testnet.sdk().unwrap());
-    let homeserver_pk = testnet.homeserver_app().public_key();
+    let resource_to_delete = PubkyResource::new(user_pk.clone(), "/pub/to_delete.txt").unwrap();
+    assert!(
+        storage.as_ref().read(&resource_to_delete).await.is_ok(),
+        "File should exist before deletion"
+    );
 
-    // Create user and write initial data
-    let keypair = Keypair::random();
-    let signer = pubky_client.signer(keypair.clone());
-    let session = signer.signup(&homeserver_pk.into(), None).await.unwrap();
-    let user_pk: PublicKey = keypair.public_key().into();
+    // === Part 4: Test cursor persistence ===
+    let cursor1 = storage.read_cursor(&user_pk).await.unwrap();
+    assert!(cursor1.is_some(), "Cursor should be saved after first sync");
 
+    // Write more data
     session
         .storage()
-        .put("/pub/to_delete.txt", "this will be deleted")
-        .await
-        .unwrap();
-    session
-        .storage()
-        .put("/pub/to_keep.txt", "this stays")
+        .put("/pub/file2.txt", "content2")
         .await
         .unwrap();
 
-    // Initial sync
-    let (storage, _temp_dir) = create_test_storage();
+    // Sync again
     let controller = BackupController::new(
         user_pk.clone(),
         storage.clone(),
@@ -131,14 +164,21 @@ async fn test_backup_controller_handles_deletes() {
         None,
         None,
     );
-    let _ = controller.perform_sync_batch().await.unwrap();
+    sync_until_complete(&controller).await;
 
-    // Verify both files were backed up
-    let resource_delete = PubkyResource::new(user_pk.clone(), "/pub/to_delete.txt").unwrap();
-    let resource_keep = PubkyResource::new(user_pk.clone(), "/pub/to_keep.txt").unwrap();
-    assert!(storage.as_ref().read(&resource_delete).await.is_ok());
-    assert!(storage.as_ref().read(&resource_keep).await.is_ok());
+    // Cursor should have advanced
+    let cursor2 = storage.read_cursor(&user_pk).await.unwrap();
+    assert!(cursor2.is_some());
+    assert!(
+        cursor2 > cursor1,
+        "Cursor should advance after processing new events"
+    );
 
+    // Verify new file exists
+    let resource2 = PubkyResource::new(user_pk.clone(), "/pub/file2.txt").unwrap();
+    assert!(storage.as_ref().read(&resource2).await.is_ok());
+
+    // === Part 5: Test DELETE sync ===
     // Delete one file on homeserver
     session
         .storage()
@@ -154,134 +194,26 @@ async fn test_backup_controller_handles_deletes() {
         None,
         None,
     );
-    let _ = controller.perform_sync_batch().await.unwrap();
+    sync_until_complete(&controller).await;
 
-    // Verify: deleted file should be gone, kept file should remain
+    // Verify: deleted file should be gone, other files should remain
     assert!(
-        storage.as_ref().read(&resource_delete).await.is_err(),
+        storage.as_ref().read(&resource_to_delete).await.is_err(),
         "Deleted file should be removed from backup"
     );
     assert!(
-        storage.as_ref().read(&resource_keep).await.is_ok(),
-        "Kept file should still exist"
+        storage.as_ref().read(&resource).await.is_ok(),
+        "Other files should still exist"
     );
 }
 
+/// Tests the backup controller run loop: ForceSync and Cancel messages.
+///
+/// This test combines run loop scenarios to minimize testnet overhead:
+/// 1. ForceSync triggers an immediate sync
+/// 2. Cancel stops the controller gracefully
 #[tokio::test]
-async fn test_backup_controller_cursor_persistence() {
-    let testnet = create_testnet().await;
-    let pubky_client = Arc::new(testnet.sdk().unwrap());
-    let homeserver_pk = testnet.homeserver_app().public_key();
-
-    let keypair = Keypair::random();
-    let signer = pubky_client.signer(keypair.clone());
-    let session = signer.signup(&homeserver_pk.into(), None).await.unwrap();
-    let user_pk: PublicKey = keypair.public_key().into();
-
-    // Write initial data
-    session
-        .storage()
-        .put("/pub/file1.txt", "content1")
-        .await
-        .unwrap();
-
-    let (storage, _temp_dir) = create_test_storage();
-
-    // First sync
-    let controller = BackupController::new(
-        user_pk.clone(),
-        storage.clone(),
-        pubky_client.clone(),
-        None,
-        None,
-    );
-    let _ = controller.perform_sync_batch().await.unwrap();
-
-    // Check cursor was saved
-    let cursor1 = storage.read_cursor(&user_pk).await.unwrap();
-    assert!(cursor1.is_some(), "Cursor should be saved after first sync");
-
-    // Write more data
-    session
-        .storage()
-        .put("/pub/file2.txt", "content2")
-        .await
-        .unwrap();
-
-    // Second sync
-    let controller = BackupController::new(
-        user_pk.clone(),
-        storage.clone(),
-        pubky_client.clone(),
-        None,
-        None,
-    );
-    let _ = controller.perform_sync_batch().await.unwrap();
-
-    // Cursor should have advanced
-    let cursor2 = storage.read_cursor(&user_pk).await.unwrap();
-    assert!(cursor2.is_some());
-    assert!(
-        cursor2 > cursor1,
-        "Cursor should advance after processing new events"
-    );
-
-    // Verify both files exist
-    let resource1 = PubkyResource::new(user_pk.clone(), "/pub/file1.txt").unwrap();
-    let resource2 = PubkyResource::new(user_pk.clone(), "/pub/file2.txt").unwrap();
-    assert!(storage.as_ref().read(&resource1).await.is_ok());
-    assert!(storage.as_ref().read(&resource2).await.is_ok());
-}
-
-#[tokio::test]
-async fn test_backup_controller_run_loop_with_cancel() {
-    let testnet = create_testnet().await;
-    let pubky_client = Arc::new(testnet.sdk().unwrap());
-    let homeserver_pk = testnet.homeserver_app().public_key();
-
-    let keypair = Keypair::random();
-    let signer = pubky_client.signer(keypair.clone());
-    let _session = signer.signup(&homeserver_pk.into(), None).await.unwrap();
-    let user_pk: PublicKey = keypair.public_key().into();
-
-    let (storage, _temp_dir) = create_test_storage();
-    let (control_tx, control_rx) = broadcast::channel(5);
-    let (status_tx, mut status_rx) = broadcast::channel(10);
-
-    let controller = BackupController::new(
-        user_pk,
-        storage,
-        pubky_client,
-        Some(control_rx),
-        Some(status_tx),
-    );
-
-    // Spawn the controller
-    let handle = tokio::spawn(controller.run());
-
-    // Wait for first status update
-    let status = tokio::time::timeout(Duration::from_secs(10), status_rx.recv())
-        .await
-        .expect("Should receive status within timeout")
-        .unwrap();
-
-    match status {
-        BackupControllerStatus::Syncing { .. } | BackupControllerStatus::Idle => {}
-        other => panic!("Unexpected initial status: {:?}", other),
-    }
-
-    // Send cancel message
-    control_tx.send(BackupControllerMessage::Cancel).unwrap();
-
-    // Controller should finish
-    tokio::time::timeout(Duration::from_secs(5), handle)
-        .await
-        .expect("Controller should finish after cancel")
-        .unwrap();
-}
-
-#[tokio::test]
-async fn test_backup_controller_force_sync() {
+async fn test_backup_controller_run_loop() {
     let testnet = create_testnet().await;
     let pubky_client = Arc::new(testnet.sdk().unwrap());
     let homeserver_pk = testnet.homeserver_app().public_key();
@@ -303,16 +235,28 @@ async fn test_backup_controller_force_sync() {
     let (status_tx, mut status_rx) = broadcast::channel(10);
 
     let controller = BackupController::new(
-        user_pk.clone(),
-        storage.clone(),
+        user_pk,
+        storage,
         pubky_client,
         Some(control_rx),
         Some(status_tx),
     );
 
-    tokio::spawn(controller.run());
+    // Spawn the controller
+    let handle = tokio::spawn(controller.run());
 
-    // Trigger force sync
+    // === Part 1: Test initial status ===
+    let status = tokio::time::timeout(Duration::from_secs(10), status_rx.recv())
+        .await
+        .expect("Should receive status within timeout")
+        .unwrap();
+
+    match status {
+        BackupControllerStatus::Syncing { .. } | BackupControllerStatus::Idle => {}
+        other => panic!("Unexpected initial status: {:?}", other),
+    }
+
+    // === Part 2: Test ForceSync ===
     control_tx.send(BackupControllerMessage::ForceSync).unwrap();
 
     // Collect status updates until we see Syncing
@@ -334,50 +278,21 @@ async fn test_backup_controller_force_sync() {
         "Should have seen Syncing status after ForceSync"
     );
 
-    // Cleanup
+    // === Part 3: Test Cancel ===
     control_tx.send(BackupControllerMessage::Cancel).unwrap();
+
+    // Controller should finish
+    tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .expect("Controller should finish after cancel")
+        .unwrap();
 }
 
+/// Tests that multiple users on the same homeserver are properly isolated.
+///
+/// Each user's backup should only contain their own data.
 #[tokio::test]
-async fn test_event_stream_receives_real_events() {
-    let testnet = create_testnet().await;
-    let pubky_client = testnet.sdk().unwrap();
-    let homeserver_pk = testnet.homeserver_app().public_key();
-
-    let keypair = Keypair::random();
-    let signer = pubky_client.signer(keypair.clone());
-    let session = signer.signup(&homeserver_pk.into(), None).await.unwrap();
-    let user_pk: PublicKey = keypair.public_key().into();
-
-    // Write some data first
-    session
-        .storage()
-        .put("/pub/event_test.txt", "event data")
-        .await
-        .unwrap();
-
-    // Create event stream
-    let mut stream = pubky_client
-        .event_stream()
-        .add_user(&user_pk, None)
-        .unwrap()
-        .limit(10)
-        .subscribe()
-        .await
-        .unwrap();
-
-    // Should receive at least one event (the PUT we just did, plus signup events)
-    let event = tokio::time::timeout(Duration::from_secs(5), stream.next())
-        .await
-        .expect("Should receive event within timeout");
-
-    assert!(event.is_some(), "Should receive at least one event");
-    let event = event.unwrap().unwrap();
-    assert_eq!(event.resource.owner, user_pk);
-}
-
-#[tokio::test]
-async fn test_multiple_users_on_same_homeserver() {
+async fn test_multiple_users_isolation() {
     let testnet = create_testnet().await;
     let pubky_client = Arc::new(testnet.sdk().unwrap());
     let homeserver_pk = testnet.homeserver_app().public_key();
@@ -419,7 +334,7 @@ async fn test_multiple_users_on_same_homeserver() {
         None,
         None,
     );
-    let _ = controller1.perform_sync_batch().await.unwrap();
+    sync_until_complete(&controller1).await;
 
     // Backup user2
     let (storage2, _temp_dir2) = create_test_storage();
@@ -430,7 +345,7 @@ async fn test_multiple_users_on_same_homeserver() {
         None,
         None,
     );
-    let _ = controller2.perform_sync_batch().await.unwrap();
+    sync_until_complete(&controller2).await;
 
     // Verify each backup only contains their user's data
     let resource1 = PubkyResource::new(user1_pk.clone(), "/pub/user1.txt").unwrap();

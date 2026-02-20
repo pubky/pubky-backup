@@ -68,7 +68,7 @@ cargo test --lib
 Integration tests use a real `pubky-testnet` with an ephemeral homeserver and embedded PostgreSQL (no external dependencies required).
 
 ```bash
-cargo test --test integration_tests
+cargo test -p pubky-backup-core --test integration_tests
 ```
 
 Note: The first run will download PostgreSQL binaries (~50-100MB), which are cached for subsequent runs.
