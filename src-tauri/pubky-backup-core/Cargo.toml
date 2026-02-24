@@ -18,6 +18,7 @@ serde = { version = "1", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 walkdir = "2.5"
+parking_lot = "0.12"
 
 [dev-dependencies]
 tempfile = "3.14"

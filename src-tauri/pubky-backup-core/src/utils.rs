@@ -1,5 +1,6 @@
 use log::warn;
 
+/// Maximum number of retry attempts for transient network errors
 const MAX_RETRIES: u32 = 3;
 
 /// Extract URL from an error message for logging context.

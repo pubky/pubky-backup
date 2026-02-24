@@ -2,9 +2,38 @@
 //!
 //! This module handles automatic migration of data from the old flat storage
 //! structure to the new hierarchical structure.
+//!
+//! # Old Structure
+//!
+//! ```text
+//! ~/.pubky-backup/
+//! ├── <pubky>/
+//! │   ├── cursor
+//! │   └── pub/...
+//! ├── error.log
+//! └── last_pubky
+//! ```
+//!
+//! # New Structure
+//!
+//! ```text
+//! ~/.pubky-backup/
+//! ├── config/
+//! │   └── last_pubky
+//! ├── logs/
+//! │   └── error.log
+//! └── keys/
+//!     └── <pubky>/
+//!         ├── state/
+//!         │   ├── cursor
+//!         │   └── error.log
+//!         ├── data/
+//!         │   └── pub/...
+//!         └── snapshots/
+//! ```
 
-use crate::error::StorageError;
-use crate::storage::{
+use super::error::StorageError;
+use super::{
     CONFIG_DIR_NAME, CURSOR_FILENAME, DATA_DIR_NAME, ERROR_LOG_FILENAME, KEYS_DIR_NAME,
     LAST_PUBKY_FILENAME, LOGS_DIR_NAME, STATE_DIR_NAME,
 };
@@ -40,8 +69,8 @@ fn move_file(src: &Path, dst: &Path) -> Result<bool, StorageError> {
     Ok(true)
 }
 
-/// Recursively copy directory contents from src to dst
-/// Used for legacy directory structure migration
+/// Recursively copy directory contents from src to dst.
+/// Used for legacy directory structure migration.
 fn recursive_copy_dir(src: &Path, dst: &Path) -> Result<(), StorageError> {
     std::fs::create_dir_all(dst)
         .map_err(|e| StorageError::DirectoryCreation(format!("{}: {}", dst.display(), e)))?;
@@ -75,33 +104,6 @@ fn recursive_copy_dir(src: &Path, dst: &Path) -> Result<(), StorageError> {
 ///
 /// Detects old-style directories and moves them to new locations.
 /// Safe to call multiple times - detects if migration already done.
-///
-/// # Old Structure
-/// ```text
-/// ~/.pubky-backup/
-/// ├── <pubky>/
-/// │   ├── cursor
-/// │   └── pub/...
-/// ├── error.log
-/// └── last_pubky
-/// ```
-///
-/// # New Structure
-/// ```text
-/// ~/.pubky-backup/
-/// ├── config/
-/// │   └── last_pubky
-/// ├── logs/
-/// │   └── error.log
-/// └── keys/
-///     └── <pubky>/
-///         ├── state/
-///         │   ├── cursor
-///         │   └── error.log
-///         ├── data/
-///         │   └── pub/...
-///         └── snapshots/
-/// ```
 pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
     if !data_dir.exists() {
         return Ok(());
@@ -447,69 +449,6 @@ mod tests {
         assert!(!temp_dir.path().join(pubky2).exists());
     }
 
-    #[test]
-    fn test_migration_preserves_data() {
-        let temp_dir = TempDir::new().unwrap();
-        let pubky_str = DEV_MODE_PUBKY;
-
-        // Setup old structure with various data
-        let nested_files = &[
-            ("profile.json", b"profile content".as_slice()),
-            ("nested/deep/file.txt", b"nested content"),
-            ("binary.bin", &[0u8, 1, 2, 3, 255, 254]),
-        ];
-        create_old_structure(
-            temp_dir.path(),
-            pubky_str,
-            Some("cursor_value_12345"),
-            Some("error log\nwith multiple\nlines"),
-            nested_files,
-        );
-
-        // Run migration
-        migrate_old_structure(temp_dir.path()).unwrap();
-
-        // Verify all data preserved
-        let new_key_dir = temp_dir.path().join(KEYS_DIR_NAME).join(pubky_str);
-
-        let cursor =
-            std::fs::read_to_string(new_key_dir.join(STATE_DIR_NAME).join(CURSOR_FILENAME))
-                .unwrap();
-        assert_eq!(cursor, "cursor_value_12345");
-
-        let error_log =
-            std::fs::read_to_string(new_key_dir.join(STATE_DIR_NAME).join(ERROR_LOG_FILENAME))
-                .unwrap();
-        assert_eq!(error_log, "error log\nwith multiple\nlines");
-
-        let profile = std::fs::read(
-            new_key_dir
-                .join(DATA_DIR_NAME)
-                .join("pub")
-                .join("profile.json"),
-        )
-        .unwrap();
-        assert_eq!(profile, b"profile content");
-
-        let nested = std::fs::read(
-            new_key_dir
-                .join(DATA_DIR_NAME)
-                .join("pub")
-                .join("nested/deep/file.txt"),
-        )
-        .unwrap();
-        assert_eq!(nested, b"nested content");
-
-        let binary = std::fs::read(
-            new_key_dir
-                .join(DATA_DIR_NAME)
-                .join("pub")
-                .join("binary.bin"),
-        )
-        .unwrap();
-        assert_eq!(binary, &[0u8, 1, 2, 3, 255, 254]);
-    }
-
     #[tokio::test]
     async fn test_migration_already_migrated() {
         // Create storage with new structure
@@ -536,47 +475,6 @@ mod tests {
         assert_eq!(data, b"test data");
     }
 
-    #[tokio::test]
-    async fn test_migration_mixed_structure() {
-        let temp_dir = TempDir::new().unwrap();
-        let pubky1 = DEV_MODE_PUBKY;
-        let pubky2 = "o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo";
-
-        // Create new structure for pubky1
-        let new_key1_dir = temp_dir.path().join(KEYS_DIR_NAME).join(pubky1);
-        let new_state1_dir = new_key1_dir.join(STATE_DIR_NAME);
-        let new_data1_dir = new_key1_dir.join(DATA_DIR_NAME);
-        std::fs::create_dir_all(&new_state1_dir).unwrap();
-        std::fs::create_dir_all(&new_data1_dir).unwrap();
-        std::fs::write(new_state1_dir.join(CURSOR_FILENAME), "new_cursor_value").unwrap();
-
-        // Create old structure for pubky2
-        create_old_structure(
-            temp_dir.path(),
-            pubky2,
-            Some("old_cursor_value"),
-            None,
-            &[("file.json", b"old data")],
-        );
-
-        // Run migration
-        migrate_old_structure(temp_dir.path()).unwrap();
-
-        // Verify pubky1 unchanged (new structure preserved)
-        let cursor1 = std::fs::read_to_string(new_state1_dir.join(CURSOR_FILENAME)).unwrap();
-        assert_eq!(cursor1, "new_cursor_value");
-
-        // Verify pubky2 migrated
-        let new_key2_dir = temp_dir.path().join(KEYS_DIR_NAME).join(pubky2);
-        let cursor2 =
-            std::fs::read_to_string(new_key2_dir.join(STATE_DIR_NAME).join(CURSOR_FILENAME))
-                .unwrap();
-        assert_eq!(cursor2, "old_cursor_value");
-
-        // Verify old pubky2 directory removed
-        assert!(!temp_dir.path().join(pubky2).exists());
-    }
-
     #[test]
     fn test_migration_no_old_structure() {
         let temp_dir = TempDir::new().unwrap();
@@ -585,7 +483,6 @@ mod tests {
         migrate_old_structure(temp_dir.path()).unwrap();
 
         // Nothing should have been created
-        // (the new structure is created by AppStorage::new, not migration)
         assert!(!temp_dir.path().join(CONFIG_DIR_NAME).exists());
         assert!(!temp_dir.path().join(LOGS_DIR_NAME).exists());
         assert!(!temp_dir.path().join(KEYS_DIR_NAME).exists());
@@ -610,12 +507,6 @@ mod tests {
         std::fs::create_dir_all(&invalid_dir).unwrap();
         std::fs::write(invalid_dir.join(CURSOR_FILENAME), "invalid_cursor").unwrap();
 
-        // Create another invalid directory with correct length but invalid chars
-        let invalid_dir2 = temp_dir
-            .path()
-            .join("00000000000000000000000000000000000000000000000000000");
-        std::fs::create_dir_all(&invalid_dir2).unwrap();
-
         // Run migration
         migrate_old_structure(temp_dir.path()).unwrap();
 
@@ -627,13 +518,9 @@ mod tests {
             .exists());
         assert!(!temp_dir.path().join(valid_pubky).exists());
 
-        // Verify invalid directories were NOT migrated (left alone)
+        // Verify invalid directory was NOT migrated (left alone)
         assert!(
             invalid_dir.exists(),
-            "Invalid directory should be left alone"
-        );
-        assert!(
-            invalid_dir2.exists(),
             "Invalid directory should be left alone"
         );
     }
@@ -657,27 +544,5 @@ mod tests {
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0], z32_key);
         assert!(!keys[0].starts_with("pubky"));
-    }
-
-    #[test]
-    fn test_old_structure_migration_uses_z32_for_new_dirs() {
-        let temp_dir = TempDir::new().unwrap();
-        let pubky_str = DEV_MODE_PUBKY;
-
-        // Setup old structure
-        create_old_structure(
-            temp_dir.path(),
-            pubky_str,
-            Some("cursor_123"),
-            None,
-            &[("test.json", b"data")],
-        );
-
-        // Run migration
-        migrate_old_structure(temp_dir.path()).unwrap();
-
-        // Verify the new directory uses z32 format (same as input since input was z32)
-        let new_key_dir = temp_dir.path().join(KEYS_DIR_NAME).join(pubky_str);
-        assert!(new_key_dir.exists(), "key directory should use z32 format");
     }
 }

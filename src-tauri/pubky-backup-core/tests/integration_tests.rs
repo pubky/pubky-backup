@@ -17,9 +17,7 @@
 //! Tests are combined where possible to minimize testnet startup overhead.
 
 use pubky::{Keypair, PubkyResource, PublicKey};
-use pubky_backup_core::{
-    AppStorage, BackupController, BackupControllerMessage, BackupControllerStatus,
-};
+use pubky_backup_core::{AppStorage, BackupController, ControllerCommand, ControllerStatus};
 use pubky_testnet::EphemeralTestnet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -231,7 +229,7 @@ async fn test_backup_controller_run_loop() {
         .unwrap();
 
     let (storage, _temp_dir) = create_test_storage();
-    let (control_tx, control_rx) = broadcast::channel(5);
+    let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
     let (status_tx, mut status_rx) = broadcast::channel(10);
 
     let controller = BackupController::new(
@@ -252,18 +250,18 @@ async fn test_backup_controller_run_loop() {
         .unwrap();
 
     match status {
-        BackupControllerStatus::Syncing { .. } | BackupControllerStatus::Idle => {}
+        ControllerStatus::Syncing { .. } | ControllerStatus::Idle { .. } => {}
         other => panic!("Unexpected initial status: {:?}", other),
     }
 
     // === Part 2: Test ForceSync ===
-    control_tx.send(BackupControllerMessage::ForceSync).unwrap();
+    control_tx.send(ControllerCommand::ForceSync).await.unwrap();
 
     // Collect status updates until we see Syncing
     let mut saw_syncing = false;
     for _ in 0..10 {
         match tokio::time::timeout(Duration::from_secs(5), status_rx.recv()).await {
-            Ok(Ok(BackupControllerStatus::Syncing { .. })) => {
+            Ok(Ok(ControllerStatus::Syncing { .. })) => {
                 saw_syncing = true;
                 break;
             }
@@ -279,7 +277,7 @@ async fn test_backup_controller_run_loop() {
     );
 
     // === Part 3: Test Cancel ===
-    control_tx.send(BackupControllerMessage::Cancel).unwrap();
+    control_tx.send(ControllerCommand::Cancel).await.unwrap();
 
     // Controller should finish
     tokio::time::timeout(Duration::from_secs(5), handle)

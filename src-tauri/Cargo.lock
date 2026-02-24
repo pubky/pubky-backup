@@ -5235,6 +5235,7 @@ dependencies = [
  "futures-util",
  "log",
  "opendal",
+ "parking_lot 0.12.4",
  "pubky",
  "pubky-testnet",
  "reqwest",

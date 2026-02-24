@@ -6,10 +6,6 @@ use serde::Serialize;
 pub enum BackupAppError {
     #[error("Internal error: {message}")]
     Internal { message: String },
-    #[error("Failed to find Homeserver for pubky")]
-    HomeserverNotFound { message: String },
-    #[error("Failed to find data for pubky")]
-    DataNotFound { message: String },
     #[error("Invalid pubky format: {message}")]
     InvalidPubkyFormat { message: String },
     #[error("Storage error: {message}")]
@@ -26,12 +22,6 @@ impl BackupAppError {
             message: err.to_string(),
         }
     }
-
-    pub fn lock_failed() -> Self {
-        Self::Internal {
-            message: "Failed to acquire lock".to_string(),
-        }
-    }
 }
 
 impl From<pubky_backup_core::StorageError> for BackupAppError {
@@ -42,17 +32,25 @@ impl From<pubky_backup_core::StorageError> for BackupAppError {
     }
 }
 
-impl From<pubky_backup_core::EventsError> for BackupAppError {
-    fn from(err: pubky_backup_core::EventsError) -> Self {
+impl From<pubky_backup_core::sync::error::EventsError> for BackupAppError {
+    fn from(err: pubky_backup_core::sync::error::EventsError) -> Self {
         Self::Events {
             message: err.to_string(),
         }
     }
 }
 
-impl From<pubky_backup_core::BackupError> for BackupAppError {
-    fn from(err: pubky_backup_core::BackupError) -> Self {
+impl From<pubky_backup_core::SyncError> for BackupAppError {
+    fn from(err: pubky_backup_core::SyncError) -> Self {
         Self::Backup {
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<pubky_backup_core::OrchestratorError> for BackupAppError {
+    fn from(err: pubky_backup_core::OrchestratorError) -> Self {
+        Self::Internal {
             message: err.to_string(),
         }
     }
