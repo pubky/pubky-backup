@@ -29,8 +29,8 @@
 
 mod controller;
 pub mod error;
-pub mod events;
-pub mod fetcher;
+mod events;
+mod fetcher;
 
 pub use controller::{
     BackupController, ControllerCommand, ControllerStatus, SYNC_INTERVAL_SECONDS,

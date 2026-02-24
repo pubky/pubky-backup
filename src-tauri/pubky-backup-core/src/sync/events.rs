@@ -1,7 +1,7 @@
 //! Event stream creation and handling.
 //!
-//! This module provides functions for creating event streams from Pubky homeservers,
-//! as well as mock streams for testing and developer mode.
+//! This module is a simple wrapper around pubky SDK's event streams functionality, it also provides
+//! mock streams for testing and developer mode.
 
 use super::error::EventsError;
 use crate::DEV_MODE_PUBKY;
@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 
 /// Batch size for event stream processing and cursor save frequency.
-pub const EVENT_BATCH_SIZE: u16 = 100;
+pub(super) const EVENT_BATCH_SIZE: u16 = 100;
 
 /// Create a mock event for testing purposes.
 fn make_mock_event(pubky_z32: &str, event_type: EventType, path: &str, cursor_id: u64) -> Event {
@@ -29,7 +29,7 @@ fn make_mock_event(pubky_z32: &str, event_type: EventType, path: &str, cursor_id
 ///
 /// Returns a stream of events starting from the given cursor position.
 /// If cursor is None, starts from the beginning.
-pub async fn create_event_stream(
+pub(super) async fn create_event_stream(
     pubky_client: &Pubky,
     user: &PublicKey,
     cursor: Option<u64>,
@@ -61,7 +61,7 @@ pub async fn create_event_stream(
 ///
 /// Returns a stream of mock events starting from the given cursor position.
 /// Uses the same interface as `create_event_stream` for unified processing.
-pub fn create_mock_event_stream(
+pub(super) fn create_mock_event_stream(
     cursor: Option<u64>,
 ) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
     let mock_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Mock pubky should be valid");
@@ -149,7 +149,7 @@ pub fn create_failing_mock_event_stream(
 /// - `/posts/` paths return mock post data with the post ID
 /// - `/follows` paths return mock follower/following lists
 /// - Other paths return generic mock data
-pub fn get_mock_pubky_resource_data(url: &str) -> Vec<u8> {
+pub(super) fn get_mock_pubky_resource_data(url: &str) -> Vec<u8> {
     if url.contains("/profile") {
         r#"{"name":"Mock User","bio":"This is mock profile data for development","avatar":"https://example.com/avatar.jpg"}"#.as_bytes().to_vec()
     } else if url.contains("/posts/") {

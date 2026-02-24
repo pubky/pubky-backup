@@ -36,7 +36,7 @@ use crate::utils::retry_with_backoff;
 /// # Errors
 ///
 /// Returns `SyncError::Internal` if the fetch fails for non-404 reasons.
-pub async fn fetch_resource_data(
+pub(super) async fn fetch_resource_data(
     pubky_client: &Pubky,
     resource: &PubkyResource,
 ) -> Result<Vec<u8>, SyncError> {

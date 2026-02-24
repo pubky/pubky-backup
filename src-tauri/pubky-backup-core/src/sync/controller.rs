@@ -333,7 +333,7 @@ impl BackupController {
     /// This method performs a single sync batch, fetching events from the cursor position
     /// and processing them. Returns `ControlFlow::Continue(count)` if more events are available,
     /// or `ControlFlow::Break(())` if sync is complete.
-    pub async fn perform_sync_batch(&self) -> Result<ControlFlow<(), usize>, SyncError> {
+    async fn perform_sync_batch(&self) -> Result<ControlFlow<(), usize>, SyncError> {
         let cursor = self.storage.read_cursor(&self.pubky).await?;
 
         // Get event stream - mock stream in developer mode, real stream otherwise
@@ -362,7 +362,7 @@ impl BackupController {
     }
 
     /// Process events from a stream, saving cursor progress periodically and on error.
-    pub async fn process_event_stream(
+    async fn process_event_stream(
         &self,
         mut event_stream: std::pin::Pin<
             Box<dyn futures_util::Stream<Item = Result<Event, EventsError>> + Send>,
