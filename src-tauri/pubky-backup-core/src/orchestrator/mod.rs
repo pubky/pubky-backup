@@ -60,5 +60,5 @@ pub mod session;
 pub mod types;
 
 pub use error::OrchestratorError;
-pub use manager::BackupManager;
+pub use manager::{BackupManager, MAX_KEYS};
 pub use types::{BackupManagerConfig, KeyError, KeyErrorCode, KeyState, KeyStatus, KeyUpdate};

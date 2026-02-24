@@ -155,6 +155,8 @@ pub struct BackupController {
     pubky_client: Arc<Pubky>,
     control_rx: Option<tokio::sync::mpsc::Receiver<ControllerCommand>>,
     status_tx: Option<broadcast::Sender<ControllerStatus>>,
+    /// Initial delay before first sync (for staggering multiple controllers)
+    initial_delay: Duration,
 }
 
 impl BackupController {
@@ -183,12 +185,35 @@ impl BackupController {
         control_rx: Option<tokio::sync::mpsc::Receiver<ControllerCommand>>,
         status_tx: Option<broadcast::Sender<ControllerStatus>>,
     ) -> Self {
+        Self::with_initial_delay(
+            pubky,
+            storage,
+            pubky_client,
+            control_rx,
+            status_tx,
+            Duration::ZERO,
+        )
+    }
+
+    /// Creates a new backup controller with an initial delay before the first sync.
+    ///
+    /// The initial delay is used to stagger multiple controllers started at the same time,
+    /// preventing them from all syncing simultaneously.
+    pub fn with_initial_delay(
+        pubky: PublicKey,
+        storage: Arc<AppStorage>,
+        pubky_client: Arc<Pubky>,
+        control_rx: Option<tokio::sync::mpsc::Receiver<ControllerCommand>>,
+        status_tx: Option<broadcast::Sender<ControllerStatus>>,
+        initial_delay: Duration,
+    ) -> Self {
         Self {
             pubky,
             storage,
             pubky_client,
             control_rx,
             status_tx,
+            initial_delay,
         }
     }
 
@@ -211,7 +236,10 @@ impl BackupController {
     /// This method should not panic under normal circumstances. All errors are
     /// logged and result in an `Error` status being sent before the controller stops.
     pub async fn run(mut self) {
-        let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
+        // Apply initial delay to stagger sync starts across multiple controllers
+        let start_time = time::Instant::now() + self.initial_delay;
+        let mut interval =
+            time::interval_at(start_time, Duration::from_secs(SYNC_INTERVAL_SECONDS));
 
         loop {
             tokio::select! {
@@ -238,10 +266,11 @@ impl BackupController {
                             // Sync complete
                         }
                         Err(e) => {
-                            error!("Critical sync batch failure - terminating backup controller: {}", e);
+                            let error_msg = format!("Critical sync batch failure: {}", e);
+                            let _ = self.storage.write_error(&self.pubky, "sync", &error_msg).await;
                             self.send_status(ControllerStatus::Error {
                                 pubky: self.pubky.clone(),
-                                message: format!("Critical sync batch failure: {}", e),
+                                message: error_msg,
                             });
                             return;
                         }
@@ -358,7 +387,14 @@ impl BackupController {
                     }
                 }
                 Err(e) => {
-                    error!("Event stream error: {}", e);
+                    let _ = self
+                        .storage
+                        .write_error(
+                            &self.pubky,
+                            "event_stream",
+                            &format!("Event stream error: {}", e),
+                        )
+                        .await;
                     // Save progress and break out of stream loop. The next sync interval will reconnect
                     self.save_cursor_if_present(last_cursor).await?;
                     break;

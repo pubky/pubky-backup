@@ -19,6 +19,7 @@ reqwest = { version = "0.12", default-features = false }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 walkdir = "2.5"
 parking_lot = "0.12"
+rand = "0.8"
 
 [dev-dependencies]
 tempfile = "3.14"

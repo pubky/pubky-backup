@@ -5238,6 +5238,7 @@ dependencies = [
  "parking_lot 0.12.4",
  "pubky",
  "pubky-testnet",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "tempfile",

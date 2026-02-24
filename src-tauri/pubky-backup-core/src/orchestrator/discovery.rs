@@ -1,12 +1,11 @@
 //! Homeserver discovery and pubky validation.
 //!
 //! This module handles the discovery of homeservers for pubky keys and validates
-//! that a pubky has data available for backup. It uses PKDNS for homeserver
-//! resolution and checks the homeserver for existing data.
+//! that a pubky has data available for backup.
 //!
 //! # Responsibilities
 //!
-//! - Homeserver discovery via PKDNS
+//! - Homeserver discovery
 //! - Validation that a pubky has backup-able data
 //! - Timeout handling for network operations
 

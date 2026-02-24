@@ -13,8 +13,6 @@ pub struct BackupManagerConfig {
     pub data_dir: Option<PathBuf>,
     /// Timeout for key validation/homeserver discovery in seconds (default: 30)
     pub validation_timeout_secs: u64,
-    /// Maximum concurrent syncs (default: 3, 0 = unlimited)
-    pub max_concurrent_syncs: usize,
     /// Enable developer mode (default: false)
     pub developer_mode: bool,
 }
@@ -24,7 +22,6 @@ impl Default for BackupManagerConfig {
         Self {
             data_dir: None,
             validation_timeout_secs: 30,
-            max_concurrent_syncs: 3,
             developer_mode: false,
         }
     }

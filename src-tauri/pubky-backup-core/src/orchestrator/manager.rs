@@ -1,8 +1,7 @@
 //! Backup manager for orchestrating multiple pubky backups.
 //!
 //! This module contains the main [`BackupManager`] which coordinates multiple
-//! backup controllers, handling key lifecycle, status aggregation, and
-//! concurrency control.
+//! backup controllers, handling key lifecycle and status aggregation.
 //!
 //! # Responsibilities
 //!
@@ -10,7 +9,6 @@
 //! - Coordinating backup controllers via message channels
 //! - Aggregating controller status into public [`KeyUpdate`] messages
 //! - Handling automatic resumption from stored data
-//! - Enforcing concurrency limits on sync operations
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,7 +19,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use log::{error, info, warn};
 use parking_lot::RwLock;
 use pubky::{Pubky, PublicKey};
-use tokio::sync::Semaphore;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
@@ -31,6 +28,12 @@ use super::session;
 use super::types::*;
 use crate::storage::AppStorage;
 use crate::sync::{BackupController, ControllerCommand, ControllerStatus, SYNC_INTERVAL_SECONDS};
+
+/// Maximum number of keys that can be backed up simultaneously.
+///
+/// This limit prevents resource exhaustion from too many concurrent backup controllers.
+/// Should be more flexible in the future but this is fine for current use cases.
+pub const MAX_KEYS: usize = 50;
 
 /// Internal state for a managed key.
 struct ManagedKey {
@@ -90,17 +93,6 @@ pub struct BackupManager {
     update_tx: broadcast::Sender<KeyUpdate>,
     /// Shared status channel sender - all controllers send to this channel
     status_tx: broadcast::Sender<ControllerStatus>,
-    /// Semaphore to limit concurrent syncs (if configured)
-    #[cfg_attr(test, allow(dead_code))]
-    sync_semaphore: Option<Arc<Semaphore>>,
-}
-
-#[cfg(test)]
-impl BackupManager {
-    /// Get the number of available permits in the sync semaphore (for testing)
-    pub fn available_sync_permits(&self) -> Option<usize> {
-        self.sync_semaphore.as_ref().map(|s| s.available_permits())
-    }
 }
 
 impl BackupManager {
@@ -134,13 +126,6 @@ impl BackupManager {
         // Create shared status channel - all controllers send to this channel
         let (status_tx, status_rx) = broadcast::channel(100);
 
-        // Create sync semaphore if max_concurrent_syncs is set
-        let sync_semaphore = if config.max_concurrent_syncs > 0 {
-            Some(Arc::new(Semaphore::new(config.max_concurrent_syncs)))
-        } else {
-            None
-        };
-
         let inner = Arc::new(RwLock::new(ManagerInner {
             keys: HashMap::new(),
             pubky_client,
@@ -152,7 +137,6 @@ impl BackupManager {
             config,
             update_tx: update_tx.clone(),
             status_tx,
-            sync_semaphore,
         };
 
         // Spawn the centralized status listener task
@@ -181,13 +165,17 @@ impl BackupManager {
     /// # Errors
     ///
     /// Returns `OrchestratorError::KeyAlreadyExists` if the key is already being backed up.
+    /// Returns `OrchestratorError::KeyLimitReached` if MAX_KEYS limit is reached.
     /// Returns `OrchestratorError::ValidationFailed` if the key cannot be validated.
     pub async fn add_key(&self, pubky: PublicKey) -> Result<(), OrchestratorError> {
-        // Check if key already exists
+        // Check if key already exists or limit reached
         {
             let inner = self.inner.read();
             if inner.keys.contains_key(&pubky) {
                 return Err(OrchestratorError::KeyAlreadyExists(pubky.to_string()));
+            }
+            if inner.keys.len() >= MAX_KEYS {
+                return Err(OrchestratorError::KeyLimitReached(MAX_KEYS));
             }
         }
 
@@ -451,33 +439,23 @@ impl BackupManager {
             inner.pubky_client.clone()
         };
 
+        // Generate random initial delay (0 to SYNC_INTERVAL_SECONDS) to stagger syncs
+        let initial_delay =
+            std::time::Duration::from_secs(rand::random::<u64>() % SYNC_INTERVAL_SECONDS);
+
         // Create the controller with the shared status channel
         // All controllers send to the same status_tx, identified by pubky in each message
-        let controller = BackupController::new(
+        let controller = BackupController::with_initial_delay(
             pubky.clone(),
             self.storage.clone(),
             pubky_client,
             Some(control_rx),
             Some(self.status_tx.clone()),
+            initial_delay,
         );
 
-        // Spawn the controller task with semaphore for concurrent sync limiting
-        // The permit is acquired before spawning and held for the task's lifetime,
-        // ensuring we don't exceed max_concurrent_syncs running controllers
-        let semaphore = self.sync_semaphore.clone();
-        let permit = if let Some(sem) = semaphore {
-            Some(
-                sem.acquire_owned()
-                    .await
-                    .map_err(|e| OrchestratorError::Internal(format!("Semaphore closed: {}", e)))?,
-            )
-        } else {
-            None
-        };
-
+        // Spawn the controller task
         let task_handle = tokio::spawn(async move {
-            // Hold permit for the lifetime of this controller
-            let _permit = permit;
             controller.run().await;
         });
 
@@ -749,7 +727,6 @@ mod tests {
         BackupManagerConfig {
             data_dir: Some(temp_dir.path().to_path_buf()),
             validation_timeout_secs: 30,
-            max_concurrent_syncs: 3,
             developer_mode: true,
         }
     }
@@ -956,40 +933,6 @@ mod tests {
         // Force sync should succeed
         let result = manager.force_sync(&pubky).await;
         assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_manager_concurrent_sync_limit() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create manager with max 1 concurrent sync
-        let config = BackupManagerConfig {
-            data_dir: Some(temp_dir.path().to_path_buf()),
-            validation_timeout_secs: 30,
-            max_concurrent_syncs: 1,
-            developer_mode: true,
-        };
-
-        let manager = BackupManager::new(config).await.unwrap();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
-
-        // Add first key - should succeed
-        let result = manager.add_key(pubky.clone()).await;
-        assert!(result.is_ok(), "First key should be added successfully");
-
-        // Verify exactly one key is running
-        assert_eq!(manager.get_keys().len(), 1);
-
-        // The semaphore with max_concurrent_syncs=1 means only 1 controller can run.
-        assert!(
-            manager.available_sync_permits().is_some(),
-            "Semaphore should be configured"
-        );
-        assert_eq!(
-            manager.available_sync_permits().unwrap(),
-            0,
-            "Semaphore permit should be acquired by running controller"
-        );
     }
 
     #[tokio::test]

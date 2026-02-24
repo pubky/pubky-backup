@@ -13,6 +13,10 @@ pub enum OrchestratorError {
     #[error("Key {0} is not being backed up")]
     KeyNotFound(String),
 
+    /// Maximum number of keys reached
+    #[error("Maximum number of keys ({0}) reached")]
+    KeyLimitReached(usize),
+
     /// Failed to validate a pubky (homeserver discovery, data check)
     #[error("Failed to validate key: {0}")]
     ValidationFailed(String),

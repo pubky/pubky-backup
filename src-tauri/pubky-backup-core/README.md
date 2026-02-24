@@ -8,7 +8,7 @@ The library is organized into three main modules:
 
 ### `sync` - Event Synchronization
 
-Handles the core backup synchronization logic for a single pubky key. This module is responsible for:
+Handles the core backup synchronization logic for a single pubky key:
 
 - **Event streaming**: Connecting to homeservers and receiving real-time events
 - **Event processing**: Handling PUT/DELETE operations and updating local storage
@@ -16,13 +16,12 @@ Handles the core backup synchronization logic for a single pubky key. This modul
 
 ### `orchestrator` - Multi-Key Management
 
-Provides high-level management of multiple pubky backups running concurrently. This module handles:
+Provides high-level management of multiple pubky backups running concurrently:
 
 - **Key lifecycle**: Adding, removing, and validating backup keys
-- **Concurrency control**: Limiting parallel sync operations via semaphores
+- **Coordination**: Managing multiple backup controllers via message channels
 - **Status aggregation**: Broadcasting status updates for all managed keys
 - **Error recovery**: Restarting failed backups with appropriate delays
-
 
 ### `storage` - Persistence Layer
 
@@ -33,8 +32,7 @@ Manages all file system operations for backup data and application state:
 - **Migration**: Upgrading from legacy storage formats
 - **Snapshots**: Point-in-time backup archives (zip)
 
-
-## Usage
+## Quick Start
 
 For most use cases, use `BackupManager` which handles everything:
 
@@ -45,10 +43,12 @@ use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create manager with default configuration
     let manager = BackupManager::new(BackupManagerConfig::default()).await?;
 
+    // Add a key to backup
     let pubky = PublicKey::from_str("your_pubky_here")?;
-    manager.add_key(pubky).await?;
+    manager.add_key(pubky.clone()).await?;
 
     // Subscribe to status updates
     let mut rx = manager.subscribe();
@@ -60,8 +60,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-For lower-level control, use `BackupController` directly to manage a single key's sync process.
+## Configuration
+
+```rust
+use pubky_backup_core::BackupManagerConfig;
+use std::path::PathBuf;
+
+let config = BackupManagerConfig {
+    // Data directory path (default: ~/.pubky-backup)
+    data_dir: Some(PathBuf::from("/custom/backup/path")),
+    // Timeout for key validation/homeserver discovery in seconds (default: 30)
+    validation_timeout_secs: 30,
+    // Enable developer mode with mock data (default: false)
+    developer_mode: false,
+};
+```
+
+## BackupManager API
+
+| Method | Description |
+|--------|-------------|
+| `new(config)` | Create a new manager, automatically resuming any stored keys |
+| `add_key(pubky)` | Add a key to backup (validates and discovers homeserver) |
+| `remove_key(pubky)` | Stop syncing but preserve data on disk |
+| `delete_key(pubky)` | Stop syncing AND delete all backed-up data |
+| `force_sync(pubky)` | Trigger immediate sync for a specific key |
+| `force_sync_all()` | Trigger immediate sync for all keys |
+| `get_key_state(pubky)` | Get current state of a specific key |
+| `get_all_key_states()` | Get states of all managed keys |
+| `get_keys()` | List all managed pubkys |
+| `subscribe()` | Subscribe to status updates for all keys |
+| `create_snapshot(pubky)` | Create a zip snapshot of a key's data |
+| `data_dir()` | Get the data directory path |
+| `shutdown()` | Gracefully stop all backups |
+
+## Status Updates
+
+Subscribe to real-time status updates via `manager.subscribe()`:
+
+```rust
+use pubky_backup_core::KeyStatus;
+
+let mut rx = manager.subscribe();
+while let Ok(update) = rx.recv().await {
+    match update.state.status {
+        KeyStatus::Starting => println!("Validating key..."),
+        KeyStatus::Syncing { events_processed } => {
+            println!("Syncing: {} events processed", events_processed);
+        }
+        KeyStatus::Idle => println!("Up to date, waiting for next sync"),
+        KeyStatus::Error => {
+            if let Some(err) = &update.state.error {
+                println!("Error: {} (recoverable: {})", err.message, err.recoverable);
+            }
+        }
+        KeyStatus::Stopped => println!("Backup stopped"),
+    }
+}
+```
+
+
+### ControllerCommand
+
+| Command | Description |
+|---------|-------------|
+| `ForceSync` | Trigger an immediate sync (bypasses the interval timer) |
+| `Cancel` | Stop the backup controller gracefully |
 
 ## Developer Mode
 
-Enable developer mode by setting `PUBKY_DEVELOPER_MODE=1`. This uses mock data instead of real network calls, useful for testing and development.
+Enable developer mode to use mock data instead of real network calls:
+
+```bash
+PUBKY_DEVELOPER_MODE=1 cargo run
+```
+
+This is useful for testing and development without needing a real homeserver.
