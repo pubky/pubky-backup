@@ -834,4 +834,57 @@ mod tests {
         // Due to once_cell caching, this won't change the result within the same test run
         // The actual behavior is tested indirectly through other tests that call enable_developer_mode()
     }
+
+    #[tokio::test]
+    async fn test_controller_with_initial_delay() {
+        enable_developer_mode();
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky_client = create_test_pubky_client();
+
+        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
+        let (status_tx, mut status_rx) = broadcast::channel(10);
+
+        // Create controller with a 100ms initial delay (reduced from 500ms for faster tests)
+        let initial_delay = Duration::from_millis(100);
+        let controller = BackupController::with_initial_delay(
+            pubky,
+            storage,
+            pubky_client,
+            Some(control_rx),
+            Some(status_tx),
+            initial_delay,
+        );
+
+        let start = std::time::Instant::now();
+
+        // Spawn the controller
+        tokio::spawn(controller.run());
+
+        // Wait for first Syncing status
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match status_rx.recv().await {
+                    Ok(ControllerStatus::Syncing { .. }) => return,
+                    Ok(_) => continue,
+                    Err(_) => panic!("Channel closed"),
+                }
+            }
+        })
+        .await
+        .expect("Should receive Syncing status");
+
+        let elapsed = start.elapsed();
+
+        // Verify that the first sync was delayed by at least the initial delay
+        // Allow some tolerance for scheduling jitter (80ms minimum for 100ms delay)
+        assert!(
+            elapsed >= Duration::from_millis(80),
+            "First sync should be delayed by initial_delay, but started after {:?}",
+            elapsed
+        );
+
+        // Cleanup
+        let _ = control_tx.send(ControllerCommand::Cancel).await;
+    }
 }

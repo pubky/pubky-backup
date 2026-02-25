@@ -24,4 +24,5 @@ rand = "0.8"
 [dev-dependencies]
 tempfile = "3.14"
 pubky-testnet = { git = "https://github.com/pubky/pubky-core", rev = "a97b30d5fa8c12483358ae283adda8f7d01ec774", features = ["embedded-postgres"] }
+serial_test = "3"
 

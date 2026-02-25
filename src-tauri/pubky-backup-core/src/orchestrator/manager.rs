@@ -1033,9 +1033,27 @@ mod tests {
 
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
 
-        // Add key and wait for sync to create some data
+        // Subscribe to status updates before adding key
+        let mut rx = manager.subscribe();
+
+        // Add key
         manager.add_key(pubky.clone()).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        // Force sync immediately (bypasses random initial delay)
+        manager.force_sync(&pubky).await.unwrap();
+
+        // Wait for Idle status indicating sync is complete
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok(update) = rx.recv().await {
+                    if update.pubky == pubky && matches!(update.state.status, KeyStatus::Idle) {
+                        break;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("Should reach Idle status within timeout");
 
         // Create snapshot
         let snapshot_path = manager.create_snapshot(&pubky).await.unwrap();

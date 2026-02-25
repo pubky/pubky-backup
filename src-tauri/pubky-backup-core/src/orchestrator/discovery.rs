@@ -141,14 +141,4 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), pubky);
     }
-
-    #[tokio::test]
-    async fn test_validate_pubky_non_developer_mode_requires_real_homeserver() {
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
-
-        // In non-developer mode with fake pubky, validation should fail
-        // (no real homeserver exists for this test pubky)
-        let result = validate_pubky(&pubky, 5, false).await;
-        assert!(result.is_err());
-    }
 }

@@ -14,15 +14,17 @@
 //! The first run will download PostgreSQL binaries (~50-100MB), which are cached
 //! for subsequent runs.
 //!
-//! Tests are combined where possible to minimize testnet startup overhead.
+//! A single testnet instance is shared across all tests to minimize startup overhead.
+//! Tests are serialized using `serial_test` to ensure proper sequencing.
 
 use pubky::{Keypair, PubkyResource, PublicKey};
 use pubky_backup_core::{AppStorage, BackupController, ControllerCommand, ControllerStatus};
 use pubky_testnet::EphemeralTestnet;
-use std::sync::Arc;
+use serial_test::serial;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tempfile::TempDir;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 /// Helper to create a storage instance with a temporary directory
 fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
@@ -31,27 +33,80 @@ fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
     (Arc::new(storage), temp_dir)
 }
 
-/// Helper to create a testnet with embedded postgres
-async fn create_testnet() -> EphemeralTestnet {
-    EphemeralTestnet::builder()
-        .with_embedded_postgres()
-        .build()
-        .await
-        .expect("Failed to start testnet with embedded postgres")
+/// Shared testnet instance across all integration tests.
+/// Uses a dedicated tokio runtime to keep the testnet alive across test boundaries.
+static SHARED_TESTNET: OnceLock<(tokio::runtime::Runtime, EphemeralTestnet)> = OnceLock::new();
+
+/// Get the shared testnet instance, initializing it on first use.
+/// The testnet runs in its own dedicated runtime to survive across test boundaries.
+async fn get_shared_testnet() -> &'static EphemeralTestnet {
+    // Use spawn_blocking to avoid nested runtime issues
+    tokio::task::spawn_blocking(|| {
+        let (_, testnet) = SHARED_TESTNET.get_or_init(|| {
+            // Create a dedicated runtime for the testnet
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create testnet runtime");
+
+            let testnet = rt.block_on(async {
+                EphemeralTestnet::builder()
+                    .with_embedded_postgres()
+                    .build()
+                    .await
+                    .expect("Failed to start testnet with embedded postgres")
+            });
+
+            (rt, testnet)
+        });
+        testnet
+    })
+    .await
+    .expect("Failed to get testnet")
 }
 
-/// Helper to run sync batches until completion (with 30 second timeout)
-async fn sync_until_complete(controller: &BackupController) {
-    tokio::time::timeout(Duration::from_secs(30), async {
+/// Helper to run a controller until it reaches Idle state (sync complete).
+///
+/// Spawns the controller's run loop and waits for it to transition to Idle,
+/// then cancels it. Times out after 30 seconds.
+async fn run_controller_until_idle(
+    user_pk: PublicKey,
+    storage: Arc<AppStorage>,
+    pubky_client: Arc<pubky::Pubky>,
+) {
+    let (control_tx, control_rx) = mpsc::channel(5);
+    let (status_tx, mut status_rx) = broadcast::channel(10);
+
+    let controller = BackupController::new(
+        user_pk,
+        storage,
+        pubky_client,
+        Some(control_rx),
+        Some(status_tx),
+    );
+
+    // Spawn the controller
+    let handle = tokio::spawn(controller.run());
+
+    // Wait for Idle status (sync complete)
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            match controller.perform_sync_batch().await.unwrap() {
-                std::ops::ControlFlow::Continue(_) => continue,
-                std::ops::ControlFlow::Break(()) => break,
+            match status_rx.recv().await {
+                Ok(ControllerStatus::Idle { .. }) => break,
+                Ok(_) => continue,
+                Err(_) => panic!("Status channel closed unexpectedly"),
             }
         }
     })
-    .await
-    .expect("Sync should complete within 30 seconds")
+    .await;
+
+    // Cancel the controller
+    let _ = control_tx.send(ControllerCommand::Cancel).await;
+
+    // Wait for controller to finish
+    let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+
+    result.expect("Controller should reach Idle state within 30 seconds");
 }
 
 /// Tests core backup functionality: PUT sync, DELETE sync, cursor persistence, and event stream.
@@ -62,8 +117,9 @@ async fn sync_until_complete(controller: &BackupController) {
 /// 3. Syncing DELETE events removes backed up data
 /// 4. Cursor persists and advances across sync operations
 #[tokio::test]
+#[serial]
 async fn test_backup_sync_put_delete_and_cursor() {
-    let testnet = create_testnet().await;
+    let testnet = get_shared_testnet().await;
     let pubky_client = Arc::new(testnet.sdk().unwrap());
     let homeserver_pk = testnet.homeserver_app().public_key();
 
@@ -119,14 +175,7 @@ async fn test_backup_sync_put_delete_and_cursor() {
     // === Part 3: Test PUT sync ===
     // Create backup controller and sync
     let (storage, _temp_dir) = create_test_storage();
-    let controller = BackupController::new(
-        user_pk.clone(),
-        storage.clone(),
-        pubky_client.clone(),
-        None,
-        None,
-    );
-    sync_until_complete(&controller).await;
+    run_controller_until_idle(user_pk.clone(), storage.clone(), pubky_client.clone()).await;
 
     // Verify data was backed up
     let resource = PubkyResource::new(user_pk.clone(), "/pub/test/file.txt").unwrap();
@@ -155,14 +204,7 @@ async fn test_backup_sync_put_delete_and_cursor() {
         .unwrap();
 
     // Sync again
-    let controller = BackupController::new(
-        user_pk.clone(),
-        storage.clone(),
-        pubky_client.clone(),
-        None,
-        None,
-    );
-    sync_until_complete(&controller).await;
+    run_controller_until_idle(user_pk.clone(), storage.clone(), pubky_client.clone()).await;
 
     // Cursor should have advanced
     let cursor2 = storage.read_cursor(&user_pk).await.unwrap();
@@ -185,14 +227,7 @@ async fn test_backup_sync_put_delete_and_cursor() {
         .unwrap();
 
     // Sync again
-    let controller = BackupController::new(
-        user_pk.clone(),
-        storage.clone(),
-        pubky_client.clone(),
-        None,
-        None,
-    );
-    sync_until_complete(&controller).await;
+    run_controller_until_idle(user_pk.clone(), storage.clone(), pubky_client.clone()).await;
 
     // Verify: deleted file should be gone, other files should remain
     assert!(
@@ -211,8 +246,9 @@ async fn test_backup_sync_put_delete_and_cursor() {
 /// 1. ForceSync triggers an immediate sync
 /// 2. Cancel stops the controller gracefully
 #[tokio::test]
+#[serial]
 async fn test_backup_controller_run_loop() {
-    let testnet = create_testnet().await;
+    let testnet = get_shared_testnet().await;
     let pubky_client = Arc::new(testnet.sdk().unwrap());
     let homeserver_pk = testnet.homeserver_app().public_key();
 
@@ -290,8 +326,9 @@ async fn test_backup_controller_run_loop() {
 ///
 /// Each user's backup should only contain their own data.
 #[tokio::test]
+#[serial]
 async fn test_multiple_users_isolation() {
-    let testnet = create_testnet().await;
+    let testnet = get_shared_testnet().await;
     let pubky_client = Arc::new(testnet.sdk().unwrap());
     let homeserver_pk = testnet.homeserver_app().public_key();
 
@@ -325,25 +362,11 @@ async fn test_multiple_users_isolation() {
 
     // Backup user1
     let (storage1, _temp_dir1) = create_test_storage();
-    let controller1 = BackupController::new(
-        user1_pk.clone(),
-        storage1.clone(),
-        pubky_client.clone(),
-        None,
-        None,
-    );
-    sync_until_complete(&controller1).await;
+    run_controller_until_idle(user1_pk.clone(), storage1.clone(), pubky_client.clone()).await;
 
     // Backup user2
     let (storage2, _temp_dir2) = create_test_storage();
-    let controller2 = BackupController::new(
-        user2_pk.clone(),
-        storage2.clone(),
-        pubky_client.clone(),
-        None,
-        None,
-    );
-    sync_until_complete(&controller2).await;
+    run_controller_until_idle(user2_pk.clone(), storage2.clone(), pubky_client.clone()).await;
 
     // Verify each backup only contains their user's data
     let resource1 = PubkyResource::new(user1_pk.clone(), "/pub/user1.txt").unwrap();
