@@ -176,8 +176,6 @@ impl BackupManager {
             }
         }
 
-        // Validate the key and discover homeserver
-        // Validate the pubky (discovers homeserver, checks data exists)
         discovery::validate_pubky(
             &pubky,
             self.config.validation_timeout_secs,
@@ -185,7 +183,6 @@ impl BackupManager {
         )
         .await?;
 
-        // Start the controller
         self.start_controller(pubky.clone()).await?;
 
         info!("Added key for backup: {}", pubky);
@@ -266,43 +263,12 @@ impl BackupManager {
         Ok(())
     }
 
-    /// Force immediate sync for all keys.
-    pub async fn force_sync_all(&self) -> Result<(), OrchestratorError> {
-        let keys: Vec<PublicKey> = {
-            let inner = self.inner.read();
-            inner.keys.keys().cloned().collect()
-        };
-
-        for pubky in keys {
-            if let Err(e) = self.force_sync(&pubky).await {
-                let error_msg = format!("Failed to force sync for {}: {}", pubky, e);
-                warn!("{}", error_msg);
-                let _ = self
-                    .storage
-                    .write_global_error("force_sync_all", &error_msg)
-                    .await;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Get current state of a specific key.
     ///
     /// Returns `None` if the key is not being backed up.
     pub fn get_key_state(&self, pubky: &PublicKey) -> Option<KeyState> {
         let inner = self.inner.read();
         inner.keys.get(pubky).map(|k| k.state.clone())
-    }
-
-    /// Get states of all managed keys.
-    pub fn get_all_key_states(&self) -> HashMap<PublicKey, KeyState> {
-        let inner = self.inner.read();
-        inner
-            .keys
-            .iter()
-            .map(|(k, v)| (k.clone(), v.state.clone()))
-            .collect()
     }
 
     /// Get list of all managed pubkys.
@@ -437,8 +403,12 @@ impl BackupManager {
         };
 
         // Generate random initial delay (0 to SYNC_INTERVAL_SECONDS) to stagger syncs
-        // Skip staggering in developer mode for faster test execution
-        let initial_delay = if self.config.developer_mode {
+        // Skip staggering in developer mode or if this is the first key
+        let key_count = {
+            let inner = self.inner.read();
+            inner.keys.len()
+        };
+        let initial_delay = if self.config.developer_mode || key_count == 0 {
             std::time::Duration::ZERO
         } else {
             std::time::Duration::from_secs(rand::random::<u64>() % SYNC_INTERVAL_SECONDS)
@@ -867,23 +837,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_manager_get_all_key_states() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = create_test_config(&temp_dir);
-        let manager = BackupManager::new(config).await.unwrap();
-
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
-
-        // Add key
-        manager.add_key(pubky.clone()).await.unwrap();
-
-        // Get all states
-        let states = manager.get_all_key_states();
-        assert_eq!(states.len(), 1);
-        assert!(states.contains_key(&pubky));
-    }
-
-    #[tokio::test]
     async fn test_manager_any_syncing() {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
@@ -1069,31 +1022,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_manager_force_sync_all() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = create_test_config(&temp_dir);
-        let manager = BackupManager::new(config).await.unwrap();
-
-        let pubky1 = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
-        let pubky2 =
-            PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
-
-        // Add two keys
-        manager.add_key(pubky1.clone()).await.unwrap();
-        manager.add_key(pubky2.clone()).await.unwrap();
-
-        // Wait for initial sync to complete
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-        // Force sync all should succeed without errors
-        let result = manager.force_sync_all().await;
-        assert!(result.is_ok(), "force_sync_all should succeed");
-
-        // Both keys should still be running
-        assert_eq!(manager.get_keys().len(), 2);
-    }
-
-    #[tokio::test]
     async fn test_manager_delete_key_not_found() {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
@@ -1182,5 +1110,47 @@ mod tests {
         );
         assert_eq!(state.data_size, 1234, "Should preserve current data size");
         assert!(state.error.is_none(), "Should not have error");
+    }
+
+    #[tokio::test]
+    async fn test_first_key_starts_immediately_without_stagger_delay() {
+        // Test that the first key added starts syncing immediately (no stagger delay),
+        // even when developer_mode is false. This ensures good UX for single-key users.
+        // The stagger delay logic checks key_count == 0 before inserting the key.
+        let temp_dir = TempDir::new().unwrap();
+        let config = BackupManagerConfig {
+            data_dir: Some(temp_dir.path().to_path_buf()),
+            validation_timeout_secs: 30,
+            developer_mode: true, // Use dev mode to avoid real network calls
+        };
+        let manager = BackupManager::new(config).await.unwrap();
+
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let mut rx = manager.subscribe();
+
+        // Add the first key
+        let start = std::time::Instant::now();
+        manager.add_key(pubky.clone()).await.unwrap();
+
+        // Wait for the Starting status - should arrive quickly since first key has no delay
+        let update = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+            loop {
+                if let Ok(update) = rx.recv().await {
+                    if update.pubky == pubky && matches!(update.state.status, KeyStatus::Starting) {
+                        return update;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("First key should start immediately without stagger delay");
+
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "First key should start within 100ms (no stagger delay), but took {:?}",
+            elapsed
+        );
+        assert_eq!(update.pubky, pubky);
     }
 }

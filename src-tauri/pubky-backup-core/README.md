@@ -85,9 +85,7 @@ let config = BackupManagerConfig {
 | `remove_key(pubky)` | Stop syncing but preserve data on disk |
 | `delete_key(pubky)` | Stop syncing AND delete all backed-up data |
 | `force_sync(pubky)` | Trigger immediate sync for a specific key |
-| `force_sync_all()` | Trigger immediate sync for all keys |
 | `get_key_state(pubky)` | Get current state of a specific key |
-| `get_all_key_states()` | Get states of all managed keys |
 | `get_keys()` | List all managed pubkys |
 | `subscribe()` | Subscribe to status updates for all keys |
 | `create_snapshot(pubky)` | Create a zip snapshot of a key's data |
