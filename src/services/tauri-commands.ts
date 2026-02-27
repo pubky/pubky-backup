@@ -62,6 +62,18 @@ export async function getLastPubky(): Promise<string | null> {
 }
 
 /**
+ * Set which pubky is currently being viewed in the UI
+ * @throws {BackendError} If setting viewed pubky fails
+ */
+export async function setViewedPubky(pubkyStr: string): Promise<void> {
+  try {
+    await invoke("set_viewed_pubky", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
  * Begin the backup controller
  * @throws {BackendError} If starting backup controller fails
  */

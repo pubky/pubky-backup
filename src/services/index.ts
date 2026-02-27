@@ -3,6 +3,7 @@ export {
   fetchState,
   getPreviousPubkyKeys,
   getLastPubky,
+  setViewedPubky,
   backupControllerBegin,
   backupControllerClose,
   forceSyncNow,

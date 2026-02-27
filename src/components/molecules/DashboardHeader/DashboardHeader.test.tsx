@@ -6,7 +6,6 @@ describe("DashboardHeader", () => {
   const defaultProps = {
     pubkyDisplay: "abcde...vwxyz",
     status: "synced" as const,
-    onBack: vi.fn(),
     onCopy: vi.fn(),
   };
 
@@ -34,16 +33,6 @@ describe("DashboardHeader", () => {
     expect(screen.getByText("SNAPSHOT!")).toBeInTheDocument();
   });
 
-  it("should call onBack when back button is clicked", () => {
-    const onBack = vi.fn();
-    render(<DashboardHeader {...defaultProps} onBack={onBack} />);
-
-    const backButton = screen.getByTitle("Back");
-    fireEvent.click(backButton);
-
-    expect(onBack).toHaveBeenCalledOnce();
-  });
-
   it("should call onCopy when copy button is clicked", () => {
     const onCopy = vi.fn();
     render(<DashboardHeader {...defaultProps} onCopy={onCopy} />);
@@ -54,10 +43,9 @@ describe("DashboardHeader", () => {
     expect(onCopy).toHaveBeenCalledOnce();
   });
 
-  it("should render back and copy buttons", () => {
+  it("should render copy button", () => {
     render(<DashboardHeader {...defaultProps} />);
 
-    expect(screen.getByTitle("Back")).toBeInTheDocument();
     expect(screen.getByTitle("Copy full pubky")).toBeInTheDocument();
   });
 

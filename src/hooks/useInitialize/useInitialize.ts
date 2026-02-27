@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { initAppState, backupControllerBegin } from "@/services";
 
 interface InitializeParams {
@@ -34,10 +34,16 @@ interface InitializeParams {
  * ```
  */
 export function useInitialize() {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: async ({ pubkyValue }: InitializeParams) => {
       await initAppState(pubkyValue);
       await backupControllerBegin();
+    },
+    onSuccess: () => {
+      // Invalidate the previous keys query so the new key appears in the list
+      void queryClient.invalidateQueries({ queryKey: ["previousPubkyKeys"] });
     },
   });
 }

@@ -3,6 +3,7 @@ import { devtools } from "zustand/middleware";
 import {
   type UIStore,
   type Screen,
+  type Page,
   type StatusMessageMode,
   uiInitialState,
   UIActionTypes,
@@ -15,6 +16,9 @@ export const useUIStore = create<UIStore>()(
 
       setScreen: (screen: Screen) =>
         set({ currentScreen: screen }, false, UIActionTypes.SET_SCREEN),
+
+      setPage: (page: Page) =>
+        set({ currentPage: page }, false, UIActionTypes.SET_PAGE),
 
       setStatusMessageMode: (mode: StatusMessageMode) =>
         set(

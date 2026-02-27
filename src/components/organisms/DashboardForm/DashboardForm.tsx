@@ -157,66 +157,64 @@ export function DashboardForm() {
   }, [statusMessageMode, isSyncing, countdownText]);
 
   return (
-    <main className="flex flex-col items-center justify-start text-center relative">
-      <Atoms.Card>
-        {/* Header */}
-        <Molecules.DashboardHeader
-          pubkyDisplay={Utils.displayPubky(pubky)}
-          status={statusInfo.badge}
-          onBack={() => void handleBack()}
-          onCopy={handleCopy}
-        />
+    <>
+      {/* Header */}
+      <Molecules.DashboardHeader
+        pubkyDisplay={Utils.displayPubky(pubky)}
+        status={statusInfo.badge}
+        onBack={() => void handleBack()}
+        onCopy={handleCopy}
+      />
 
-        {/* Sync message banner */}
-        <Molecules.SyncMessage
-          status={statusInfo.message}
-          message={statusInfo.text}
-        />
+      {/* Sync message banner */}
+      <Molecules.SyncMessage
+        status={statusInfo.message}
+        message={statusInfo.text}
+      />
 
-        {/* Info cards */}
-        <div className="flex flex-col self-stretch p-3 bg-surface-light rounded-lg gap-0">
-          <div className="flex justify-stretch items-stretch self-stretch">
-            <Molecules.InfoCard
-              icon={<Atoms.DatabaseIcon size={18} />}
-              label="Backup Size"
-              value={Utils.formatFileSize(dataSize)}
-            />
-            <Molecules.InfoCard
-              icon={<Atoms.ClockIcon size={18} />}
-              label="Last Sync"
-              value={
-                lastSyncTime !== null
-                  ? Utils.formatTimestamp(lastSyncTime)
-                  : "--"
-              }
-            />
-          </div>
+      {/* Info cards */}
+      <div className="flex flex-col self-stretch p-3 bg-surface-light rounded-lg gap-0">
+        <div className="flex justify-stretch items-stretch self-stretch">
           <Molecules.InfoCard
-            icon={<Atoms.FolderIcon size={18} />}
-            label="Backup Location"
-            value={dataDirPath ?? "--"}
-            fullWidth
-            action={
-              <Atoms.IconButton
-                variant="inline"
-                onClick={() => void handleOpenDataDir()}
-                title="Open data directory"
-              >
-                <Atoms.ExternalLinkIcon size={16} />
-              </Atoms.IconButton>
+            icon={<Atoms.DatabaseIcon size={18} />}
+            label="Backup Size"
+            value={Utils.formatFileSize(dataSize)}
+          />
+          <Molecules.InfoCard
+            icon={<Atoms.ClockIcon size={18} />}
+            label="Last Sync"
+            value={
+              lastSyncTime !== null
+                ? Utils.formatTimestamp(lastSyncTime)
+                : "--"
             }
           />
         </div>
-
-        {/* Action buttons */}
-        <ActionButtons
-          isSyncing={isSyncing}
-          isCreatingSnapshot={snapshotMutation.isPending}
-          isForceSyncing={forceSyncMutation.isPending}
-          onSnapshot={() => void handleSnapshot()}
-          onForceSync={() => void handleForceSync()}
+        <Molecules.InfoCard
+          icon={<Atoms.FolderIcon size={18} />}
+          label="Backup Location"
+          value={dataDirPath ?? "--"}
+          fullWidth
+          action={
+            <Atoms.IconButton
+              variant="inline"
+              onClick={() => void handleOpenDataDir()}
+              title="Open data directory"
+            >
+              <Atoms.ExternalLinkIcon size={16} />
+            </Atoms.IconButton>
+          }
         />
-      </Atoms.Card>
-    </main>
+      </div>
+
+      {/* Action buttons */}
+      <ActionButtons
+        isSyncing={isSyncing}
+        isCreatingSnapshot={snapshotMutation.isPending}
+        isForceSyncing={forceSyncMutation.isPending}
+        onSnapshot={() => void handleSnapshot()}
+        onForceSync={() => void handleForceSync()}
+      />
+    </>
   );
 }

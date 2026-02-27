@@ -1,6 +1,7 @@
 export type Screen = "startup" | "dashboard";
 export type StatusMessageMode = "sync" | "snapshot-success" | "snapshot-error";
 export type ToastType = "success" | "error";
+export type Page = "sync" | "activity" | "keys" | "settings";
 
 export interface ToastState {
   visible: boolean;
@@ -11,6 +12,7 @@ export interface ToastState {
 
 export interface UIState {
   currentScreen: Screen;
+  currentPage: Page;
   statusMessageMode: StatusMessageMode;
   pubkyInputValue: string;
   hasAutoLoaded: boolean;
@@ -19,6 +21,7 @@ export interface UIState {
 
 export interface UIActions {
   setScreen: (screen: Screen) => void;
+  setPage: (page: Page) => void;
   setStatusMessageMode: (mode: StatusMessageMode) => void;
   setPubkyInputValue: (value: string) => void;
   setHasAutoLoaded: (value: boolean) => void;
@@ -31,6 +34,7 @@ export type UIStore = UIState & UIActions;
 
 export const uiInitialState: UIState = {
   currentScreen: "startup",
+  currentPage: "sync",
   statusMessageMode: "sync",
   pubkyInputValue: "",
   hasAutoLoaded: false,
@@ -44,6 +48,7 @@ export const uiInitialState: UIState = {
 
 export enum UIActionTypes {
   SET_SCREEN = "SET_SCREEN",
+  SET_PAGE = "SET_PAGE",
   SET_STATUS_MESSAGE_MODE = "SET_STATUS_MESSAGE_MODE",
   SET_PUBKY_INPUT_VALUE = "SET_PUBKY_INPUT_VALUE",
   SET_HAS_AUTO_LOADED = "SET_HAS_AUTO_LOADED",

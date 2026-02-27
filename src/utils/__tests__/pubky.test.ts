@@ -1,5 +1,31 @@
 import { describe, it, expect } from "vitest";
-import { displayPubky } from "../pubky";
+import { displayPubky, stripPubkyPrefix } from "../pubky";
+
+describe("stripPubkyPrefix", () => {
+  it("should strip 'pubky' prefix from string", () => {
+    expect(stripPubkyPrefix("pubkyabc123")).toBe("abc123");
+  });
+
+  it("should return unchanged string if no 'pubky' prefix", () => {
+    expect(stripPubkyPrefix("abc123")).toBe("abc123");
+  });
+
+  it("should handle empty string", () => {
+    expect(stripPubkyPrefix("")).toBe("");
+  });
+
+  it("should handle string that is exactly 'pubky'", () => {
+    expect(stripPubkyPrefix("pubky")).toBe("");
+  });
+
+  it("should only strip prefix, not occurrences elsewhere", () => {
+    expect(stripPubkyPrefix("pubkycontainspubky")).toBe("containspubky");
+  });
+
+  it("should be case-sensitive (not strip PUBKY)", () => {
+    expect(stripPubkyPrefix("PUBKYabc")).toBe("PUBKYabc");
+  });
+});
 
 describe("displayPubky", () => {
   it("should return ... for null input", () => {
@@ -55,5 +81,18 @@ describe("displayPubky", () => {
     const boundaryPubky = "12345678901234";
     const result = displayPubky(boundaryPubky);
     expect(result).toBe("12345...01234");
+  });
+
+  it("should strip 'pubky' prefix before truncating", () => {
+    // With prefix: "pubkyabcdefghijklmnopqrstuvwxyz" (31 chars)
+    // After stripping: "abcdefghijklmnopqrstuvwxyz" (26 chars)
+    const pubkyPrefixed = "pubkyabcdefghijklmnopqrstuvwxyz";
+    const result = displayPubky(pubkyPrefixed);
+    expect(result).toBe("abcde...vwxyz");
+  });
+
+  it("should strip 'pubky' prefix for short strings too", () => {
+    // With prefix: "pubkyshort" -> "short" (5 chars, under threshold)
+    expect(displayPubky("pubkyshort")).toBe("short");
   });
 });

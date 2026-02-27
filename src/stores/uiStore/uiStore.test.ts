@@ -6,6 +6,7 @@ describe("useUIStore", () => {
     // Reset store to initial state before each test
     useUIStore.setState({
       currentScreen: "startup",
+      currentPage: "sync",
       statusMessageMode: "sync",
       pubkyInputValue: "",
       hasAutoLoaded: false,
@@ -46,6 +47,11 @@ describe("useUIStore", () => {
       const state = useUIStore.getState();
       expect(state.hasAutoLoaded).toBe(false);
     });
+
+    it("should have sync as default page", () => {
+      const state = useUIStore.getState();
+      expect(state.currentPage).toBe("sync");
+    });
   });
 
   describe("setScreen", () => {
@@ -58,6 +64,29 @@ describe("useUIStore", () => {
       useUIStore.getState().setScreen("dashboard");
       useUIStore.getState().setScreen("startup");
       expect(useUIStore.getState().currentScreen).toBe("startup");
+    });
+  });
+
+  describe("setPage", () => {
+    it("should change page to activity", () => {
+      useUIStore.getState().setPage("activity");
+      expect(useUIStore.getState().currentPage).toBe("activity");
+    });
+
+    it("should change page to keys", () => {
+      useUIStore.getState().setPage("keys");
+      expect(useUIStore.getState().currentPage).toBe("keys");
+    });
+
+    it("should change page to settings", () => {
+      useUIStore.getState().setPage("settings");
+      expect(useUIStore.getState().currentPage).toBe("settings");
+    });
+
+    it("should change page back to sync", () => {
+      useUIStore.getState().setPage("settings");
+      useUIStore.getState().setPage("sync");
+      expect(useUIStore.getState().currentPage).toBe("sync");
     });
   });
 
