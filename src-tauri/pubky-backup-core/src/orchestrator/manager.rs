@@ -278,7 +278,12 @@ impl BackupManager {
 
         for pubky in keys {
             if let Err(e) = self.force_sync(&pubky).await {
-                warn!("Failed to force sync for {}: {}", pubky, e);
+                let error_msg = format!("Failed to force sync for {}: {}", pubky, e);
+                warn!("{}", error_msg);
+                let _ = self
+                    .storage
+                    .write_global_error("force_sync_all", &error_msg)
+                    .await;
             }
         }
 
@@ -481,7 +486,12 @@ impl BackupManager {
         let key_dirs = match self.storage.list_pubky_directories() {
             Ok(dirs) => dirs,
             Err(e) => {
-                warn!("Failed to list key directories: {}", e);
+                let error_msg = format!("Failed to list key directories: {}", e);
+                warn!("{}", error_msg);
+                let _ = self
+                    .storage
+                    .write_global_error("resume_stored_keys", &error_msg)
+                    .await;
                 return;
             }
         };
@@ -497,7 +507,12 @@ impl BackupManager {
             let pubky = match PublicKey::from_str(&pubky_str) {
                 Ok(p) => p,
                 Err(e) => {
-                    warn!("Invalid pubky directory name {}: {}", pubky_str, e);
+                    let error_msg = format!("Invalid pubky directory name {}: {}", pubky_str, e);
+                    warn!("{}", error_msg);
+                    let _ = self
+                        .storage
+                        .write_global_error("resume_stored_keys", &error_msg)
+                        .await;
                     continue;
                 }
             };
@@ -511,7 +526,12 @@ impl BackupManager {
             {
                 Ok(homeserver) => {
                     if let Err(e) = self.start_controller(pubky.clone(), Some(homeserver)).await {
-                        error!("Failed to resume key {}: {}", pubky, e);
+                        let error_msg = format!("Failed to resume key {}: {}", pubky, e);
+                        error!("{}", error_msg);
+                        let _ = self
+                            .storage
+                            .write_global_error("resume_stored_keys", &error_msg)
+                            .await;
                         // Start in error state
                         self.start_controller_in_error_state(
                             pubky,
@@ -525,7 +545,13 @@ impl BackupManager {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to validate key {} during resume: {}", pubky, e);
+                    let error_msg =
+                        format!("Failed to validate key {} during resume: {}", pubky, e);
+                    warn!("{}", error_msg);
+                    let _ = self
+                        .storage
+                        .write_global_error("resume_stored_keys", &error_msg)
+                        .await;
                     // Start in error state with recoverable flag
                     self.start_controller_in_error_state(
                         pubky,

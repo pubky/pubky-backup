@@ -8,7 +8,7 @@
 //!
 //! The library is organized into three main modules:
 //!
-//! - [`sync`] - Event synchronization from homeservers (streaming, processing, fetching)
+//! - [`sync`] - Event synchronization from homeservers for a single pubkey (streaming, processing, fetching)
 //! - [`orchestrator`] - Multi-key backup management (validation, lifecycle, coordination)
 //! - [`storage`] - Persistence layer (app data, per-key data, snapshots)
 //!
