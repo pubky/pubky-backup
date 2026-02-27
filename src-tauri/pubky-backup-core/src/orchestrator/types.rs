@@ -35,9 +35,6 @@ impl Default for BackupManagerConfig {
 pub struct KeyState {
     /// Current status of the key backup
     pub status: KeyStatus,
-    /// The key's homeserver, if discovered
-    #[serde(skip)]
-    pub homeserver: Option<PublicKey>,
     /// Total size of backed up data in bytes
     pub data_size: u64,
     /// Unix timestamp of last successful sync
@@ -58,7 +55,6 @@ impl Default for KeyState {
     fn default() -> Self {
         Self {
             status: KeyStatus::Starting,
-            homeserver: None,
             data_size: 0,
             last_sync: None,
             next_sync: None,

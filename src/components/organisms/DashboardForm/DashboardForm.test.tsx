@@ -46,7 +46,6 @@ function createWrapper() {
 
 const mockAppState: AppState = {
   pubky: "pk:testpubky12345678901234567890",
-  homeserver: "https://example.com",
   developer_mode: false,
   is_syncing: false,
   next_sync_time: Math.floor(Date.now() / 1000) + 60,

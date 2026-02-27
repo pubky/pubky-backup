@@ -5,8 +5,6 @@
 export interface AppState {
   /** This session's pubky */
   pubky: string | null;
-  /** This session's pubky's homeserver */
-  homeserver: string | null;
   /** Developer mode for working on the front-end */
   developer_mode: boolean;
   /** Current sync status */
@@ -31,7 +29,6 @@ export function isAppState(value: unknown): value is AppState {
 
   return (
     (typeof state.pubky === "string" || state.pubky === null) &&
-    (typeof state.homeserver === "string" || state.homeserver === null) &&
     typeof state.developer_mode === "boolean" &&
     typeof state.is_syncing === "boolean" &&
     typeof state.next_sync_time === "number" &&

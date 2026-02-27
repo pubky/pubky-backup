@@ -42,9 +42,6 @@ pub struct AppState {
     /// This session's pubky
     #[serde_as(as = "Option<DisplayFromStr>")]
     pubky: Option<PublicKey>,
-    /// This session's pubky's homeserver. Stored only for displaying in GUI.
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    homeserver: Option<PublicKey>,
     /// Developer mode for working on the front-end - doesnt make network calls and populates with mock data.
     developer_mode: bool,
     /// Current sync status
@@ -63,7 +60,6 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             pubky: None,
-            homeserver: None,
             developer_mode: is_developer_mode(),
             is_syncing: false,
             next_sync_time: 0,
@@ -91,7 +87,6 @@ impl AppState {
 
         Self {
             pubky: Some(pubky.clone()),
-            homeserver: key_state.homeserver.clone(),
             developer_mode: is_developer_mode(),
             is_syncing,
             next_sync_time: key_state.next_sync.unwrap_or_else(default_next_sync_time),

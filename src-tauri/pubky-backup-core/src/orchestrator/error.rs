@@ -17,7 +17,11 @@ pub enum OrchestratorError {
     #[error("Maximum number of keys ({0}) reached")]
     KeyLimitReached(usize),
 
-    /// Failed to validate a pubky (homeserver discovery, data check)
+    /// Could not discover homeserver for the pubky
+    #[error("Could not find homeserver: {0}")]
+    HomeserverNotFound(String),
+
+    /// Failed to validate a pubky (data check, etc.)
     #[error("Failed to validate key: {0}")]
     ValidationFailed(String),
 

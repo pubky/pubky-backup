@@ -32,7 +32,6 @@ describe("useAppState", () => {
   it("should fetch app state when enabled", async () => {
     const mockState = {
       pubky: "pk:test123",
-      homeserver: "https://example.com",
       developer_mode: false,
       is_syncing: false,
       next_sync_time: 1672531200,

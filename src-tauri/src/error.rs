@@ -8,6 +8,8 @@ pub enum BackupAppError {
     Internal { message: String },
     #[error("Invalid pubky format: {message}")]
     InvalidPubkyFormat { message: String },
+    #[error("Homeserver not found: {message}")]
+    HomeserverNotFound { message: String },
     #[error("Storage error: {message}")]
     Storage { message: String },
     #[error("Events error: {message}")]
@@ -50,8 +52,12 @@ impl From<pubky_backup_core::SyncError> for BackupAppError {
 
 impl From<pubky_backup_core::OrchestratorError> for BackupAppError {
     fn from(err: pubky_backup_core::OrchestratorError) -> Self {
-        Self::Internal {
-            message: err.to_string(),
+        use pubky_backup_core::OrchestratorError;
+        match err {
+            OrchestratorError::HomeserverNotFound(msg) => Self::HomeserverNotFound { message: msg },
+            _ => Self::Internal {
+                message: err.to_string(),
+            },
         }
     }
 }

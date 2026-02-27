@@ -37,9 +37,6 @@ pub const MAX_KEYS: usize = 50;
 
 /// Internal state for a managed key.
 struct ManagedKey {
-    /// The homeserver for this pubky (stored for potential future use)
-    #[allow(dead_code)]
-    homeserver: Option<PublicKey>,
     /// Sender for control messages to the backup controller (mpsc - single receiver)
     control_tx: mpsc::Sender<ControllerCommand>,
     /// Current state of the key
@@ -180,7 +177,8 @@ impl BackupManager {
         }
 
         // Validate the key and discover homeserver
-        let homeserver = discovery::validate_pubky(
+        // Validate the pubky (discovers homeserver, checks data exists)
+        discovery::validate_pubky(
             &pubky,
             self.config.validation_timeout_secs,
             self.config.developer_mode,
@@ -188,8 +186,7 @@ impl BackupManager {
         .await?;
 
         // Start the controller
-        self.start_controller(pubky.clone(), Some(homeserver))
-            .await?;
+        self.start_controller(pubky.clone()).await?;
 
         info!("Added key for backup: {}", pubky);
         Ok(())
@@ -408,11 +405,7 @@ impl BackupManager {
     // --- Internal methods ---
 
     /// Start the backup controller for a key
-    async fn start_controller(
-        &self,
-        pubky: PublicKey,
-        homeserver: Option<PublicKey>,
-    ) -> Result<(), OrchestratorError> {
+    async fn start_controller(&self, pubky: PublicKey) -> Result<(), OrchestratorError> {
         // Create mpsc channel for control commands (single receiver per controller)
         let (control_tx, control_rx) = mpsc::channel(5);
 
@@ -422,7 +415,6 @@ impl BackupManager {
         // Create initial state
         let initial_state = KeyState {
             status: KeyStatus::Starting,
-            homeserver: homeserver.clone(),
             data_size: initial_size,
             last_sync: None,
             next_sync: Some(next_sync_time()),
@@ -474,7 +466,6 @@ impl BackupManager {
             inner.keys.insert(
                 pubky.clone(),
                 ManagedKey {
-                    homeserver,
                     control_tx,
                     state: initial_state,
                     _task_handle: task_handle,
@@ -528,8 +519,8 @@ impl BackupManager {
             )
             .await
             {
-                Ok(homeserver) => {
-                    if let Err(e) = self.start_controller(pubky.clone(), Some(homeserver)).await {
+                Ok(_) => {
+                    if let Err(e) = self.start_controller(pubky.clone()).await {
                         let error_msg = format!("Failed to resume key {}: {}", pubky, e);
                         error!("{}", error_msg);
                         let _ = self
@@ -577,7 +568,6 @@ impl BackupManager {
 
         let error_state = KeyState {
             status: KeyStatus::Error,
-            homeserver: None,
             data_size: self.storage.calculate_pubky_size(&pubky).await,
             last_sync: None,
             next_sync: None,
@@ -602,7 +592,6 @@ impl BackupManager {
             inner.keys.insert(
                 pubky,
                 ManagedKey {
-                    homeserver: None,
                     control_tx,
                     state: error_state,
                     _task_handle: task_handle,
@@ -634,19 +623,18 @@ fn spawn_status_listener(
                 ControllerStatus::Error { pubky, .. } => pubky.clone(),
             };
 
-            // Get current state to preserve data_size and homeserver
-            let (current_data_size, homeserver) = {
+            // Get current data_size to preserve
+            let current_data_size = {
                 let inner_read = inner.read();
                 inner_read
                     .keys
                     .get(&pubky)
-                    .map(|k| (k.state.data_size, k.homeserver.clone()))
-                    .unwrap_or((0, None))
+                    .map(|k| k.state.data_size)
+                    .unwrap_or(0)
             };
 
             let new_state =
-                handle_controller_status(&pubky, &storage, &status, homeserver, current_data_size)
-                    .await;
+                handle_controller_status(&pubky, &storage, &status, current_data_size).await;
 
             // Update internal state
             {
@@ -674,19 +662,16 @@ fn spawn_status_listener(
 /// * `pubky` - The public key being backed up
 /// * `storage` - Storage for calculating data size
 /// * `status` - The status from the backup controller
-/// * `homeserver` - The homeserver to preserve in the state
 /// * `current_data_size` - The current data size to use as fallback
 async fn handle_controller_status(
     pubky: &PublicKey,
     storage: &Arc<AppStorage>,
     status: &ControllerStatus,
-    homeserver: Option<PublicKey>,
     current_data_size: u64,
 ) -> KeyState {
     match status {
         ControllerStatus::Starting { .. } => KeyState {
             status: KeyStatus::Starting,
-            homeserver,
             data_size: current_data_size,
             ..Default::default()
         },
@@ -704,7 +689,6 @@ async fn handle_controller_status(
                 status: KeyStatus::Syncing {
                     events_processed: *events_processed,
                 },
-                homeserver,
                 data_size,
                 ..Default::default()
             }
@@ -713,7 +697,6 @@ async fn handle_controller_status(
             let data_size = storage.calculate_pubky_size(pubky).await;
             KeyState {
                 status: KeyStatus::Idle,
-                homeserver,
                 data_size,
                 last_sync: Some(current_unix_timestamp()),
                 next_sync: Some(next_sync_time()),
@@ -722,13 +705,11 @@ async fn handle_controller_status(
         }
         ControllerStatus::Ended { .. } => KeyState {
             status: KeyStatus::Stopped,
-            homeserver,
             data_size: current_data_size,
             ..Default::default()
         },
         ControllerStatus::Error { message, .. } => KeyState {
             status: KeyStatus::Error,
-            homeserver,
             data_size: current_data_size,
             error: Some(KeyError {
                 code: KeyErrorCode::Internal,
@@ -1019,28 +1000,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_manager_homeserver_preserved_in_state() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = create_test_config(&temp_dir);
-        let manager = BackupManager::new(config).await.unwrap();
-
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
-
-        // Add key
-        manager.add_key(pubky.clone()).await.unwrap();
-
-        // Wait a bit for status updates to propagate
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-        // Get state and verify homeserver is set (in dev mode, homeserver = pubky)
-        let state = manager.get_key_state(&pubky).unwrap();
-        assert!(
-            state.homeserver.is_some(),
-            "Homeserver should be preserved in state"
-        );
-    }
-
-    #[tokio::test]
     async fn test_manager_last_pubky_persistence() {
         let temp_dir = TempDir::new().unwrap();
 
@@ -1184,7 +1143,7 @@ mod tests {
             message: "Test error message".to_string(),
         };
 
-        let state = handle_controller_status(&pubky, &storage, &error_status, None, 1000).await;
+        let state = handle_controller_status(&pubky, &storage, &error_status, 1000).await;
 
         // Verify error state mapping
         assert!(
@@ -1204,122 +1163,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_controller_status_preserves_homeserver() {
-        // Test that homeserver is preserved across all status types
-        let temp_dir = TempDir::new().unwrap();
-        let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
-        let homeserver = Some(
-            PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap(),
-        );
-
-        // Test Syncing status
-        let state = handle_controller_status(
-            &pubky,
-            &storage,
-            &ControllerStatus::Syncing {
-                pubky: pubky.clone(),
-                events_processed: 5,
-            },
-            homeserver.clone(),
-            0,
-        )
-        .await;
-        assert_eq!(
-            state.homeserver, homeserver,
-            "Syncing should preserve homeserver"
-        );
-
-        // Test Idle status
-        let state = handle_controller_status(
-            &pubky,
-            &storage,
-            &ControllerStatus::Idle {
-                pubky: pubky.clone(),
-            },
-            homeserver.clone(),
-            0,
-        )
-        .await;
-        assert_eq!(
-            state.homeserver, homeserver,
-            "Idle should preserve homeserver"
-        );
-
-        // Test Ended status
-        let state = handle_controller_status(
-            &pubky,
-            &storage,
-            &ControllerStatus::Ended {
-                pubky: pubky.clone(),
-            },
-            homeserver.clone(),
-            0,
-        )
-        .await;
-        assert_eq!(
-            state.homeserver, homeserver,
-            "Ended should preserve homeserver"
-        );
-
-        // Test Error status
-        let state = handle_controller_status(
-            &pubky,
-            &storage,
-            &ControllerStatus::Error {
-                pubky: pubky.clone(),
-                message: "test".to_string(),
-            },
-            homeserver.clone(),
-            0,
-        )
-        .await;
-        assert_eq!(
-            state.homeserver, homeserver,
-            "Error should preserve homeserver"
-        );
-
-        // Test Starting status
-        let state = handle_controller_status(
-            &pubky,
-            &storage,
-            &ControllerStatus::Starting {
-                pubky: pubky.clone(),
-            },
-            homeserver.clone(),
-            500,
-        )
-        .await;
-        assert_eq!(
-            state.homeserver, homeserver,
-            "Starting should preserve homeserver"
-        );
-    }
-
-    #[tokio::test]
     async fn test_handle_controller_status_starting_mapping() {
         // Test that ControllerStatus::Starting maps correctly to KeyState
         let temp_dir = TempDir::new().unwrap();
         let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
-        let homeserver = Some(
-            PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap(),
-        );
 
         let starting_status = ControllerStatus::Starting {
             pubky: pubky.clone(),
         };
 
-        let state =
-            handle_controller_status(&pubky, &storage, &starting_status, homeserver.clone(), 1234)
-                .await;
+        let state = handle_controller_status(&pubky, &storage, &starting_status, 1234).await;
 
         // Verify starting state mapping
         assert!(
             matches!(state.status, KeyStatus::Starting),
             "Status should be Starting"
         );
-        assert_eq!(state.homeserver, homeserver, "Should preserve homeserver");
         assert_eq!(state.data_size, 1234, "Should preserve current data size");
         assert!(state.error.is_none(), "Should not have error");
     }

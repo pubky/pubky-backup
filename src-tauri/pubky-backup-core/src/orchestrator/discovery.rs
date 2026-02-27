@@ -67,18 +67,18 @@ pub async fn validate_pubky(
 ///
 /// # Errors
 ///
-/// Returns `OrchestratorError::ValidationFailed` if discovery times out or fails.
+/// Returns `OrchestratorError::HomeserverNotFound` if discovery times out or fails.
 async fn discover_homeserver(
     pubky: &PublicKey,
     timeout_secs: u64,
 ) -> Result<PublicKey, OrchestratorError> {
     tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
         Pkdns::new()
-            .map_err(|e| OrchestratorError::ValidationFailed(e.to_string()))?
+            .map_err(|e| OrchestratorError::HomeserverNotFound(e.to_string()))?
             .get_homeserver_of(pubky)
             .await
             .ok_or_else(|| {
-                OrchestratorError::ValidationFailed(format!(
+                OrchestratorError::HomeserverNotFound(format!(
                     "Could not discover homeserver for {}",
                     pubky
                 ))
@@ -86,7 +86,7 @@ async fn discover_homeserver(
     })
     .await
     .map_err(|_| {
-        OrchestratorError::ValidationFailed("Homeserver discovery timed out".to_string())
+        OrchestratorError::HomeserverNotFound("Homeserver discovery timed out".to_string())
     })?
 }
 
