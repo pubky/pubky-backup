@@ -445,21 +445,25 @@ impl BackupManager {
         };
 
         // Generate random initial delay (0 to SYNC_INTERVAL_SECONDS) to stagger syncs
-        let initial_delay =
-            std::time::Duration::from_secs(rand::random::<u64>() % SYNC_INTERVAL_SECONDS);
+        // Skip staggering in developer mode for faster test execution
+        let initial_delay = if self.config.developer_mode {
+            std::time::Duration::ZERO
+        } else {
+            std::time::Duration::from_secs(rand::random::<u64>() % SYNC_INTERVAL_SECONDS)
+        };
 
-        // Create the controller with the shared status channel
+        // Create the controller with the shared status channel and initial delay
         // All controllers send to the same status_tx, identified by pubky in each message
-        let controller = BackupController::with_initial_delay(
+        let controller = BackupController::new(
             pubky.clone(),
             self.storage.clone(),
             pubky_client,
             Some(control_rx),
             Some(self.status_tx.clone()),
-            initial_delay,
-        );
+        )
+        .with_initial_delay(initial_delay);
 
-        // Spawn the controller task
+        // Spawn the controller task - delay is now handled inside controller.run()
         let task_handle = tokio::spawn(async move {
             controller.run().await;
         });
@@ -623,6 +627,7 @@ fn spawn_status_listener(
         while let Ok(status) = status_rx.recv().await {
             // Extract the pubky from the status
             let pubky = match &status {
+                ControllerStatus::Starting { pubky } => pubky.clone(),
                 ControllerStatus::Syncing { pubky, .. } => pubky.clone(),
                 ControllerStatus::Idle { pubky } => pubky.clone(),
                 ControllerStatus::Ended { pubky } => pubky.clone(),
@@ -679,6 +684,12 @@ async fn handle_controller_status(
     current_data_size: u64,
 ) -> KeyState {
     match status {
+        ControllerStatus::Starting { .. } => KeyState {
+            status: KeyStatus::Starting,
+            homeserver,
+            data_size: current_data_size,
+            ..Default::default()
+        },
         ControllerStatus::Syncing {
             events_processed, ..
         } => {
@@ -1065,9 +1076,6 @@ mod tests {
         // Add key
         manager.add_key(pubky.clone()).await.unwrap();
 
-        // Force sync immediately (bypasses random initial delay)
-        manager.force_sync(&pubky).await.unwrap();
-
         // Wait for Idle status indicating sync is complete
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
@@ -1270,5 +1278,49 @@ mod tests {
             state.homeserver, homeserver,
             "Error should preserve homeserver"
         );
+
+        // Test Starting status
+        let state = handle_controller_status(
+            &pubky,
+            &storage,
+            &ControllerStatus::Starting {
+                pubky: pubky.clone(),
+            },
+            homeserver.clone(),
+            500,
+        )
+        .await;
+        assert_eq!(
+            state.homeserver, homeserver,
+            "Starting should preserve homeserver"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_controller_status_starting_mapping() {
+        // Test that ControllerStatus::Starting maps correctly to KeyState
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let homeserver = Some(
+            PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap(),
+        );
+
+        let starting_status = ControllerStatus::Starting {
+            pubky: pubky.clone(),
+        };
+
+        let state =
+            handle_controller_status(&pubky, &storage, &starting_status, homeserver.clone(), 1234)
+                .await;
+
+        // Verify starting state mapping
+        assert!(
+            matches!(state.status, KeyStatus::Starting),
+            "Status should be Starting"
+        );
+        assert_eq!(state.homeserver, homeserver, "Should preserve homeserver");
+        assert_eq!(state.data_size, 1234, "Should preserve current data size");
+        assert!(state.error.is_none(), "Should not have error");
     }
 }

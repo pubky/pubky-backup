@@ -60,6 +60,11 @@ pub enum ControllerCommand {
 /// sent the status, enabling a shared status channel across all controllers.
 #[derive(Debug, Clone)]
 pub enum ControllerStatus {
+    /// Controller is starting up (waiting for initial delay before first sync)
+    Starting {
+        /// The public key this status is for
+        pubky: PublicKey,
+    },
     /// Controller is actively syncing data
     Syncing {
         /// The public key this status is for
@@ -98,6 +103,7 @@ pub enum ControllerStatus {
 /// use pubky::{Pubky, PublicKey};
 /// use std::sync::Arc;
 /// use std::str::FromStr;
+/// use std::time::Duration;
 /// use tokio::sync::{broadcast, mpsc};
 ///
 /// #[tokio::main]
@@ -115,14 +121,14 @@ pub enum ControllerStatus {
 ///     let (control_tx, control_rx) = mpsc::channel(5);
 ///     let (status_tx, mut status_rx) = broadcast::channel(5);
 ///
-///     // Create and spawn the backup controller
+///     // Create and spawn the backup controller with a staggered start delay
 ///     let controller = BackupController::new(
 ///         pubky.clone(),
 ///         storage,
 ///         pubky_client,
 ///         Some(control_rx),
 ///         Some(status_tx),
-///     );
+///     ).with_initial_delay(Duration::from_secs(5));
 ///
 ///     // Spawn the controller in a background task
 ///     tokio::spawn(controller.run());
@@ -131,6 +137,7 @@ pub enum ControllerStatus {
 ///     tokio::spawn(async move {
 ///         while let Ok(status) = status_rx.recv().await {
 ///             match status {
+///                 ControllerStatus::Starting { pubky } => println!("{}: Starting...", pubky),
 ///                 ControllerStatus::Syncing { pubky, events_processed } => {
 ///                     println!("{}: Syncing... ({} events)", pubky, events_processed)
 ///                 },
@@ -155,7 +162,7 @@ pub struct BackupController {
     pubky_client: Arc<Pubky>,
     control_rx: Option<tokio::sync::mpsc::Receiver<ControllerCommand>>,
     status_tx: Option<broadcast::Sender<ControllerStatus>>,
-    /// Initial delay before first sync (for staggering multiple controllers)
+    /// Initial delay before starting the first sync (for staggering multiple controllers)
     initial_delay: Duration,
 }
 
@@ -185,36 +192,28 @@ impl BackupController {
         control_rx: Option<tokio::sync::mpsc::Receiver<ControllerCommand>>,
         status_tx: Option<broadcast::Sender<ControllerStatus>>,
     ) -> Self {
-        Self::with_initial_delay(
-            pubky,
-            storage,
-            pubky_client,
-            control_rx,
-            status_tx,
-            Duration::ZERO,
-        )
-    }
-
-    /// Creates a new backup controller with an initial delay before the first sync.
-    ///
-    /// The initial delay is used to stagger multiple controllers started at the same time,
-    /// preventing them from all syncing simultaneously.
-    pub fn with_initial_delay(
-        pubky: PublicKey,
-        storage: Arc<AppStorage>,
-        pubky_client: Arc<Pubky>,
-        control_rx: Option<tokio::sync::mpsc::Receiver<ControllerCommand>>,
-        status_tx: Option<broadcast::Sender<ControllerStatus>>,
-        initial_delay: Duration,
-    ) -> Self {
         Self {
             pubky,
             storage,
             pubky_client,
             control_rx,
             status_tx,
-            initial_delay,
+            initial_delay: Duration::ZERO,
         }
+    }
+
+    /// Sets an initial delay before the first sync.
+    ///
+    /// This is useful for staggering multiple controllers to avoid
+    /// overwhelming the network with simultaneous requests.
+    ///
+    /// During the delay, the controller emits `Starting` status and
+    /// responds to commands:
+    /// - `Cancel`: Stops the controller immediately
+    /// - `ForceSync`: Skips the remaining delay and starts syncing
+    pub fn with_initial_delay(mut self, delay: Duration) -> Self {
+        self.initial_delay = delay;
+        self
     }
 
     /// Runs the backup controller loop.
@@ -225,21 +224,65 @@ impl BackupController {
     /// - The control channel is closed
     ///
     /// The controller will:
-    /// 1. Poll for new events from the pubky's homeserver
-    /// 2. Download and store new/updated resources
-    /// 3. Delete resources that have been removed
-    /// 4. Wait for the next sync interval (30 seconds)
-    /// 5. Emit status updates via the status channel
+    /// 1. Emit `Starting` status and wait for initial delay (if any)
+    /// 2. Poll for new events from the pubky's homeserver
+    /// 3. Download and store new/updated resources
+    /// 4. Delete resources that have been removed
+    /// 5. Wait for the next sync interval (30 seconds)
+    /// 6. Emit status updates via the status channel
+    ///
+    /// During the starting phase, the controller responds to commands:
+    /// - `Cancel`: Stops immediately
+    /// - `ForceSync`: Skips the remaining delay and starts syncing
     ///
     /// # Panics
     ///
     /// This method should not panic under normal circumstances. All errors are
     /// logged and result in an `Error` status being sent before the controller stops.
     pub async fn run(mut self) {
-        // Apply initial delay to stagger sync starts across multiple controllers
-        let start_time = time::Instant::now() + self.initial_delay;
-        let mut interval =
-            time::interval_at(start_time, Duration::from_secs(SYNC_INTERVAL_SECONDS));
+        self.send_status(ControllerStatus::Starting {
+            pubky: self.pubky.clone(),
+        });
+
+        // Starting phase - wait for delay but respond to commands
+        if !self.initial_delay.is_zero() {
+            tokio::select! {
+                _ = tokio::time::sleep(self.initial_delay) => {
+                    // Delay complete, proceed to sync loop
+                }
+                msg = async {
+                    if let Some(ref mut rx) = self.control_rx {
+                        rx.recv().await
+                    } else {
+                        std::future::pending().await
+                    }
+                } => {
+                    match msg {
+                        Some(ControllerCommand::Cancel) => {
+                            info!("Backup controller cancelled during starting phase");
+                            self.send_status(ControllerStatus::Ended {
+                                pubky: self.pubky.clone(),
+                            });
+                            return;
+                        }
+                        Some(ControllerCommand::ForceSync) => {
+                            info!("Force sync during starting phase - skipping delay");
+                            // Skip remaining delay, proceed to sync loop
+                        }
+                        None => {
+                            warn!("Backup controller control channel closed during starting phase");
+                            self.send_status(ControllerStatus::Ended {
+                                pubky: self.pubky.clone(),
+                            });
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Main sync loop
+        let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
 
         loop {
             tokio::select! {
@@ -500,7 +543,18 @@ mod tests {
         // Spawn the controller
         let handle = tokio::spawn(controller.run());
 
-        // Wait for first status update (should be Syncing or Idle)
+        // First status should be Starting
+        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
+            .await
+            .expect("Should receive status")
+            .unwrap();
+        assert!(
+            matches!(status, ControllerStatus::Starting { .. }),
+            "First status should be Starting, got {:?}",
+            status
+        );
+
+        // Wait for sync status (Syncing or Idle)
         let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
             .await
             .expect("Should receive status")
@@ -508,7 +562,7 @@ mod tests {
 
         match status {
             ControllerStatus::Syncing { .. } | ControllerStatus::Idle { .. } => {}
-            _ => panic!("Unexpected ControllerStatus"),
+            _ => panic!("Unexpected ControllerStatus after Starting: {:?}", status),
         }
 
         // Send cancel message
@@ -541,6 +595,13 @@ mod tests {
 
         tokio::spawn(controller.run());
 
+        // First status should be Starting
+        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
+            .await
+            .expect("Should receive status")
+            .unwrap();
+        assert!(matches!(status, ControllerStatus::Starting { .. }));
+
         // Trigger force sync
         control_tx.send(ControllerCommand::ForceSync).await.unwrap();
 
@@ -550,7 +611,11 @@ mod tests {
             .expect("Should receive status")
             .unwrap();
 
-        assert!(matches!(status, ControllerStatus::Syncing { .. }));
+        assert!(
+            matches!(status, ControllerStatus::Syncing { .. }),
+            "Expected Syncing status after force sync, got {:?}",
+            status
+        );
 
         // Cleanup
         control_tx.send(ControllerCommand::Cancel).await.unwrap();
@@ -836,7 +901,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_controller_with_initial_delay() {
+    async fn test_controller_emits_starting_status() {
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
@@ -845,46 +910,174 @@ mod tests {
         let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
         let (status_tx, mut status_rx) = broadcast::channel(10);
 
-        // Create controller with a 100ms initial delay (reduced from 500ms for faster tests)
-        let initial_delay = Duration::from_millis(100);
-        let controller = BackupController::with_initial_delay(
-            pubky,
+        let controller = BackupController::new(
+            pubky.clone(),
             storage,
             pubky_client,
             Some(control_rx),
             Some(status_tx),
-            initial_delay,
         );
 
-        let start = std::time::Instant::now();
-
-        // Spawn the controller
         tokio::spawn(controller.run());
 
-        // Wait for first Syncing status
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                match status_rx.recv().await {
-                    Ok(ControllerStatus::Syncing { .. }) => return,
-                    Ok(_) => continue,
-                    Err(_) => panic!("Channel closed"),
-                }
+        // First status should always be Starting
+        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
+            .await
+            .expect("Should receive status")
+            .unwrap();
+
+        match status {
+            ControllerStatus::Starting {
+                pubky: status_pubky,
+            } => {
+                assert_eq!(status_pubky, pubky);
             }
-        })
-        .await
-        .expect("Should receive Syncing status");
+            _ => panic!("First status should be Starting, got {:?}", status),
+        }
 
-        let elapsed = start.elapsed();
+        // Cleanup
+        control_tx.send(ControllerCommand::Cancel).await.unwrap();
+    }
 
-        // Verify that the first sync was delayed by at least the initial delay
-        // Allow some tolerance for scheduling jitter (80ms minimum for 100ms delay)
+    #[tokio::test]
+    async fn test_controller_with_initial_delay_responds_to_cancel() {
+        enable_developer_mode();
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky_client = create_test_pubky_client();
+
+        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
+        let (status_tx, mut status_rx) = broadcast::channel(10);
+
+        // Create controller with a long initial delay
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage,
+            pubky_client,
+            Some(control_rx),
+            Some(status_tx),
+        )
+        .with_initial_delay(Duration::from_secs(60)); // Long delay
+
+        let handle = tokio::spawn(controller.run());
+
+        // Wait for Starting status
+        let status = tokio::time::timeout(Duration::from_secs(1), status_rx.recv())
+            .await
+            .expect("Should receive Starting status quickly")
+            .unwrap();
         assert!(
-            elapsed >= Duration::from_millis(80),
-            "First sync should be delayed by initial_delay, but started after {:?}",
-            elapsed
+            matches!(status, ControllerStatus::Starting { .. }),
+            "Should receive Starting status"
+        );
+
+        // Send cancel during the starting phase
+        control_tx.send(ControllerCommand::Cancel).await.unwrap();
+
+        // Should receive Ended status
+        let status = tokio::time::timeout(Duration::from_secs(1), status_rx.recv())
+            .await
+            .expect("Should receive Ended status quickly")
+            .unwrap();
+        assert!(
+            matches!(status, ControllerStatus::Ended { .. }),
+            "Should receive Ended status after cancel during starting phase"
+        );
+
+        // Controller should finish quickly (not wait for the 60 second delay)
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("Controller should finish quickly after cancel during starting phase")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_controller_with_initial_delay_responds_to_force_sync() {
+        enable_developer_mode();
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky_client = create_test_pubky_client();
+
+        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
+        let (status_tx, mut status_rx) = broadcast::channel(10);
+
+        // Create controller with a long initial delay
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage,
+            pubky_client,
+            Some(control_rx),
+            Some(status_tx),
+        )
+        .with_initial_delay(Duration::from_secs(60)); // Long delay
+
+        tokio::spawn(controller.run());
+
+        // Wait for Starting status
+        let status = tokio::time::timeout(Duration::from_secs(1), status_rx.recv())
+            .await
+            .expect("Should receive Starting status")
+            .unwrap();
+        assert!(matches!(status, ControllerStatus::Starting { .. }));
+
+        // Send ForceSync during the starting phase
+        control_tx.send(ControllerCommand::ForceSync).await.unwrap();
+
+        // Should skip delay and receive Syncing status quickly
+        let status = tokio::time::timeout(Duration::from_secs(2), status_rx.recv())
+            .await
+            .expect("Should receive Syncing status quickly after ForceSync")
+            .unwrap();
+        assert!(
+            matches!(status, ControllerStatus::Syncing { .. }),
+            "Should receive Syncing status after ForceSync during starting phase, got {:?}",
+            status
         );
 
         // Cleanup
-        let _ = control_tx.send(ControllerCommand::Cancel).await;
+        control_tx.send(ControllerCommand::Cancel).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_controller_with_zero_delay_proceeds_immediately() {
+        enable_developer_mode();
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky_client = create_test_pubky_client();
+
+        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
+        let (status_tx, mut status_rx) = broadcast::channel(10);
+
+        // Create controller with zero delay (default)
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage,
+            pubky_client,
+            Some(control_rx),
+            Some(status_tx),
+        );
+
+        tokio::spawn(controller.run());
+
+        // Should receive Starting status
+        let status = tokio::time::timeout(Duration::from_millis(100), status_rx.recv())
+            .await
+            .expect("Should receive Starting status immediately")
+            .unwrap();
+        assert!(matches!(status, ControllerStatus::Starting { .. }));
+
+        // Should immediately proceed to Syncing (no delay)
+        let status = tokio::time::timeout(Duration::from_millis(500), status_rx.recv())
+            .await
+            .expect("Should receive Syncing status quickly with zero delay")
+            .unwrap();
+        assert!(
+            matches!(status, ControllerStatus::Syncing { .. }),
+            "Should proceed to Syncing immediately with zero delay, got {:?}",
+            status
+        );
+
+        // Cleanup
+        control_tx.send(ControllerCommand::Cancel).await.unwrap();
     }
 }
