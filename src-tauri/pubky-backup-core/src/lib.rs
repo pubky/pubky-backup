@@ -49,7 +49,7 @@
 //! use pubky::{Pubky, PublicKey};
 //! use std::sync::Arc;
 //! use std::str::FromStr;
-//! use tokio::sync::broadcast;
+//! use tokio::sync::{broadcast, mpsc};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,7 +57,7 @@
 //!     let pubky_client = Arc::new(Pubky::new()?);
 //!     let pubky = PublicKey::from_str("your_pubky_here")?;
 //!
-//!     let (control_tx, control_rx) = broadcast::channel::<ControllerCommand>(5);
+//!     let (_control_tx, control_rx) = mpsc::channel::<ControllerCommand>(5);
 //!     let (status_tx, _status_rx) = broadcast::channel::<ControllerStatus>(5);
 //!
 //!     let controller = BackupController::new(

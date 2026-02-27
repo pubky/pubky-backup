@@ -711,7 +711,13 @@ mod tests {
     use std::str::FromStr;
     use tempfile::TempDir;
 
+    /// Helper to enable developer mode for tests that need mock data
+    fn enable_developer_mode() {
+        std::env::set_var("PUBKY_DEVELOPER_MODE", "1");
+    }
+
     fn create_test_config(temp_dir: &TempDir) -> BackupManagerConfig {
+        enable_developer_mode();
         BackupManagerConfig {
             data_dir: Some(temp_dir.path().to_path_buf()),
             validation_timeout_secs: 30,

@@ -286,7 +286,9 @@ async fn test_backup_controller_run_loop() {
         .unwrap();
 
     match status {
-        ControllerStatus::Syncing { .. } | ControllerStatus::Idle { .. } => {}
+        ControllerStatus::Starting { .. }
+        | ControllerStatus::Syncing { .. }
+        | ControllerStatus::Idle { .. } => {}
         other => panic!("Unexpected initial status: {:?}", other),
     }
 
