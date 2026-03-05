@@ -4,34 +4,48 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { AppState } from "@/types/app-state";
-import { isAppState } from "@/types/app-state";
+import type { KeyState } from "@/stores/uiStore";
 import type { BackendError } from "@/types/backend-errors";
 import { isBackendError } from "@/types/backend-errors";
 
 /**
+ * App config returned from backend
+ */
+export interface AppConfig {
+  developer_mode: boolean;
+}
+
+/**
  * Add a key to start backing up
+ * @returns The pubky string (normalized) that was added
  * @throws {BackendError} If adding key fails
  */
-export async function addKey(pubkyStr: string): Promise<void> {
+export async function addKey(pubkyStr: string): Promise<string> {
   try {
-    await invoke<void>("add_key", { pubkyStr });
+    return await invoke<string>("add_key", { pubkyStr });
   } catch (error: unknown) {
     throw normalizeError(error);
   }
 }
 
 /**
- * Fetch the current app state
+ * Get all key states for all tracked keys
  * @throws {BackendError} If fetching state fails
  */
-export async function fetchState(): Promise<AppState> {
+export async function getAllKeyStates(): Promise<Record<string, KeyState>> {
   try {
-    const result = await invoke<AppState>("fetch_state");
-    if (!isAppState(result)) {
-      throw new Error("Invalid AppState received from backend");
-    }
-    return result;
+    return await invoke<Record<string, KeyState>>("get_all_key_states");
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
+ * Get application config (one-time fetch)
+ */
+export async function getConfig(): Promise<AppConfig> {
+  try {
+    return await invoke<AppConfig>("get_config");
   } catch (error: unknown) {
     throw normalizeError(error);
   }
@@ -62,21 +76,20 @@ export async function getLastPubky(): Promise<string | null> {
 }
 
 /**
- * Set which pubky is currently being viewed in the UI
- * @throws {BackendError} If setting viewed pubky fails
+ * Set the last used pubky (for restoring on next app launch)
+ * @throws {BackendError} If setting last pubky fails
  */
-export async function setViewedPubky(pubkyStr: string): Promise<void> {
+export async function setLastPubky(pubkyStr: string): Promise<void> {
   try {
-    await invoke("set_viewed_pubky", { pubkyStr });
+    await invoke("set_last_pubky", { pubkyStr });
   } catch (error: unknown) {
     throw normalizeError(error);
   }
 }
 
-
 /**
  * Remove a key from the backup manager, stopping its backup controller
- * @param pubky - The pubky key to remove
+ * @param pubkyStr - The pubky key to remove
  * @throws {BackendError} If removing the key fails
  */
 export async function removeKey(pubkyStr: string): Promise<void> {
@@ -88,12 +101,13 @@ export async function removeKey(pubkyStr: string): Promise<void> {
 }
 
 /**
- * Force a sync to happen now
+ * Force a sync to happen now for a specific pubky
+ * @param pubkyStr - The pubky key to force sync
  * @throws {BackendError} If forcing sync fails
  */
-export async function forceSyncNow(): Promise<void> {
+export async function forceSyncNow(pubkyStr: string): Promise<void> {
   try {
-    await invoke("force_sync_now");
+    await invoke("force_sync_now", { pubkyStr });
   } catch (error: unknown) {
     throw normalizeError(error);
   }
@@ -124,13 +138,14 @@ export async function openDataDir(): Promise<void> {
 }
 
 /**
- * Create a snapshot (zip archive) of the current pubky's backed-up data
+ * Create a snapshot (zip archive) of a pubky's backed-up data
+ * @param pubkyStr - The pubky key to create snapshot for
  * @returns Path to the created snapshot file
  * @throws {BackendError} If creating snapshot fails
  */
-export async function createSnapshot(): Promise<string> {
+export async function createSnapshot(pubkyStr: string): Promise<string> {
   try {
-    return await invoke<string>("create_snapshot");
+    return await invoke<string>("create_snapshot", { pubkyStr });
   } catch (error: unknown) {
     throw normalizeError(error);
   }

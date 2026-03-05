@@ -1,16 +1,16 @@
-import { useMutation } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
 import { openDataDir } from "@/services";
 
 /**
  * useOpenDataDir
  *
- * Mutation hook for opening the data directory in the file explorer.
+ * Hook for opening the data directory in the file explorer.
  *
- * @returns TanStack Mutation result with mutate/mutateAsync functions
+ * @returns Object with openDir function and isPending state
  *
  * @example
  * ```tsx
- * const { mutateAsync: openDir, isPending } = useOpenDataDir();
+ * const { openDir, isPending } = useOpenDataDir();
  *
  * const handleOpenDir = async () => {
  *   try {
@@ -28,7 +28,16 @@ import { openDataDir } from "@/services";
  * ```
  */
 export function useOpenDataDir() {
-  return useMutation({
-    mutationFn: openDataDir,
-  });
+  const [isPending, setIsPending] = useState(false);
+
+  const openDir = useCallback(async () => {
+    setIsPending(true);
+    try {
+      await openDataDir();
+    } finally {
+      setIsPending(false);
+    }
+  }, []);
+
+  return { openDir, isPending };
 }

@@ -127,10 +127,18 @@ pub enum KeyStatus {
 ///
 /// Note: This is distinct from [`ControllerStatus`](crate::sync::ControllerStatus) which is
 /// the internal status type used for communication between the sync and orchestrator layers.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct KeyUpdate {
-    /// The public key this update is for
+    /// The public key this update is for (serialized as string)
+    #[serde(serialize_with = "serialize_pubky")]
     pub pubky: PublicKey,
     /// The new state of the key
     pub state: KeyState,
+}
+
+fn serialize_pubky<S>(pubky: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&pubky.to_string())
 }

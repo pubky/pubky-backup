@@ -1,76 +1,72 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
+import { describe, it, expect, beforeEach } from "vitest";
+import { renderHook, act } from "@testing-library/react";
 import { useKeys } from "./useKeys";
-import * as services from "@/services";
-
-vi.mock("@/services");
-
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
+import { useUIStore } from "@/stores/uiStore";
+import type { KeyState } from "@/stores/uiStore";
 
 describe("useKeys", () => {
+  const mockKeyState: KeyState = {
+    status: { type: "Idle" },
+    data_size: 1024,
+    last_sync: null,
+    next_sync: null,
+    error: null,
+    total_files: null,
+    files_synced: null,
+    bytes_downloaded: null,
+  };
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    // Reset the Zustand store before each test
+    useUIStore.setState({
+      keyStates: {},
+      viewedPubky: null,
+      developerMode: false,
+    });
   });
 
-  it("should fetch keys", async () => {
-    const mockKeys = ["pk:key1", "pk:key2", "pk:key3"];
-    vi.mocked(services.getKeys).mockResolvedValue(mockKeys);
-
-    const { result } = renderHook(() => useKeys(), {
-      wrapper: createWrapper(),
+  it("should return keys from keyStates", () => {
+    act(() => {
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": mockKeyState,
+          "pk:key2": mockKeyState,
+          "pk:key3": mockKeyState,
+        },
+      });
     });
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
+    const { result } = renderHook(() => useKeys());
 
-    expect(result.current.data).toEqual(mockKeys);
-    expect(services.getKeys).toHaveBeenCalled();
+    expect(result.current).toHaveLength(3);
+    expect(result.current).toContain("pk:key1");
+    expect(result.current).toContain("pk:key2");
+    expect(result.current).toContain("pk:key3");
   });
 
-  it("should handle empty keys list", async () => {
-    vi.mocked(services.getKeys).mockResolvedValue([]);
+  it("should return empty array when no keys", () => {
+    const { result } = renderHook(() => useKeys());
 
-    const { result } = renderHook(() => useKeys(), {
-      wrapper: createWrapper(),
-    });
-
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(result.current.data).toEqual([]);
+    expect(result.current).toEqual([]);
+    expect(result.current).toHaveLength(0);
   });
 
-  it("should handle errors", async () => {
-    const mockError = { type: "Storage", message: "Read failed" };
-    vi.mocked(services.getKeys).mockRejectedValue(mockError);
+  it("should update when keyStates changes", () => {
+    const { result, rerender } = renderHook(() => useKeys());
 
-    const { result } = renderHook(() => useKeys(), {
-      wrapper: createWrapper(),
+    expect(result.current).toHaveLength(0);
+
+    act(() => {
+      useUIStore.setState({
+        keyStates: {
+          "pk:newKey": mockKeyState,
+        },
+      });
     });
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
+    rerender();
 
-    expect(result.current.error).toEqual(mockError);
+    expect(result.current).toHaveLength(1);
+    expect(result.current).toContain("pk:newKey");
   });
 });

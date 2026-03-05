@@ -1,17 +1,16 @@
-import { useQuery } from "@tanstack/react-query";
-import { getKeys } from "@/services";
+import { useUIStore } from "@/stores/uiStore";
 
 /**
  * useKeys
  *
- * Query hook for fetching pubky keys that have data stored.
- * Used to populate autocomplete suggestions in the pubky input.
+ * Hook for getting the list of pubky keys that are being backed up.
+ * Returns the keys from the Zustand store's keyStates.
  *
- * @returns TanStack Query result with array of pubky strings
+ * @returns Array of pubky strings
  *
  * @example
  * ```tsx
- * const { data: keys = [], isLoading } = useKeys();
+ * const keys = useKeys();
  *
  * return (
  *   <PubkyInput
@@ -23,10 +22,7 @@ import { getKeys } from "@/services";
  * );
  * ```
  */
-export function useKeys() {
-  return useQuery({
-    queryKey: ["keys"],
-    queryFn: getKeys,
-    staleTime: Infinity, // Keys don't change during session
-  });
+export function useKeys(): string[] {
+  const keyStates = useUIStore((s) => s.keyStates);
+  return Object.keys(keyStates);
 }

@@ -1,19 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { getDataDirPath } from "@/services";
 
 /**
  * useDataDirPath
  *
- * Query hook for fetching the data directory path.
+ * Hook for fetching the data directory path.
  * Returns the filesystem path where backup data is stored.
+ * Only fetches once since the path doesn't change during session.
  *
- * @param enabled - Whether to enable the query (default: true)
- * @returns TanStack Query result with path string
+ * @returns Object with dataDirPath value and isLoading state
  *
  * @example
  * ```tsx
- * const { data: appState } = useAppState();
- * const { data: dataDirPath } = useDataDirPath(appState?.pubky !== null);
+ * const { dataDirPath } = useDataDirPath();
  *
  * return (
  *   <InfoCard
@@ -24,11 +23,22 @@ import { getDataDirPath } from "@/services";
  * );
  * ```
  */
-export function useDataDirPath(enabled = true) {
-  return useQuery({
-    queryKey: ["dataDirPath"],
-    queryFn: getDataDirPath,
-    staleTime: Infinity, // Path doesn't change during session
-    enabled,
-  });
+export function useDataDirPath() {
+  const [dataDirPath, setDataDirPath] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    getDataDirPath()
+      .then((path) => {
+        setDataDirPath(path);
+      })
+      .catch(() => {
+        // Ignore errors
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
+  }, []);
+
+  return { dataDirPath, isLoading };
 }

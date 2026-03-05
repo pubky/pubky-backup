@@ -1,5 +1,6 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
 import { addKey } from "@/services";
+import { useUIStore } from "@/stores/uiStore";
 
 interface AddKeyParams {
   pubkyValue: string;
@@ -8,17 +9,18 @@ interface AddKeyParams {
 /**
  * useAddKey
  *
- * Mutation hook for adding a key and starting backup.
+ * Hook for adding a key and starting backup.
+ * Updates the viewed pubky in the store after successful add.
  *
- * @returns TanStack Mutation result with mutate/mutateAsync functions
+ * @returns Object with addKey function and isPending state
  *
  * @example
  * ```tsx
- * const { mutateAsync: addKeyMutation, isPending } = useAddKey();
+ * const { addKey, isPending } = useAddKey();
  *
  * const handleSubmit = async (pubky: string) => {
  *   try {
- *     await addKeyMutation({ pubkyValue: pubky });
+ *     await addKey({ pubkyValue: pubky });
  *     setScreen('dashboard');
  *   } catch (error) {
  *     handleError(error);
@@ -33,15 +35,23 @@ interface AddKeyParams {
  * ```
  */
 export function useAddKey() {
-  const queryClient = useQueryClient();
+  const [isPending, setIsPending] = useState(false);
+  const setViewedPubky = useUIStore((s) => s.setViewedPubky);
 
-  return useMutation<void, unknown, AddKeyParams>({
-    mutationFn: async ({ pubkyValue }: AddKeyParams) => {
-      await addKey(pubkyValue);
+  const addKeyFn = useCallback(
+    async ({ pubkyValue }: AddKeyParams): Promise<string> => {
+      setIsPending(true);
+      try {
+        const normalizedPubky = await addKey(pubkyValue);
+        // Set the added key as the viewed key
+        setViewedPubky(normalizedPubky);
+        return normalizedPubky;
+      } finally {
+        setIsPending(false);
+      }
     },
-    onSuccess: () => {
-      // Invalidate the keys query so the new key appears in the list
-      void queryClient.invalidateQueries({ queryKey: ["keys"] });
-    },
-  });
+    [setViewedPubky],
+  );
+
+  return { addKey: addKeyFn, isPending };
 }

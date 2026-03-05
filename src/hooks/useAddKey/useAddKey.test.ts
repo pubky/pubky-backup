@@ -1,90 +1,161 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor, act } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useAddKey } from "./useAddKey";
+import { useUIStore } from "@/stores/uiStore";
 import * as services from "@/services";
 
-vi.mock("@/services");
-
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
+vi.mock("@/services", () => ({
+  addKey: vi.fn(),
+}));
 
 describe("useAddKey", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useUIStore.setState({
+      viewedPubky: null,
+      keyStates: {},
+    });
   });
 
-  it("should call addKey on mutate", async () => {
-    vi.mocked(services.addKey).mockResolvedValue(undefined);
+  it("should return addKey function and isPending state", () => {
+    const { result } = renderHook(() => useAddKey());
 
-    const { result } = renderHook(() => useAddKey(), {
-      wrapper: createWrapper(),
-    });
-
-    await act(async () => {
-      await result.current.mutateAsync({ pubkyValue: "pk:test123" });
-    });
-
-    expect(services.addKey).toHaveBeenCalledWith("pk:test123");
+    expect(result.current.addKey).toBeInstanceOf(Function);
+    expect(result.current.isPending).toBe(false);
   });
 
-  it("should handle addKey errors", async () => {
-    const mockError = { type: "InvalidPubkyFormat", message: "Bad format" };
-    vi.mocked(services.addKey).mockRejectedValue(mockError);
-
-    const { result } = renderHook(() => useAddKey(), {
-      wrapper: createWrapper(),
+  it("should set isPending to true while adding key", async () => {
+    let resolvePromise: (value: string) => void;
+    const mockPromise = new Promise<string>((resolve) => {
+      resolvePromise = resolve;
     });
+    vi.mocked(services.addKey).mockReturnValue(mockPromise);
 
-    await expect(
-      act(async () => {
-        await result.current.mutateAsync({ pubkyValue: "bad-pubky" });
-      }),
-    ).rejects.toEqual(mockError);
-  });
-
-  it("should track pending state during mutation", async () => {
-    let resolveAddKey: () => void;
-    const addKeyPromise = new Promise<void>((resolve) => {
-      resolveAddKey = resolve;
-    });
-    vi.mocked(services.addKey).mockReturnValue(addKeyPromise);
-
-    const { result } = renderHook(() => useAddKey(), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useAddKey());
 
     expect(result.current.isPending).toBe(false);
 
+    let addKeyPromise: Promise<string>;
     act(() => {
-      void result.current.mutateAsync({ pubkyValue: "pk:test123" });
+      addKeyPromise = result.current.addKey({ pubkyValue: "test-pubky" });
     });
 
-    await waitFor(() => {
-      expect(result.current.isPending).toBe(true);
-    });
+    expect(result.current.isPending).toBe(true);
 
     await act(async () => {
-      resolveAddKey!();
+      resolvePromise!("normalized-pubky");
+      await addKeyPromise;
     });
 
-    await waitFor(() => {
-      expect(result.current.isPending).toBe(false);
+    expect(result.current.isPending).toBe(false);
+  });
+
+  it("should call addKey service with pubky value", async () => {
+    vi.mocked(services.addKey).mockResolvedValue("normalized-pubky");
+
+    const { result } = renderHook(() => useAddKey());
+
+    await act(async () => {
+      await result.current.addKey({ pubkyValue: "my-pubky-input" });
     });
+
+    expect(services.addKey).toHaveBeenCalledWith("my-pubky-input");
+    expect(services.addKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("should return normalized pubky from service", async () => {
+    vi.mocked(services.addKey).mockResolvedValue("normalized-pubky-123");
+
+    const { result } = renderHook(() => useAddKey());
+
+    let returnedPubky: string;
+    await act(async () => {
+      returnedPubky = await result.current.addKey({ pubkyValue: "input-pubky" });
+    });
+
+    expect(returnedPubky!).toBe("normalized-pubky-123");
+  });
+
+  it("should update viewedPubky in store after successful add", async () => {
+    vi.mocked(services.addKey).mockResolvedValue("normalized-pubky");
+
+    const { result } = renderHook(() => useAddKey());
+
+    await act(async () => {
+      await result.current.addKey({ pubkyValue: "my-pubky" });
+    });
+
+    const state = useUIStore.getState();
+    expect(state.viewedPubky).toBe("normalized-pubky");
+  });
+
+  it("should set isPending to false on error", async () => {
+    vi.mocked(services.addKey).mockRejectedValue(new Error("Failed to add key"));
+
+    const { result } = renderHook(() => useAddKey());
+
+    await act(async () => {
+      try {
+        await result.current.addKey({ pubkyValue: "bad-pubky" });
+      } catch {
+        // Expected to throw
+      }
+    });
+
+    expect(result.current.isPending).toBe(false);
+  });
+
+  it("should propagate errors from service", async () => {
+    const error = new Error("Invalid pubky format");
+    vi.mocked(services.addKey).mockRejectedValue(error);
+
+    const { result } = renderHook(() => useAddKey());
+
+    await expect(
+      act(async () => {
+        await result.current.addKey({ pubkyValue: "invalid" });
+      })
+    ).rejects.toThrow("Invalid pubky format");
+  });
+
+  it("should not update viewedPubky on error", async () => {
+    useUIStore.setState({ viewedPubky: "existing-pubky" });
+    vi.mocked(services.addKey).mockRejectedValue(new Error("Failed"));
+
+    const { result } = renderHook(() => useAddKey());
+
+    await act(async () => {
+      try {
+        await result.current.addKey({ pubkyValue: "bad-pubky" });
+      } catch {
+        // Expected to throw
+      }
+    });
+
+    const state = useUIStore.getState();
+    expect(state.viewedPubky).toBe("existing-pubky");
+  });
+
+  it("should handle sequential calls correctly", async () => {
+    vi.mocked(services.addKey)
+      .mockResolvedValueOnce("first-normalized")
+      .mockResolvedValueOnce("second-normalized");
+
+    const { result } = renderHook(() => useAddKey());
+
+    await act(async () => {
+      await result.current.addKey({ pubkyValue: "first" });
+    });
+
+    expect(result.current.isPending).toBe(false);
+    expect(useUIStore.getState().viewedPubky).toBe("first-normalized");
+
+    await act(async () => {
+      await result.current.addKey({ pubkyValue: "second" });
+    });
+
+    expect(result.current.isPending).toBe(false);
+    expect(useUIStore.getState().viewedPubky).toBe("second-normalized");
+    expect(services.addKey).toHaveBeenCalledTimes(2);
   });
 });

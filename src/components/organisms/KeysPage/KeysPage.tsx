@@ -53,17 +53,14 @@ export function KeysPage() {
   const [showAddInput, setShowAddInput] = useState(false);
   const [newPubkyValue, setNewPubkyValue] = useState("");
 
-  const { data: keys = [] } = Hooks.useKeys();
-  const { data: appState } = Hooks.useAppState();
-  const setViewedPubkyMutation = Hooks.useSetViewedPubky();
-  const addKeyMutation = Hooks.useAddKey();
+  const keys = Hooks.useKeys();
+  const viewedPubky = Stores.useUIStore((s) => s.viewedPubky);
+  const { setViewedPubky, isPending: isSwitchingKey } = Hooks.useSetViewedPubky();
+  const { addKey, isPending: isAddingKey } = Hooks.useAddKey();
   const { showToast, setPage } = Stores.useUIStore.getState();
 
   // Normalize pubky by stripping the "pubky" prefix if present
-  const rawPubky = appState?.pubky ?? null;
-  const currentPubky = rawPubky ? Utils.stripPubkyPrefix(rawPubky) : null;
-  const isAddingKey = addKeyMutation.isPending;
-  const isSwitchingKey = setViewedPubkyMutation.isPending;
+  const currentPubky = viewedPubky ? Utils.stripPubkyPrefix(viewedPubky) : null;
 
   const handleCopy = (pubky: string) => {
     navigator.clipboard
@@ -83,7 +80,7 @@ export function KeysPage() {
     }
 
     try {
-      await setViewedPubkyMutation.mutateAsync(pubky);
+      await setViewedPubky(pubky);
       setPage("sync");
     } catch (error: unknown) {
       Logger.error("KeysPage", "Failed to switch key", { error });
@@ -100,7 +97,7 @@ export function KeysPage() {
     if (!trimmedValue) return;
 
     try {
-      await addKeyMutation.mutateAsync({ pubkyValue: trimmedValue });
+      await addKey({ pubkyValue: trimmedValue });
       setNewPubkyValue("");
       setShowAddInput(false);
       setPage("sync");

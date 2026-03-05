@@ -1,82 +1,124 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
+import { describe, it, expect, beforeEach } from "vitest";
+import { renderHook, act } from "@testing-library/react";
 import { useAppState } from "./useAppState";
-import * as services from "@/services";
-
-vi.mock("@/services");
-
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
+import { useUIStore } from "@/stores/uiStore";
+import type { KeyState } from "@/stores/uiStore";
 
 describe("useAppState", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // Reset the Zustand store before each test
+    useUIStore.setState({
+      keyStates: {},
+      viewedPubky: null,
+      developerMode: false,
+    });
   });
 
-  it("should fetch app state when enabled", async () => {
-    const mockState = {
-      pubky: "pk:test123",
-      developer_mode: false,
-      is_syncing: false,
-      next_sync_time: 1672531200,
-      data_dir_size: 1024,
-      backup_controller_error: null,
+  it("should return empty state when no viewed pubky", () => {
+    const { result } = renderHook(() => useAppState());
+
+    expect(result.current.pubky).toBeNull();
+    expect(result.current.is_syncing).toBe(false);
+    expect(result.current.data_dir_size).toBe(0);
+    expect(result.current.keyState).toBeNull();
+  });
+
+  it("should return state for viewed pubky", () => {
+    const mockKeyState: KeyState = {
+      status: { type: "Idle" },
+      data_size: 1024,
+      last_sync: 1672531200,
+      next_sync: 1672531230,
+      error: null,
+      total_files: null,
+      files_synced: null,
+      bytes_downloaded: null,
     };
 
-    vi.mocked(services.fetchState).mockResolvedValue(mockState);
-
-    const { result } = renderHook(() => useAppState(true), {
-      wrapper: createWrapper(),
+    act(() => {
+      useUIStore.setState({
+        viewedPubky: "pk:test123",
+        keyStates: { "pk:test123": mockKeyState },
+        developerMode: false,
+      });
     });
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
+    const { result } = renderHook(() => useAppState());
 
-    expect(result.current.data).toEqual(mockState);
-    expect(services.fetchState).toHaveBeenCalled();
+    expect(result.current.pubky).toBe("pk:test123");
+    expect(result.current.is_syncing).toBe(false);
+    expect(result.current.data_dir_size).toBe(1024);
+    expect(result.current.next_sync_time).toBe(1672531230);
+    expect(result.current.keyState).toEqual(mockKeyState);
   });
 
-  it("should not fetch when disabled", async () => {
-    const { result } = renderHook(() => useAppState(false), {
-      wrapper: createWrapper(),
+  it("should return is_syncing true when syncing", () => {
+    const mockKeyState: KeyState = {
+      status: { type: "Syncing", events_processed: 5 },
+      data_size: 1024,
+      last_sync: null,
+      next_sync: null,
+      error: null,
+      total_files: null,
+      files_synced: null,
+      bytes_downloaded: null,
+    };
+
+    act(() => {
+      useUIStore.setState({
+        viewedPubky: "pk:test123",
+        keyStates: { "pk:test123": mockKeyState },
+        developerMode: false,
+      });
     });
 
-    // Wait a tick to ensure no fetch happens
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const { result } = renderHook(() => useAppState());
 
-    expect(result.current.isFetching).toBe(false);
-    expect(services.fetchState).not.toHaveBeenCalled();
+    expect(result.current.is_syncing).toBe(true);
+    expect(result.current.backup_running).toBe(true);
   });
 
-  it("should handle fetch errors", async () => {
-    const mockError = { type: "Internal", message: "Connection failed" };
-    vi.mocked(services.fetchState).mockRejectedValue(mockError);
+  it("should return error message when in error state", () => {
+    const mockKeyState: KeyState = {
+      status: { type: "Error" },
+      data_size: 0,
+      last_sync: null,
+      next_sync: null,
+      error: {
+        code: "Internal",
+        message: "Connection failed",
+        recoverable: false,
+      },
+      total_files: null,
+      files_synced: null,
+      bytes_downloaded: null,
+    };
 
-    const { result } = renderHook(() => useAppState(true), {
-      wrapper: createWrapper(),
+    act(() => {
+      useUIStore.setState({
+        viewedPubky: "pk:test123",
+        keyStates: { "pk:test123": mockKeyState },
+        developerMode: false,
+      });
     });
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
+    const { result } = renderHook(() => useAppState());
+
+    expect(result.current.backup_controller_error).toBe("Connection failed");
+    expect(result.current.backup_running).toBe(false);
+  });
+
+  it("should reflect developer_mode from store", () => {
+    act(() => {
+      useUIStore.setState({
+        viewedPubky: null,
+        keyStates: {},
+        developerMode: true,
+      });
     });
 
-    expect(result.current.error).toEqual(mockError);
+    const { result } = renderHook(() => useAppState());
+
+    expect(result.current.developer_mode).toBe(true);
   });
 });

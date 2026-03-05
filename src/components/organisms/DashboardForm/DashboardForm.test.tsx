@@ -1,284 +1,259 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-  cleanup,
-} from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { DashboardForm } from "./DashboardForm";
-import { useUIStore } from "@/stores";
+import { useUIStore } from "@/stores/uiStore";
+import type { KeyState } from "@/stores/uiStore";
 import * as services from "@/services";
-import * as hooks from "@/hooks";
-import type { AppState } from "@/types/app-state";
 
-vi.mock("@/services");
-// Mock all hooks to prevent memory issues from polling/intervals (useAppState, useCountdown)
-vi.mock("@/hooks", () => ({
-  useAppState: vi.fn(),
-  useCountdown: vi.fn(),
-  useDataDirPath: vi.fn(),
-  useForceSync: vi.fn(),
-  useCreateSnapshot: vi.fn(),
-  useLastSyncTime: vi.fn(),
-  useOpenDataDir: vi.fn(),
+// Mock services
+vi.mock("@/services", () => ({
+  forceSyncNow: vi.fn(),
+  createSnapshot: vi.fn(),
+  getDataDirPath: vi.fn(),
+  openDataDir: vi.fn(),
 }));
 
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
-
-const mockAppState: AppState = {
-  pubky: "pk:testpubky12345678901234567890",
-  developer_mode: false,
-  is_syncing: false,
-  next_sync_time: Math.floor(Date.now() / 1000) + 60,
-  data_dir_size: 1024000,
-  backup_controller_error: null,
-};
+// Mock clipboard API
+const mockWriteText = vi.fn().mockResolvedValue(undefined);
+Object.defineProperty(navigator, "clipboard", {
+  value: { writeText: mockWriteText },
+  writable: true,
+  configurable: true,
+});
 
 describe("DashboardForm", () => {
+  const mockKeyState: KeyState = {
+    status: { type: "Idle" },
+    data_size: 1024,
+    last_sync: Math.floor(Date.now() / 1000) - 60, // 1 minute ago
+    next_sync: Math.floor(Date.now() / 1000) + 30, // 30 seconds from now
+    error: null,
+    total_files: null,
+    files_synced: null,
+    bytes_downloaded: null,
+  };
+
+  const syncingKeyState: KeyState = {
+    status: { type: "Syncing", events_processed: 5 },
+    data_size: 2048,
+    last_sync: null,
+    next_sync: null,
+    error: null,
+    total_files: 100,
+    files_synced: 50,
+    bytes_downloaded: 1024,
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset store state
+    vi.mocked(services.getDataDirPath).mockResolvedValue("/home/user/.pubky-backup");
+
     useUIStore.setState({
-      currentScreen: "dashboard",
+      keyStates: { "pk:test-pubky": mockKeyState },
+      viewedPubky: "pk:test-pubky",
       statusMessageMode: "sync",
-      pubkyInputValue: "",
-      hasAutoLoaded: false,
-      toast: { visible: false, pubkyText: "", type: "success", message: "" },
-    });
-    // Mock useAppState to avoid 200ms polling that causes memory issues
-    vi.mocked(hooks.useAppState).mockReturnValue({
-      data: mockAppState,
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-      error: null,
-    } as ReturnType<typeof hooks.useAppState>);
-    // Mock useCountdown to avoid 1-second interval
-    vi.mocked(hooks.useCountdown).mockReturnValue("Next backup in 1 minute...");
-    // Mock useLastSyncTime
-    vi.mocked(hooks.useLastSyncTime).mockReturnValue(null);
-    // Mock useDataDirPath
-    vi.mocked(hooks.useDataDirPath).mockReturnValue({
-      data: "/home/user/.local/share/pubky-backup",
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-      error: null,
-    } as ReturnType<typeof hooks.useDataDirPath>);
-    // Mock mutation hooks
-    vi.mocked(hooks.useForceSync).mockReturnValue({
-      mutateAsync: vi.fn().mockResolvedValue(undefined),
-      isPending: false,
-    } as unknown as ReturnType<typeof hooks.useForceSync>);
-    vi.mocked(hooks.useCreateSnapshot).mockReturnValue({
-      mutateAsync: vi.fn().mockResolvedValue("/path/to/snapshot.zip"),
-      isPending: false,
-    } as unknown as ReturnType<typeof hooks.useCreateSnapshot>);
-    vi.mocked(hooks.useOpenDataDir).mockReturnValue({
-      mutateAsync: vi.fn().mockResolvedValue(undefined),
-      isPending: false,
-    } as unknown as ReturnType<typeof hooks.useOpenDataDir>);
-    // Default service mocks
-    vi.mocked(services.openDataDir).mockResolvedValue(undefined);
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-  });
-
-  it("should render the dashboard with pubky info", async () => {
-    render(<DashboardForm />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      // Truncated pubky display
-      expect(screen.getByText("pk:te...67890")).toBeInTheDocument();
+      developerMode: false,
     });
   });
 
-  it("should display backup size", async () => {
-    render(<DashboardForm />, { wrapper: createWrapper() });
+  describe("rendering", () => {
+    it("should render dashboard header with pubky", () => {
+      render(<DashboardForm />);
 
-    await waitFor(() => {
-      expect(screen.getByText("1000.0 KB")).toBeInTheDocument();
+      // Pubky should be displayed (truncated)
+      expect(screen.getByText(/test-pubky/i)).toBeInTheDocument();
+    });
+
+    it("should render sync message area", () => {
+      render(<DashboardForm />);
+
+      // Should render the action buttons (sync message is also rendered)
+      expect(screen.getByRole("button", { name: /force sync/i })).toBeInTheDocument();
+    });
+
+    it("should render info cards", () => {
+      render(<DashboardForm />);
+
+      expect(screen.getByText("Backup Size")).toBeInTheDocument();
+      expect(screen.getByText("Last Sync")).toBeInTheDocument();
+      expect(screen.getByText("Backup Location")).toBeInTheDocument();
+    });
+
+    it("should render action buttons", () => {
+      render(<DashboardForm />);
+
+      expect(screen.getByRole("button", { name: /create snapshot/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /force sync/i })).toBeInTheDocument();
+    });
+
+    it("should display formatted backup size", () => {
+      render(<DashboardForm />);
+
+      // 1024 bytes should display as "1 KB" or similar
+      expect(screen.getByText(/1.*KB/i)).toBeInTheDocument();
+    });
+
+    it("should display data directory path", async () => {
+      render(<DashboardForm />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/\.pubky-backup/i)).toBeInTheDocument();
+      });
     });
   });
 
-  it("should display backup location", async () => {
-    render(<DashboardForm />, { wrapper: createWrapper() });
+  describe("syncing state", () => {
+    it("should show syncing badge when syncing", () => {
+      useUIStore.setState({
+        keyStates: { "pk:test-pubky": syncingKeyState },
+        viewedPubky: "pk:test-pubky",
+      });
 
-    await waitFor(() => {
-      expect(
-        screen.getByText("/home/user/.local/share/pubky-backup"),
-      ).toBeInTheDocument();
-    });
-  });
+      render(<DashboardForm />);
 
-  it("should show SYNCED badge when not syncing", async () => {
-    render(<DashboardForm />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      expect(screen.getByText("SYNCED")).toBeInTheDocument();
-    });
-  });
-
-  it("should show SYNCING badge when syncing", async () => {
-    vi.mocked(hooks.useAppState).mockReturnValue({
-      data: { ...mockAppState, is_syncing: true },
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-      error: null,
-    } as ReturnType<typeof hooks.useAppState>);
-
-    render(<DashboardForm />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
+      // StatusBadge displays "SYNCING" in uppercase
       expect(screen.getByText("SYNCING")).toBeInTheDocument();
     });
-  });
 
-  it("should render copy button", async () => {
-    render(<DashboardForm />, { wrapper: createWrapper() });
+    it("should disable action buttons when syncing", () => {
+      useUIStore.setState({
+        keyStates: { "pk:test-pubky": syncingKeyState },
+        viewedPubky: "pk:test-pubky",
+      });
 
-    await waitFor(() => {
-      expect(screen.getByTitle("Copy full pubky")).toBeInTheDocument();
+      render(<DashboardForm />);
+
+      expect(screen.getByRole("button", { name: /create snapshot/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /force sync/i })).toBeDisabled();
     });
   });
 
-  it("should call force sync when force sync button is clicked", async () => {
-    const mockMutateAsync = vi.fn().mockResolvedValue(undefined);
-    vi.mocked(hooks.useForceSync).mockReturnValue({
-      mutateAsync: mockMutateAsync,
-      isPending: false,
-    } as unknown as ReturnType<typeof hooks.useForceSync>);
+  describe("copy functionality", () => {
+    it("should copy pubky to clipboard when copy button is clicked", async () => {
+      render(<DashboardForm />);
 
-    render(<DashboardForm />, { wrapper: createWrapper() });
+      // DashboardHeader uses "Copy full pubky" as the title
+      const copyButton = screen.getByTitle("Copy full pubky");
+      fireEvent.click(copyButton);
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /force sync/i }),
-      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(mockWriteText).toHaveBeenCalledWith("pk:test-pubky");
+      });
     });
 
-    const forceSyncButton = screen.getByRole("button", { name: /force sync/i });
-    fireEvent.click(forceSyncButton);
+    it("should show toast after copying", async () => {
+      useUIStore.setState({
+        toast: { visible: false, pubkyText: "", type: "success", message: "" },
+      });
 
-    await waitFor(() => {
-      expect(mockMutateAsync).toHaveBeenCalled();
-    });
-  });
+      render(<DashboardForm />);
 
-  it("should create snapshot when snapshot button is clicked", async () => {
-    const mockMutateAsync = vi.fn().mockResolvedValue("/path/to/snapshot.zip");
-    vi.mocked(hooks.useCreateSnapshot).mockReturnValue({
-      mutateAsync: mockMutateAsync,
-      isPending: false,
-    } as unknown as ReturnType<typeof hooks.useCreateSnapshot>);
+      // DashboardHeader uses "Copy full pubky" as the title
+      const copyButton = screen.getByTitle("Copy full pubky");
+      fireEvent.click(copyButton);
 
-    render(<DashboardForm />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /create snapshot/i }),
-      ).toBeInTheDocument();
-    });
-
-    const snapshotButton = screen.getByRole("button", {
-      name: /create snapshot/i,
-    });
-    fireEvent.click(snapshotButton);
-
-    await waitFor(() => {
-      expect(mockMutateAsync).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(useUIStore.getState().toast.visible).toBe(true);
+      });
     });
   });
 
-  it("should show snapshot success message after creation", async () => {
-    vi.mocked(hooks.useCreateSnapshot).mockReturnValue({
-      mutateAsync: vi.fn().mockResolvedValue("/path/to/snapshot.zip"),
-      isPending: false,
-    } as unknown as ReturnType<typeof hooks.useCreateSnapshot>);
+  describe("force sync", () => {
+    it("should call forceSyncNow when force sync button is clicked", async () => {
+      vi.mocked(services.forceSyncNow).mockResolvedValue(undefined);
 
-    render(<DashboardForm />, { wrapper: createWrapper() });
+      render(<DashboardForm />);
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /create snapshot/i }),
-      ).toBeInTheDocument();
-    });
+      fireEvent.click(screen.getByRole("button", { name: /force sync/i }));
 
-    const snapshotButton = screen.getByRole("button", {
-      name: /create snapshot/i,
-    });
-    fireEvent.click(snapshotButton);
-
-    await waitFor(() => {
-      expect(screen.getByText("Snapshot created")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(services.forceSyncNow).toHaveBeenCalledWith("pk:test-pubky");
+      });
     });
   });
 
-  it("should show snapshot error message on failure", async () => {
-    vi.mocked(hooks.useCreateSnapshot).mockReturnValue({
-      mutateAsync: vi.fn().mockRejectedValue(new Error("Disk full")),
-      isPending: false,
-    } as unknown as ReturnType<typeof hooks.useCreateSnapshot>);
+  describe("snapshot creation", () => {
+    it("should call createSnapshot when snapshot button is clicked", async () => {
+      vi.mocked(services.createSnapshot).mockResolvedValue("/path/to/snapshot.zip");
 
-    render(<DashboardForm />, { wrapper: createWrapper() });
+      render(<DashboardForm />);
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /create snapshot/i }),
-      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
+
+      await waitFor(() => {
+        expect(services.createSnapshot).toHaveBeenCalledWith("pk:test-pubky");
+      });
     });
 
-    const snapshotButton = screen.getByRole("button", {
-      name: /create snapshot/i,
-    });
-    fireEvent.click(snapshotButton);
+    it("should show success message after snapshot creation", async () => {
+      vi.mocked(services.createSnapshot).mockResolvedValue("/path/to/snapshot.zip");
 
-    await waitFor(() => {
-      expect(screen.getByText("Failed to create snapshot")).toBeInTheDocument();
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/snapshot created/i)).toBeInTheDocument();
+      });
+    });
+
+    it("should show error message when snapshot fails", async () => {
+      vi.mocked(services.createSnapshot).mockRejectedValue(new Error("Disk full"));
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/failed to create snapshot/i)).toBeInTheDocument();
+      });
+    });
+
+    it("should set statusMessageMode to snapshot-success on successful snapshot", async () => {
+      vi.mocked(services.createSnapshot).mockResolvedValue("/path/to/snapshot.zip");
+      useUIStore.setState({ statusMessageMode: "sync" });
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
+
+      await waitFor(() => {
+        expect(useUIStore.getState().statusMessageMode).toBe("snapshot-success");
+      });
     });
   });
 
-  it("should disable action buttons when syncing", async () => {
-    vi.mocked(hooks.useAppState).mockReturnValue({
-      data: { ...mockAppState, is_syncing: true },
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-      error: null,
-    } as ReturnType<typeof hooks.useAppState>);
+  describe("open data directory", () => {
+    it("should call openDataDir when folder icon is clicked", async () => {
+      vi.mocked(services.openDataDir).mockResolvedValue(undefined);
 
-    render(<DashboardForm />, { wrapper: createWrapper() });
+      render(<DashboardForm />);
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /create snapshot/i }),
-      ).toBeDisabled();
-      expect(
-        screen.getByRole("button", { name: /force sync/i }),
-      ).toBeDisabled();
+      // Wait for data dir path to load
+      await waitFor(() => {
+        expect(screen.getByText(/\.pubky-backup/i)).toBeInTheDocument();
+      }, { timeout: 2000 });
+
+      const openDirButton = screen.getByTitle("Open data directory");
+      fireEvent.click(openDirButton);
+
+      await waitFor(() => {
+        expect(services.openDataDir).toHaveBeenCalled();
+      }, { timeout: 1000 });
     });
   });
 
+  describe("null pubky handling", () => {
+    it("should handle null viewedPubky gracefully", () => {
+      useUIStore.setState({
+        keyStates: {},
+        viewedPubky: null,
+      });
+
+      render(<DashboardForm />);
+
+      // Should render without crashing
+      expect(screen.getByText("Backup Size")).toBeInTheDocument();
+    });
+  });
 });

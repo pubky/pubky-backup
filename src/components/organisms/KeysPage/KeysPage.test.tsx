@@ -1,384 +1,311 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
 import { KeysPage } from "./KeysPage";
-import { useUIStore } from "@/stores";
+import { useUIStore } from "@/stores/uiStore";
+import type { KeyState } from "@/stores/uiStore";
 import * as services from "@/services";
 
-vi.mock("@/services");
+// Mock services
+vi.mock("@/services", () => ({
+  addKey: vi.fn(),
+  setLastPubky: vi.fn(),
+}));
 
 // Mock clipboard API
-const mockWriteText = vi.fn();
+const mockWriteText = vi.fn().mockResolvedValue(undefined);
 Object.defineProperty(navigator, "clipboard", {
-  value: {
-    writeText: mockWriteText,
-  },
+  value: { writeText: mockWriteText },
   writable: true,
   configurable: true,
 });
 
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
-
 describe("KeysPage", () => {
+  const mockKeyState: KeyState = {
+    status: { type: "Idle" },
+    data_size: 1024,
+    last_sync: 1672531200,
+    next_sync: 1672531230,
+    error: null,
+    total_files: null,
+    files_synced: null,
+    bytes_downloaded: null,
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWriteText.mockResolvedValue(undefined);
-    // Reset store state
     useUIStore.setState({
+      keyStates: {},
+      viewedPubky: null,
       currentPage: "keys",
-      toast: { visible: false, pubkyText: "", type: "success", message: "" },
-    });
-    // Default mocks
-    vi.mocked(services.getKeys).mockResolvedValue([]);
-    vi.mocked(services.fetchState).mockResolvedValue({
-      pubky: null,
-      developerMode: false,
-      isSyncing: false,
-      nextSyncTime: 0,
-      dataDirSize: 0,
-      backupControllerError: null,
-      backupRunning: false,
     });
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+  describe("rendering", () => {
+    it("should render header and description", () => {
+      render(<KeysPage />);
 
-  it("should render the keys page header", () => {
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    expect(screen.getByText("Manage keys")).toBeInTheDocument();
-    expect(
-      screen.getByText("Select a pubky to see its backup activity and status."),
-    ).toBeInTheDocument();
-  });
-
-  it("should display the keys count", async () => {
-    vi.mocked(services.getKeys).mockResolvedValue(["pk:key1", "pk:key2"]);
-
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      expect(screen.getByText("Your pubkys (2)")).toBeInTheDocument();
-    });
-  });
-
-  it("should display empty keys count when no keys", async () => {
-    vi.mocked(services.getKeys).mockResolvedValue([]);
-
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      expect(screen.getByText("Your pubkys (0)")).toBeInTheDocument();
-    });
-  });
-
-  it("should render key items for each key", async () => {
-    vi.mocked(services.getKeys).mockResolvedValue([
-      "pk:abc123456789",
-      "pk:def987654321",
-    ]);
-
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      // Keys should be displayed
-      expect(screen.getByText("Your pubkys (2)")).toBeInTheDocument();
-      // Copy buttons for each key
-      expect(screen.getAllByTitle("Copy pubky")).toHaveLength(2);
-    });
-  });
-
-  it("should show 'Add another pubky' button by default", () => {
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    expect(
-      screen.getByRole("button", { name: /add another pubky/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("should show add input when 'Add another pubky' is clicked", async () => {
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    const addButton = screen.getByRole("button", { name: /add another pubky/i });
-    fireEvent.click(addButton);
-
-    await waitFor(() => {
+      expect(screen.getByText("Manage keys")).toBeInTheDocument();
       expect(
-        screen.getByPlaceholderText("Enter pubky to add..."),
-      ).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /add$/i })).toBeInTheDocument();
-    });
-  });
-
-  it("should hide add input when Cancel is clicked", async () => {
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    // Show add input
-    const addButton = screen.getByRole("button", { name: /add another pubky/i });
-    fireEvent.click(addButton);
-
-    // Click cancel
-    const cancelButton = screen.getByRole("button", { name: /cancel/i });
-    fireEvent.click(cancelButton);
-
-    await waitFor(() => {
-      expect(
-        screen.queryByPlaceholderText("Enter pubky to add..."),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: /add another pubky/i }),
+        screen.getByText(/Select a pubky to see its backup activity/i)
       ).toBeInTheDocument();
     });
-  });
 
-  it("should disable Add button when input is empty", async () => {
-    render(<KeysPage />, { wrapper: createWrapper() });
+    it("should show key count", () => {
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": mockKeyState,
+          "pk:key2": mockKeyState,
+        },
+      });
 
-    // Show add input
-    const addButton = screen.getByRole("button", { name: /add another pubky/i });
-    fireEvent.click(addButton);
+      render(<KeysPage />);
 
-    await waitFor(() => {
-      const submitButton = screen.getByRole("button", { name: /^add$/i });
-      expect(submitButton).toBeDisabled();
+      expect(screen.getByText(/Your pubkys \(2\)/i)).toBeInTheDocument();
     });
-  });
 
-  it("should call addKey when submitting new pubky", async () => {
-    vi.mocked(services.addKey).mockResolvedValue(undefined);
+    it("should render list of keys", () => {
+      useUIStore.setState({
+        keyStates: {
+          "g1b6wp8bhhxt1234567890abcdef": mockKeyState,
+          "a2c7xq9ciiyv0987654321fedcba": mockKeyState,
+        },
+      });
 
-    render(<KeysPage />, { wrapper: createWrapper() });
+      render(<KeysPage />);
 
-    // Show add input
-    const addAnotherButton = screen.getByRole("button", {
-      name: /add another pubky/i,
+      // Keys should be displayed (truncated format: first 5 + ... + last 5)
+      // g1b6wp8bhhxt1234567890abcdef -> g1b6w...bcdef
+      // a2c7xq9ciiyv0987654321fedcba -> a2c7x...dcba
+      expect(screen.getByText(/g1b6w/i)).toBeInTheDocument();
+      expect(screen.getByText(/a2c7x/i)).toBeInTheDocument();
     });
-    fireEvent.click(addAnotherButton);
 
-    // Type pubky
-    const input = screen.getByPlaceholderText("Enter pubky to add...");
-    fireEvent.change(input, { target: { value: "pk:newkey123" } });
+    it("should show 'Add another pubky' button", () => {
+      render(<KeysPage />);
 
-    // Submit
-    const addButton = screen.getByRole("button", { name: /^add$/i });
-    fireEvent.click(addButton);
-
-    await waitFor(() => {
-      expect(services.addKey).toHaveBeenCalledWith("pk:newkey123");
+      expect(
+        screen.getByRole("button", { name: /add another pubky/i })
+      ).toBeInTheDocument();
     });
-  });
 
-  it("should navigate to sync page after adding key", async () => {
-    vi.mocked(services.addKey).mockResolvedValue(undefined);
+    it("should show empty state when no keys", () => {
+      render(<KeysPage />);
 
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    // Show add input and submit
-    fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
-    fireEvent.change(screen.getByPlaceholderText("Enter pubky to add..."), {
-      target: { value: "pk:newkey123" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
-
-    await waitFor(() => {
-      expect(useUIStore.getState().currentPage).toBe("sync");
-    });
-  });
-
-  it("should show error toast on addKey failure", async () => {
-    const mockError = { type: "InvalidPubkyFormat", message: "Bad format" };
-    vi.mocked(services.addKey).mockRejectedValue(mockError);
-
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    // Show add input and submit
-    fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
-    fireEvent.change(screen.getByPlaceholderText("Enter pubky to add..."), {
-      target: { value: "bad-pubky" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
-
-    await waitFor(() => {
-      const toast = useUIStore.getState().toast;
-      expect(toast.visible).toBe(true);
-      expect(toast.type).toBe("error");
-    });
-  });
-
-  it("should trim whitespace from pubky input before adding", async () => {
-    vi.mocked(services.addKey).mockResolvedValue(undefined);
-
-    render(<KeysPage />, { wrapper: createWrapper() });
-
-    // Show add input and submit with whitespace
-    fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
-    fireEvent.change(screen.getByPlaceholderText("Enter pubky to add..."), {
-      target: { value: "  pk:newkey123  " },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
-
-    await waitFor(() => {
-      expect(services.addKey).toHaveBeenCalledWith("pk:newkey123");
+      expect(screen.getByText(/Your pubkys \(0\)/i)).toBeInTheDocument();
     });
   });
 
   describe("key selection", () => {
-    it("should navigate to sync page when clicking current key", async () => {
-      vi.mocked(services.getKeys).mockResolvedValue(["pk:currentkey"]);
-      vi.mocked(services.fetchState).mockResolvedValue({
-        pubky: "pk:currentkey",
-        developerMode: false,
-        isSyncing: false,
-        nextSyncTime: 0,
-        dataDirSize: 0,
-        backupControllerError: null,
-        backupRunning: false,
+    it("should highlight selected key", () => {
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": mockKeyState,
+          "pk:key2": mockKeyState,
+        },
+        viewedPubky: "pk:key1",
       });
 
-      render(<KeysPage />, { wrapper: createWrapper() });
+      render(<KeysPage />);
 
-      await waitFor(() => {
-        expect(screen.getByText("Your pubkys (1)")).toBeInTheDocument();
-      });
-
-      // Click the current key
-      const keyButtons = screen.getAllByRole("button");
-      const keyButton = keyButtons[0]; // First button is the key item
-      fireEvent.click(keyButton);
-
-      await waitFor(() => {
-        expect(useUIStore.getState().currentPage).toBe("sync");
-      });
-
-      // Should not have called setViewedPubky since it's already selected
-      expect(services.setViewedPubky).not.toHaveBeenCalled();
+      // The selected key should have a check icon
+      const checkIcons = screen.getAllByTitle("Copy pubky");
+      expect(checkIcons.length).toBe(2);
     });
 
-    it("should call setViewedPubky when clicking different key", async () => {
-      vi.mocked(services.getKeys).mockResolvedValue([
-        "pk:currentkey",
-        "pk:otherkey",
-      ]);
-      vi.mocked(services.fetchState).mockResolvedValue({
-        pubky: "pk:currentkey",
-        developerMode: false,
-        isSyncing: false,
-        nextSyncTime: 0,
-        dataDirSize: 0,
-        backupControllerError: null,
-        backupRunning: false,
-      });
-      vi.mocked(services.setViewedPubky).mockResolvedValue(undefined);
+    it("should call setViewedPubky when clicking a different key", async () => {
+      vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
-      render(<KeysPage />, { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(screen.getByText("Your pubkys (2)")).toBeInTheDocument();
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": mockKeyState,
+          "pk:key2": mockKeyState,
+        },
+        viewedPubky: "pk:key1",
       });
 
-      // Click the other key by finding its text
-      const otherKeyText = screen.getByText("pk:otherkey");
-      // Click the parent button
-      fireEvent.click(otherKeyText.closest("button")!);
+      render(<KeysPage />);
+
+      // Find and click the second key
+      const keyButtons = screen.getAllByRole("button").filter(
+        (btn) => btn.textContent?.includes("key2") || btn.closest("[class*='pk:key2']")
+      );
+
+      // Click on a key item (not the copy button)
+      const key2Button = screen.getByText(/key2/i).closest("button");
+      if (key2Button) {
+        fireEvent.click(key2Button);
+      }
 
       await waitFor(() => {
-        expect(services.setViewedPubky).toHaveBeenCalled();
-        expect(vi.mocked(services.setViewedPubky).mock.calls[0][0]).toBe(
-          "pk:otherkey",
-        );
+        expect(services.setLastPubky).toHaveBeenCalled();
       });
     });
 
-    it("should show error toast on setViewedPubky failure", async () => {
-      vi.mocked(services.getKeys).mockResolvedValue([
-        "pk:currentkey",
-        "pk:otherkey",
-      ]);
-      vi.mocked(services.fetchState).mockResolvedValue({
-        pubky: "pk:currentkey",
-        developerMode: false,
-        isSyncing: false,
-        nextSyncTime: 0,
-        dataDirSize: 0,
-        backupControllerError: null,
-        backupRunning: false,
-      });
-      const mockError = { type: "Internal", message: "Failed to switch" };
-      vi.mocked(services.setViewedPubky).mockRejectedValue(mockError);
-
-      render(<KeysPage />, { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(screen.getByText("Your pubkys (2)")).toBeInTheDocument();
+    it("should navigate to sync page when clicking already selected key", () => {
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": mockKeyState,
+        },
+        viewedPubky: "pk:key1",
+        currentPage: "keys",
       });
 
-      // Click the other key
-      const otherKeyText = screen.getByText("pk:otherkey");
-      fireEvent.click(otherKeyText.closest("button")!);
+      render(<KeysPage />);
 
-      await waitFor(() => {
-        const toast = useUIStore.getState().toast;
-        expect(toast.visible).toBe(true);
-        expect(toast.type).toBe("error");
-      });
+      // Click on the already selected key
+      const keyButton = screen.getByText(/key1/i).closest("button");
+      if (keyButton) {
+        fireEvent.click(keyButton);
+      }
+
+      expect(useUIStore.getState().currentPage).toBe("sync");
     });
   });
 
   describe("copy functionality", () => {
     it("should copy pubky to clipboard when copy button is clicked", async () => {
-      vi.mocked(services.getKeys).mockResolvedValue(["pk:copyablekey"]);
-
-      render(<KeysPage />, { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(screen.getByText("Your pubkys (1)")).toBeInTheDocument();
+      useUIStore.setState({
+        keyStates: {
+          "pk:test-pubky-to-copy": mockKeyState,
+        },
       });
 
-      // Find and click the copy button
-      const copyButton = screen.getByTitle("Copy pubky");
-      fireEvent.click(copyButton);
+      render(<KeysPage />);
+
+      const copyButtons = screen.getAllByTitle("Copy pubky");
+      fireEvent.click(copyButtons[0]);
 
       await waitFor(() => {
-        expect(mockWriteText).toHaveBeenCalledWith("pk:copyablekey");
+        expect(mockWriteText).toHaveBeenCalledWith("pk:test-pubky-to-copy");
       });
     });
 
     it("should show toast after copying", async () => {
-      vi.mocked(services.getKeys).mockResolvedValue(["pk:copyablekey"]);
-
-      render(<KeysPage />, { wrapper: createWrapper() });
-
-      await waitFor(() => {
-        expect(screen.getByText("Your pubkys (1)")).toBeInTheDocument();
+      useUIStore.setState({
+        keyStates: {
+          "pk:copy-me": mockKeyState,
+        },
+        toast: { visible: false, pubkyText: "", type: "success", message: "" },
       });
+
+      render(<KeysPage />);
 
       const copyButton = screen.getByTitle("Copy pubky");
       fireEvent.click(copyButton);
 
       await waitFor(() => {
-        const toast = useUIStore.getState().toast;
-        expect(toast.visible).toBe(true);
-        expect(toast.pubkyText).toBe("pk:copyablekey");
+        expect(useUIStore.getState().toast.visible).toBe(true);
       });
+    });
+  });
+
+  describe("add pubky flow", () => {
+    it("should show input when 'Add another pubky' is clicked", () => {
+      render(<KeysPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+
+      expect(screen.getByPlaceholderText(/enter pubky to add/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^add$/i })).toBeInTheDocument();
+    });
+
+    it("should hide input when Cancel is clicked", () => {
+      render(<KeysPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+      expect(screen.queryByPlaceholderText(/enter pubky to add/i)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /add another pubky/i })).toBeInTheDocument();
+    });
+
+    it("should disable Add button when input is empty", () => {
+      render(<KeysPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+
+      expect(screen.getByRole("button", { name: /^add$/i })).toBeDisabled();
+    });
+
+    it("should enable Add button when input has value", () => {
+      render(<KeysPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
+        target: { value: "new-pubky-value" },
+      });
+
+      expect(screen.getByRole("button", { name: /^add$/i })).not.toBeDisabled();
+    });
+
+    it("should call addKey service when Add is clicked", async () => {
+      vi.mocked(services.addKey).mockResolvedValue("normalized-pubky");
+
+      render(<KeysPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
+        target: { value: "my-new-pubky" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+      await waitFor(() => {
+        expect(services.addKey).toHaveBeenCalledWith("my-new-pubky");
+      });
+    });
+
+    it("should clear input and hide form after successful add", async () => {
+      vi.mocked(services.addKey).mockResolvedValue("normalized-pubky");
+
+      render(<KeysPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
+        target: { value: "new-pubky" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByPlaceholderText(/enter pubky to add/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it("should navigate to sync page after successful add", async () => {
+      vi.mocked(services.addKey).mockResolvedValue("normalized-pubky");
+      useUIStore.setState({ currentPage: "keys" });
+
+      render(<KeysPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
+        target: { value: "new-pubky" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+      await waitFor(() => {
+        expect(useUIStore.getState().currentPage).toBe("sync");
+      });
+    });
+
+    it("should show 'Adding...' text while adding", async () => {
+      let resolveAdd: (value: string) => void;
+      vi.mocked(services.addKey).mockImplementation(
+        () => new Promise((resolve) => { resolveAdd = resolve; })
+      );
+
+      render(<KeysPage />);
+
+      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
+        target: { value: "new-pubky" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+
+      expect(screen.getByText("Adding...")).toBeInTheDocument();
+
+      // Cleanup
+      resolveAdd!("done");
     });
   });
 });

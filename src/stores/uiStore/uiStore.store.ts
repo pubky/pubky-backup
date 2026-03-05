@@ -5,6 +5,7 @@ import {
   type Screen,
   type Page,
   type StatusMessageMode,
+  type KeyState,
   uiInitialState,
   UIActionTypes,
 } from "./uiStore.types";
@@ -76,6 +77,34 @@ export const useUIStore = create<UIStore>()(
           false,
           UIActionTypes.HIDE_TOAST,
         ),
+
+      setKeyState: (pubky: string, state: KeyState) =>
+        set(
+          (s) => ({
+            keyStates: { ...s.keyStates, [pubky]: state },
+          }),
+          false,
+          UIActionTypes.SET_KEY_STATE,
+        ),
+
+      setAllKeyStates: (states: Record<string, KeyState>) =>
+        set({ keyStates: states }, false, UIActionTypes.SET_ALL_KEY_STATES),
+
+      removeKeyState: (pubky: string) =>
+        set(
+          (s) => {
+            const { [pubky]: _, ...rest } = s.keyStates;
+            return { keyStates: rest };
+          },
+          false,
+          UIActionTypes.REMOVE_KEY_STATE,
+        ),
+
+      setViewedPubky: (pubky: string | null) =>
+        set({ viewedPubky: pubky }, false, UIActionTypes.SET_VIEWED_PUBKY),
+
+      setDeveloperMode: (enabled: boolean) =>
+        set({ developerMode: enabled }, false, UIActionTypes.SET_DEVELOPER_MODE),
     }),
     {
       name: "ui-store",

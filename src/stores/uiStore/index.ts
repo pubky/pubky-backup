@@ -7,4 +7,9 @@ export type {
   UIState,
   UIActions,
   UIStore,
+  KeyState,
+  KeyStatus,
+  KeyError,
+  KeyErrorCode,
+  KeyUpdate,
 } from "./uiStore.types";

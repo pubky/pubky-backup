@@ -1,21 +1,21 @@
-import { useMutation } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
 import { forceSyncNow } from "@/services";
 
 /**
  * useForceSync
  *
- * Mutation hook for forcing an immediate sync.
+ * Hook for forcing an immediate sync for a specific pubky.
  * Triggers a manual backup sync regardless of the scheduled time.
  *
- * @returns TanStack Mutation result with mutate/mutateAsync functions
+ * @returns Object with forceSync function and isPending state
  *
  * @example
  * ```tsx
- * const { mutateAsync: forceSync, isPending } = useForceSync();
+ * const { forceSync, isPending } = useForceSync();
  *
  * const handleForceSync = async () => {
  *   try {
- *     await forceSync();
+ *     await forceSync(pubky);
  *     console.log('Sync triggered successfully');
  *   } catch (error) {
  *     console.error('Failed to trigger sync', error);
@@ -30,7 +30,16 @@ import { forceSyncNow } from "@/services";
  * ```
  */
 export function useForceSync() {
-  return useMutation({
-    mutationFn: forceSyncNow,
-  });
+  const [isPending, setIsPending] = useState(false);
+
+  const forceSync = useCallback(async (pubky: string) => {
+    setIsPending(true);
+    try {
+      await forceSyncNow(pubky);
+    } finally {
+      setIsPending(false);
+    }
+  }, []);
+
+  return { forceSync, isPending };
 }

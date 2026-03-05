@@ -1,89 +1,99 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
 import { useDataDirPath } from "./useDataDirPath";
 import * as services from "@/services";
 
-vi.mock("@/services");
-
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
+vi.mock("@/services", () => ({
+  getDataDirPath: vi.fn(),
+}));
 
 describe("useDataDirPath", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("should fetch data directory path when enabled", async () => {
-    const mockPath = "/home/user/.local/share/pubky-backup";
-    vi.mocked(services.getDataDirPath).mockResolvedValue(mockPath);
+  it("should return dataDirPath and isLoading state", () => {
+    vi.mocked(services.getDataDirPath).mockResolvedValue("/home/user/.pubky-backup");
 
-    const { result } = renderHook(() => useDataDirPath(true), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useDataDirPath());
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(result.current.data).toBe(mockPath);
-    expect(services.getDataDirPath).toHaveBeenCalled();
+    expect(result.current).toHaveProperty("dataDirPath");
+    expect(result.current).toHaveProperty("isLoading");
   });
 
-  it("should be enabled by default", async () => {
-    const mockPath = "/default/path";
-    vi.mocked(services.getDataDirPath).mockResolvedValue(mockPath);
+  it("should start with isLoading true and null dataDirPath", () => {
+    vi.mocked(services.getDataDirPath).mockResolvedValue("/path");
 
-    const { result } = renderHook(() => useDataDirPath(), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useDataDirPath());
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(services.getDataDirPath).toHaveBeenCalled();
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.dataDirPath).toBeNull();
   });
 
-  it("should not fetch when disabled", async () => {
-    const { result } = renderHook(() => useDataDirPath(false), {
-      wrapper: createWrapper(),
-    });
+  it("should fetch data dir path on mount", async () => {
+    vi.mocked(services.getDataDirPath).mockResolvedValue("/home/user/.pubky-backup");
 
-    // Wait a tick to ensure no fetch happens
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(result.current.isFetching).toBe(false);
-    expect(services.getDataDirPath).not.toHaveBeenCalled();
-  });
-
-  it("should handle errors", async () => {
-    const mockError = { type: "Storage", message: "Path not found" };
-    vi.mocked(services.getDataDirPath).mockRejectedValue(mockError);
-
-    const { result } = renderHook(() => useDataDirPath(true), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useDataDirPath());
 
     await waitFor(() => {
-      expect(result.current.isError).toBe(true);
+      expect(result.current.isLoading).toBe(false);
     });
 
-    expect(result.current.error).toEqual(mockError);
+    expect(result.current.dataDirPath).toBe("/home/user/.pubky-backup");
+    expect(services.getDataDirPath).toHaveBeenCalledTimes(1);
+  });
+
+  it("should set isLoading to false after successful fetch", async () => {
+    vi.mocked(services.getDataDirPath).mockResolvedValue("/path/to/data");
+
+    const { result } = renderHook(() => useDataDirPath());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.dataDirPath).toBe("/path/to/data");
+  });
+
+  it("should handle errors gracefully", async () => {
+    vi.mocked(services.getDataDirPath).mockRejectedValue(new Error("Failed to get path"));
+
+    const { result } = renderHook(() => useDataDirPath());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    // Should not throw, just leave dataDirPath as null
+    expect(result.current.dataDirPath).toBeNull();
+  });
+
+  it("should not refetch on rerender", async () => {
+    vi.mocked(services.getDataDirPath).mockResolvedValue("/path");
+
+    const { result, rerender } = renderHook(() => useDataDirPath());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    rerender();
+    rerender();
+    rerender();
+
+    // Should only have been called once on mount
+    expect(services.getDataDirPath).toHaveBeenCalledTimes(1);
+  });
+
+  it("should handle different path formats", async () => {
+    vi.mocked(services.getDataDirPath).mockResolvedValue("C:\\Users\\test\\.pubky-backup");
+
+    const { result } = renderHook(() => useDataDirPath());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.dataDirPath).toBe("C:\\Users\\test\\.pubky-backup");
   });
 });

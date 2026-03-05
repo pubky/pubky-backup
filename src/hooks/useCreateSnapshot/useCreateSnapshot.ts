@@ -1,21 +1,21 @@
-import { useMutation } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
 import { createSnapshot } from "@/services";
 
 /**
  * useCreateSnapshot
  *
- * Mutation hook for creating a backup snapshot.
+ * Hook for creating a backup snapshot for a specific pubky.
  * Returns the path to the created snapshot file on success.
  *
- * @returns TanStack Mutation result with mutate/mutateAsync functions
+ * @returns Object with createSnapshotFn function and isPending state
  *
  * @example
  * ```tsx
- * const { mutateAsync: snapshot, isPending } = useCreateSnapshot();
+ * const { createSnapshotFn, isPending } = useCreateSnapshot();
  *
  * const handleSnapshot = async () => {
  *   try {
- *     const snapshotPath = await snapshot();
+ *     const snapshotPath = await createSnapshotFn(pubky);
  *     console.log('Snapshot created at:', snapshotPath);
  *     showSuccessMessage();
  *   } catch (error) {
@@ -31,7 +31,16 @@ import { createSnapshot } from "@/services";
  * ```
  */
 export function useCreateSnapshot() {
-  return useMutation({
-    mutationFn: createSnapshot,
-  });
+  const [isPending, setIsPending] = useState(false);
+
+  const createSnapshotFn = useCallback(async (pubky: string): Promise<string> => {
+    setIsPending(true);
+    try {
+      return await createSnapshot(pubky);
+    } finally {
+      setIsPending(false);
+    }
+  }, []);
+
+  return { createSnapshotFn, isPending };
 }

@@ -16,12 +16,11 @@ export function StartupForm() {
   );
   const { setPubkyInputValue, setScreen, setHasAutoLoaded } =
     Stores.useUIStore.getState();
-  const addKeyMutation = Hooks.useAddKey();
-  const { data: keys = [] } = Hooks.useKeys();
-  const { data: lastPubky } = Hooks.useLastPubky();
+  const { addKey, isPending: isLoading } = Hooks.useAddKey();
+  const keys = Hooks.useKeys();
+  const { lastPubky } = Hooks.useLastPubky();
 
   const hasValue = pubkyInputValue.trim().length > 0;
-  const isLoading = addKeyMutation.isPending;
 
   const handleAddKey = useCallback(
     async (value: string) => {
@@ -29,14 +28,14 @@ export function StartupForm() {
       if (!trimmedValue) return;
 
       try {
-        await addKeyMutation.mutateAsync({ pubkyValue: trimmedValue });
+        await addKey({ pubkyValue: trimmedValue });
         setScreen("dashboard");
       } catch (error: unknown) {
         Logger.error("StartupForm", "Add key error", { error });
         Utils.handleBackendError(error);
       }
     },
-    [addKeyMutation, setScreen],
+    [addKey, setScreen],
   );
 
   // Auto-load last pubky on mount (only once per app session)

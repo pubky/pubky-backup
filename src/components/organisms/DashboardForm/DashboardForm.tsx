@@ -16,16 +16,16 @@ export function DashboardForm() {
   );
   const { showToast, setStatusMessageMode } = Stores.useUIStore.getState();
 
-  const { data: appState } = Hooks.useAppState();
-  const { data: dataDirPath } = Hooks.useDataDirPath(appState?.pubky !== null);
-  const forceSyncMutation = Hooks.useForceSync();
-  const snapshotMutation = Hooks.useCreateSnapshot();
-  const openDataDirMutation = Hooks.useOpenDataDir();
+  const appState = Hooks.useAppState();
+  const { dataDirPath } = Hooks.useDataDirPath();
+  const { forceSync, isPending: isForceSyncing } = Hooks.useForceSync();
+  const { createSnapshotFn, isPending: isCreatingSnapshot } = Hooks.useCreateSnapshot();
+  const { openDir } = Hooks.useOpenDataDir();
 
-  const pubky = appState?.pubky ?? null;
-  const isSyncing = appState?.is_syncing ?? false;
-  const nextSyncTime = appState?.next_sync_time ?? 0;
-  const dataSize = appState?.data_dir_size ?? 0;
+  const pubky = appState.pubky;
+  const isSyncing = appState.is_syncing;
+  const nextSyncTime = appState.next_sync_time;
+  const dataSize = appState.data_dir_size;
 
   const lastSyncTime = Hooks.useLastSyncTime(nextSyncTime, isSyncing);
   const countdownText = Hooks.useCountdown(nextSyncTime, isSyncing);
@@ -56,8 +56,9 @@ export function DashboardForm() {
   };
 
   const handleForceSync = async () => {
+    if (pubky === null) return;
     try {
-      await forceSyncMutation.mutateAsync();
+      await forceSync(pubky);
       Logger.debug("DashboardForm", "Force sync triggered");
     } catch (error: unknown) {
       Logger.error("DashboardForm", "Force sync failed", { error });
@@ -65,8 +66,9 @@ export function DashboardForm() {
   };
 
   const handleSnapshot = async () => {
+    if (pubky === null) return;
     try {
-      const snapshotPath = await snapshotMutation.mutateAsync();
+      const snapshotPath = await createSnapshotFn(pubky);
       Logger.debug("DashboardForm", "Snapshot created", { snapshotPath });
       showSnapshotMessage("snapshot-success");
     } catch (error: unknown) {
@@ -92,7 +94,7 @@ export function DashboardForm() {
 
   const handleOpenDataDir = async () => {
     try {
-      await openDataDirMutation.mutateAsync();
+      await openDir();
     } catch (error: unknown) {
       Logger.error("DashboardForm", "Failed to open data directory", { error });
     }
@@ -181,8 +183,8 @@ export function DashboardForm() {
       {/* Action buttons */}
       <ActionButtons
         isSyncing={isSyncing}
-        isCreatingSnapshot={snapshotMutation.isPending}
-        isForceSyncing={forceSyncMutation.isPending}
+        isCreatingSnapshot={isCreatingSnapshot}
+        isForceSyncing={isForceSyncing}
         onSnapshot={() => void handleSnapshot()}
         onForceSync={() => void handleForceSync()}
       />

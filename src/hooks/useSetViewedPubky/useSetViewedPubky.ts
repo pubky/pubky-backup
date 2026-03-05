@@ -1,27 +1,44 @@
-import { useMutation } from "@tanstack/react-query";
-import { setViewedPubky } from "@/services";
+import { useCallback, useState } from "react";
+import { useUIStore } from "@/stores/uiStore";
+import { setLastPubky } from "@/services";
 
 /**
  * useSetViewedPubky
  *
- * Mutation hook for switching which pubky is currently being viewed in the UI.
- * The backend syncs all keys concurrently - this only controls which key's
- * data is displayed.
+ * Hook for switching which pubky is currently being viewed in the UI.
+ * Updates the Zustand store immediately and persists to backend for next launch.
  *
- * @returns TanStack Mutation result with mutate/mutateAsync functions
+ * @returns Object with setViewedPubky function and isPending state
  *
  * @example
  * ```tsx
- * const { mutateAsync: switchKey, isPending } = useSetViewedPubky();
+ * const { setViewedPubky, isPending } = useSetViewedPubky();
  *
  * const handleSelect = async (pubky: string) => {
- *   await switchKey(pubky);
+ *   await setViewedPubky(pubky);
  *   // Navigate to sync page
  * };
  * ```
  */
 export function useSetViewedPubky() {
-  return useMutation({
-    mutationFn: setViewedPubky,
-  });
+  const setViewedPubkyStore = useUIStore((s) => s.setViewedPubky);
+  const [isPending, setIsPending] = useState(false);
+
+  const setViewedPubky = useCallback(
+    async (pubky: string) => {
+      setIsPending(true);
+      try {
+        // Update Zustand store immediately
+        setViewedPubkyStore(pubky);
+
+        // Persist to backend for next app launch
+        await setLastPubky(pubky);
+      } finally {
+        setIsPending(false);
+      }
+    },
+    [setViewedPubkyStore],
+  );
+
+  return { setViewedPubky, isPending };
 }

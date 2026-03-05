@@ -271,6 +271,18 @@ impl BackupManager {
         inner.keys.get(pubky).map(|k| k.state.clone())
     }
 
+    /// Get current state of all managed keys.
+    ///
+    /// Returns a map of pubky string (z32) to KeyState.
+    pub fn get_all_key_states(&self) -> HashMap<String, KeyState> {
+        let inner = self.inner.read();
+        inner
+            .keys
+            .iter()
+            .map(|(pubky, managed)| (pubky.to_string(), managed.state.clone()))
+            .collect()
+    }
+
     /// Get list of all managed pubkys.
     pub fn get_keys(&self) -> Vec<PublicKey> {
         let inner = self.inner.read();
