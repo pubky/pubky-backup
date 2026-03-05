@@ -10,12 +10,12 @@ import type { BackendError } from "@/types/backend-errors";
 import { isBackendError } from "@/types/backend-errors";
 
 /**
- * Initialize the app state with a pubky string
- * @throws {BackendError} If initialization fails
+ * Add a key to start backing up
+ * @throws {BackendError} If adding key fails
  */
-export async function initAppState(pubkyStr: string): Promise<void> {
+export async function addKey(pubkyStr: string): Promise<void> {
   try {
-    await invoke("init_app_state", { pubkyStr });
+    await invoke<void>("add_key", { pubkyStr });
   } catch (error: unknown) {
     throw normalizeError(error);
   }
@@ -38,12 +38,12 @@ export async function fetchState(): Promise<AppState> {
 }
 
 /**
- * Get list of previously used pubky keys
+ * Get list of pubky keys that have data stored
  * @throws {BackendError} If fetching keys fails
  */
-export async function getPreviousPubkyKeys(): Promise<string[]> {
+export async function getKeys(): Promise<string[]> {
   try {
-    return await invoke<string[]>("get_previous_pubky_keys");
+    return await invoke<string[]>("get_keys");
   } catch (error: unknown) {
     throw normalizeError(error);
   }
@@ -73,25 +73,15 @@ export async function setViewedPubky(pubkyStr: string): Promise<void> {
   }
 }
 
-/**
- * Begin the backup controller
- * @throws {BackendError} If starting backup controller fails
- */
-export async function backupControllerBegin(): Promise<void> {
-  try {
-    await invoke("backup_controller_begin");
-  } catch (error: unknown) {
-    throw normalizeError(error);
-  }
-}
 
 /**
- * Close the backup controller
- * @throws {BackendError} If closing backup controller fails
+ * Remove a key from the backup manager, stopping its backup controller
+ * @param pubky - The pubky key to remove
+ * @throws {BackendError} If removing the key fails
  */
-export async function backupControllerClose(): Promise<void> {
+export async function removeKey(pubkyStr: string): Promise<void> {
   try {
-    await invoke("backup_controller_close");
+    await invoke("remove_key", { pubkyStr });
   } catch (error: unknown) {
     throw normalizeError(error);
   }

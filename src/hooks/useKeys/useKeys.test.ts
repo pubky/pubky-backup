@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
-import { usePreviousPubkyKeys } from "./usePreviousPubkyKeys";
+import { useKeys } from "./useKeys";
 import * as services from "@/services";
 
 vi.mock("@/services");
@@ -24,16 +24,16 @@ function createWrapper() {
   };
 }
 
-describe("usePreviousPubkyKeys", () => {
+describe("useKeys", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("should fetch previous pubky keys", async () => {
+  it("should fetch keys", async () => {
     const mockKeys = ["pk:key1", "pk:key2", "pk:key3"];
-    vi.mocked(services.getPreviousPubkyKeys).mockResolvedValue(mockKeys);
+    vi.mocked(services.getKeys).mockResolvedValue(mockKeys);
 
-    const { result } = renderHook(() => usePreviousPubkyKeys(), {
+    const { result } = renderHook(() => useKeys(), {
       wrapper: createWrapper(),
     });
 
@@ -42,13 +42,13 @@ describe("usePreviousPubkyKeys", () => {
     });
 
     expect(result.current.data).toEqual(mockKeys);
-    expect(services.getPreviousPubkyKeys).toHaveBeenCalled();
+    expect(services.getKeys).toHaveBeenCalled();
   });
 
   it("should handle empty keys list", async () => {
-    vi.mocked(services.getPreviousPubkyKeys).mockResolvedValue([]);
+    vi.mocked(services.getKeys).mockResolvedValue([]);
 
-    const { result } = renderHook(() => usePreviousPubkyKeys(), {
+    const { result } = renderHook(() => useKeys(), {
       wrapper: createWrapper(),
     });
 
@@ -61,9 +61,9 @@ describe("usePreviousPubkyKeys", () => {
 
   it("should handle errors", async () => {
     const mockError = { type: "Storage", message: "Read failed" };
-    vi.mocked(services.getPreviousPubkyKeys).mockRejectedValue(mockError);
+    vi.mocked(services.getKeys).mockRejectedValue(mockError);
 
-    const { result } = renderHook(() => usePreviousPubkyKeys(), {
+    const { result } = renderHook(() => useKeys(), {
       wrapper: createWrapper(),
     });
 

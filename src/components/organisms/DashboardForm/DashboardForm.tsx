@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useMemo } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import * as Atoms from "@/components/atoms";
 import * as Molecules from "@/components/molecules";
@@ -14,52 +14,24 @@ export function DashboardForm() {
   const { statusMessageMode } = Stores.useUIStore(
     useShallow((s) => ({ statusMessageMode: s.statusMessageMode })),
   );
-  const { setScreen, showToast, setStatusMessageMode } =
-    Stores.useUIStore.getState();
+  const { showToast, setStatusMessageMode } = Stores.useUIStore.getState();
 
   const { data: appState } = Hooks.useAppState();
   const { data: dataDirPath } = Hooks.useDataDirPath(appState?.pubky !== null);
   const forceSyncMutation = Hooks.useForceSync();
   const snapshotMutation = Hooks.useCreateSnapshot();
-  const backupCloseMutation = Hooks.useBackupControllerClose();
   const openDataDirMutation = Hooks.useOpenDataDir();
 
   const pubky = appState?.pubky ?? null;
   const isSyncing = appState?.is_syncing ?? false;
   const nextSyncTime = appState?.next_sync_time ?? 0;
   const dataSize = appState?.data_dir_size ?? 0;
-  const backupControllerError = appState?.backup_controller_error ?? null;
 
   const lastSyncTime = Hooks.useLastSyncTime(nextSyncTime, isSyncing);
   const countdownText = Hooks.useCountdown(nextSyncTime, isSyncing);
 
   // Snapshot message timeout ref
   const snapshotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const handleBack = useCallback(async () => {
-    try {
-      await backupCloseMutation.mutateAsync();
-    } catch (error: unknown) {
-      // Intentionally not using handleBackendError here - we want to navigate
-      // back regardless of whether the controller was already stopped
-      Logger.error("DashboardForm", "Backup controller already stopped", {
-        error,
-      });
-    }
-    setScreen("startup");
-  }, [backupCloseMutation, setScreen]);
-
-  // Ref to avoid re-running effect when handleBack changes
-  const handleBackRef = useRef(handleBack);
-  handleBackRef.current = handleBack;
-
-  // Handle backup controller errors
-  useEffect(() => {
-    if (backupControllerError !== null) {
-      Utils.handleBackendError(backupControllerError);
-      void handleBackRef.current();
-    }
-  }, [backupControllerError]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -162,7 +134,6 @@ export function DashboardForm() {
       <Molecules.DashboardHeader
         pubkyDisplay={Utils.displayPubky(pubky)}
         status={statusInfo.badge}
-        onBack={() => void handleBack()}
         onCopy={handleCopy}
       />
 

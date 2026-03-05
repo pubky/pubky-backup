@@ -37,11 +37,7 @@ pub(super) async fn create_event_stream(
     let cursor = cursor.map(EventCursor::new);
 
     let sdk_stream = pubky_client
-        .event_stream()
-        .add_user(user, cursor)
-        .map_err(|e| {
-            EventsError::FetchFailed(format!("Failed to add user to event stream: {}", e))
-        })?
+        .event_stream_for_user(user, cursor)
         .limit(EVENT_BATCH_SIZE)
         .subscribe()
         .await

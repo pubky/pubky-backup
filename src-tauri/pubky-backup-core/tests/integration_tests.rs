@@ -9,11 +9,6 @@
 //! cargo test -p pubky-backup-core --test integration_tests
 //! ```
 //!
-//! # Note
-//!
-//! The first run will download PostgreSQL binaries (~50-100MB), which are cached
-//! for subsequent runs.
-//!
 //! A single testnet instance is shared across all tests to minimize startup overhead.
 //! Tests are serialized using `serial_test` to ensure proper sequencing.
 
@@ -109,13 +104,12 @@ async fn run_controller_until_idle(
     result.expect("Controller should reach Idle state within 30 seconds");
 }
 
-/// Tests core backup functionality: PUT sync, DELETE sync, cursor persistence, and event stream.
+/// Tests core backup functionality: PUT sync, DELETE sync, and cursor persistence.
 ///
 /// This test combines several related scenarios to minimize testnet overhead:
-/// 1. Event stream receives real events from homeserver
-/// 2. Syncing PUT events backs up data correctly
+/// 1. Syncing PUT events backs up data correctly
+/// 2. Cursor persists and advances across sync operations
 /// 3. Syncing DELETE events removes backed up data
-/// 4. Cursor persists and advances across sync operations
 #[tokio::test]
 #[serial]
 async fn test_backup_sync_put_delete_and_cursor() {
@@ -149,30 +143,7 @@ async fn test_backup_sync_put_delete_and_cursor() {
         .await
         .unwrap();
 
-    // === Part 2: Test event stream receives real events ===
-    {
-        use futures_util::StreamExt;
-
-        let mut stream = pubky_client
-            .event_stream()
-            .add_user(&user_pk, None)
-            .unwrap()
-            .limit(10)
-            .subscribe()
-            .await
-            .unwrap();
-
-        // Should receive at least one event (the PUTs we just did)
-        let event = tokio::time::timeout(Duration::from_secs(5), stream.next())
-            .await
-            .expect("Should receive event within timeout");
-
-        assert!(event.is_some(), "Should receive at least one event");
-        let event = event.unwrap().unwrap();
-        assert_eq!(event.resource.owner, user_pk);
-    }
-
-    // === Part 3: Test PUT sync ===
+    // === Part 2: Test PUT sync ===
     // Create backup controller and sync
     let (storage, _temp_dir) = create_test_storage();
     run_controller_until_idle(user_pk.clone(), storage.clone(), pubky_client.clone()).await;
@@ -192,7 +163,7 @@ async fn test_backup_sync_put_delete_and_cursor() {
         "File should exist before deletion"
     );
 
-    // === Part 4: Test cursor persistence ===
+    // === Part 3: Test cursor persistence ===
     let cursor1 = storage.read_cursor(&user_pk).await.unwrap();
     assert!(cursor1.is_some(), "Cursor should be saved after first sync");
 
@@ -218,7 +189,7 @@ async fn test_backup_sync_put_delete_and_cursor() {
     let resource2 = PubkyResource::new(user_pk.clone(), "/pub/file2.txt").unwrap();
     assert!(storage.as_ref().read(&resource2).await.is_ok());
 
-    // === Part 5: Test DELETE sync ===
+    // === Part 4: Test DELETE sync ===
     // Delete one file on homeserver
     session
         .storage()

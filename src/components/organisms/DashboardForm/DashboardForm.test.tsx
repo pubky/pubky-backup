@@ -22,7 +22,6 @@ vi.mock("@/hooks", () => ({
   useDataDirPath: vi.fn(),
   useForceSync: vi.fn(),
   useCreateSnapshot: vi.fn(),
-  useBackupControllerClose: vi.fn(),
   useLastSyncTime: vi.fn(),
   useOpenDataDir: vi.fn(),
 }));
@@ -93,10 +92,6 @@ describe("DashboardForm", () => {
       mutateAsync: vi.fn().mockResolvedValue("/path/to/snapshot.zip"),
       isPending: false,
     } as unknown as ReturnType<typeof hooks.useCreateSnapshot>);
-    vi.mocked(hooks.useBackupControllerClose).mockReturnValue({
-      mutateAsync: vi.fn().mockResolvedValue(undefined),
-      isPending: false,
-    } as unknown as ReturnType<typeof hooks.useBackupControllerClose>);
     vi.mocked(hooks.useOpenDataDir).mockReturnValue({
       mutateAsync: vi.fn().mockResolvedValue(undefined),
       isPending: false,
@@ -166,28 +161,6 @@ describe("DashboardForm", () => {
 
     await waitFor(() => {
       expect(screen.getByTitle("Copy full pubky")).toBeInTheDocument();
-    });
-  });
-
-  it("should navigate back when back button is clicked", async () => {
-    const mockMutateAsync = vi.fn().mockResolvedValue(undefined);
-    vi.mocked(hooks.useBackupControllerClose).mockReturnValue({
-      mutateAsync: mockMutateAsync,
-      isPending: false,
-    } as unknown as ReturnType<typeof hooks.useBackupControllerClose>);
-
-    render(<DashboardForm />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      expect(screen.getByTitle("Back")).toBeInTheDocument();
-    });
-
-    const backButton = screen.getByTitle("Back");
-    fireEvent.click(backButton);
-
-    await waitFor(() => {
-      expect(mockMutateAsync).toHaveBeenCalled();
-      expect(useUIStore.getState().currentScreen).toBe("startup");
     });
   });
 
@@ -308,22 +281,4 @@ describe("DashboardForm", () => {
     });
   });
 
-  it("should handle backup controller error by showing error toast and navigating back", async () => {
-    vi.mocked(hooks.useAppState).mockReturnValue({
-      data: { ...mockAppState, backup_controller_error: "Connection lost" },
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-      error: null,
-    } as ReturnType<typeof hooks.useAppState>);
-
-    render(<DashboardForm />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      const toast = useUIStore.getState().toast;
-      expect(toast.visible).toBe(true);
-      expect(toast.type).toBe("error");
-      expect(useUIStore.getState().currentScreen).toBe("startup");
-    });
-  });
 });

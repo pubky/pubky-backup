@@ -53,16 +53,16 @@ export function KeysPage() {
   const [showAddInput, setShowAddInput] = useState(false);
   const [newPubkyValue, setNewPubkyValue] = useState("");
 
-  const { data: previousKeys = [] } = Hooks.usePreviousPubkyKeys();
+  const { data: keys = [] } = Hooks.useKeys();
   const { data: appState } = Hooks.useAppState();
   const setViewedPubkyMutation = Hooks.useSetViewedPubky();
-  const initializeMutation = Hooks.useInitialize();
+  const addKeyMutation = Hooks.useAddKey();
   const { showToast, setPage } = Stores.useUIStore.getState();
 
   // Normalize pubky by stripping the "pubky" prefix if present
   const rawPubky = appState?.pubky ?? null;
   const currentPubky = rawPubky ? Utils.stripPubkyPrefix(rawPubky) : null;
-  const isAddingKey = initializeMutation.isPending;
+  const isAddingKey = addKeyMutation.isPending;
   const isSwitchingKey = setViewedPubkyMutation.isPending;
 
   const handleCopy = (pubky: string) => {
@@ -100,7 +100,7 @@ export function KeysPage() {
     if (!trimmedValue) return;
 
     try {
-      await initializeMutation.mutateAsync({ pubkyValue: trimmedValue });
+      await addKeyMutation.mutateAsync({ pubkyValue: trimmedValue });
       setNewPubkyValue("");
       setShowAddInput(false);
       setPage("sync");
@@ -131,10 +131,10 @@ export function KeysPage() {
       {/* Keys list */}
       <div className="flex flex-col gap-2">
         <span className="text-xs text-text-secondary uppercase tracking-wider">
-          Your pubkys ({previousKeys.length})
+          Your pubkys ({keys.length})
         </span>
         <div className="flex flex-col gap-2">
-          {previousKeys.map((pubky) => (
+          {keys.map((pubky) => (
             <KeyItem
               key={pubky}
               pubky={pubky}

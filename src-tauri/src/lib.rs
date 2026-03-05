@@ -140,9 +140,9 @@ async fn get_or_create_manager() -> Result<&'static BackupManager, BackupAppErro
         .ok_or_else(|| BackupAppError::internal("Failed to initialize manager"))
 }
 
-/// Take a pubky, verify and add to State ready for usage.
+/// Add a key to start backing up.
 #[tauri::command]
-async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
+async fn add_key(pubky_str: &str) -> Result<(), BackupAppError> {
     // Handle developer mode
     let pubky = if is_developer_mode() {
         info!("Developer mode: using dev pubky");
@@ -153,7 +153,10 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
         })?
     };
 
-    // Store the pubky as the viewed pubky
+    // Get or create the manager
+    let manager = get_or_create_manager().await?;
+
+    // Set as viewed pubky
     {
         let mut viewed = VIEWED_PUBKY
             .write()
@@ -161,29 +164,42 @@ async fn init_app_state(pubky_str: &str) -> Result<(), BackupAppError> {
         *viewed = Some(pubky.clone());
     }
 
-    // Get or create the manager
-    if MANAGER.get().is_none() {
-        let config = BackupManagerConfig {
-            developer_mode: is_developer_mode(),
-            ..Default::default()
-        };
-
-        let manager = BackupManager::new(config)
-            .await
-            .map_err(BackupAppError::internal)?;
-
-        let _ = MANAGER.set(manager);
-    }
-
-    // Save the last used pubky to storage for session persistence
-    if let Some(manager) = MANAGER.get() {
+    // Check if key is already being backed up
+    if manager.get_key_state(&pubky).is_some() {
+        debug!("Key already being backed up, setting as viewed");
+        // Save as last pubky even if already exists
         manager
             .write_last_pubky(&pubky)
             .await
             .map_err(BackupAppError::internal)?;
+        return Ok(());
     }
 
-    info!("App state initialized for pubky: {}", pubky);
+    // Add the key to start backing up
+    manager
+        .add_key(pubky.clone())
+        .await
+        .map_err(BackupAppError::internal)?;
+
+    // Save as last pubky
+    manager
+        .write_last_pubky(&pubky)
+        .await
+        .map_err(BackupAppError::internal)?;
+
+    // Subscribe to status updates for tray icon
+    let mut rx = manager.subscribe();
+    let pubky_clone = pubky.clone();
+
+    tauri::async_runtime::spawn(async move {
+        while let Ok(update) = rx.recv().await {
+            if update.pubky == pubky_clone {
+                update_tray_icon(&update);
+            }
+        }
+    });
+
+    info!("Key added and backup started for: {}", pubky);
     Ok(())
 }
 
@@ -218,9 +234,9 @@ async fn fetch_state() -> Result<AppState, BackupAppError> {
     }
 }
 
-/// Get list of previously used pubky keys that have data stored
+/// Get list of pubky keys that have data stored
 #[tauri::command]
-async fn get_previous_pubky_keys() -> Result<Vec<String>, BackupAppError> {
+async fn get_keys() -> Result<Vec<String>, BackupAppError> {
     // Use existing manager if available, otherwise create a temporary one
     let manager = get_or_create_manager().await?;
     manager
@@ -266,46 +282,12 @@ fn set_viewed_pubky(pubky_str: &str) -> Result<(), BackupAppError> {
     Ok(())
 }
 
-/// Spawn task for downloads and polling.
-/// To be called by front-end upon entering main screen.
+/// Remove a key from the backup manager, stopping its backup controller.
 #[tauri::command]
-async fn backup_controller_begin() -> Result<(), BackupAppError> {
-    let pubky = get_viewed_pubky()?;
-    let manager = get_manager()?;
-
-    // Check if key is already being backed up
-    if manager.get_key_state(&pubky).is_some() {
-        debug!("Key already being backed up, skipping add");
-        return Ok(());
-    }
-
-    // Add the key to start backing up
-    manager
-        .add_key(pubky.clone())
-        .await
-        .map_err(BackupAppError::internal)?;
-
-    // Subscribe to status updates for tray icon
-    let mut rx = manager.subscribe();
-    let pubky_clone = pubky.clone();
-
-    tauri::async_runtime::spawn(async move {
-        while let Ok(update) = rx.recv().await {
-            if update.pubky == pubky_clone {
-                update_tray_icon(&update);
-            }
-        }
-    });
-
-    info!("Backup controller started for: {}", pubky);
-    Ok(())
-}
-
-/// Send backup controller task Cancel message.
-/// To be controlled by front-end on exiting main screen.
-#[tauri::command]
-async fn backup_controller_close() -> Result<(), BackupAppError> {
-    let pubky = get_viewed_pubky()?;
+async fn remove_key(pubky_str: &str) -> Result<(), BackupAppError> {
+    let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
+        message: e.to_string(),
+    })?;
     let manager = get_manager()?;
 
     manager
@@ -313,7 +295,7 @@ async fn backup_controller_close() -> Result<(), BackupAppError> {
         .await
         .map_err(BackupAppError::internal)?;
 
-    debug!("Backup controller stopped");
+    debug!("Key removed: {}", pubky);
     Ok(())
 }
 
@@ -450,13 +432,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            init_app_state,
+            add_key,
             fetch_state,
-            get_previous_pubky_keys,
+            get_keys,
             get_last_pubky,
             set_viewed_pubky,
-            backup_controller_begin,
-            backup_controller_close,
+            remove_key,
             force_sync_now,
             get_data_dir_path,
             open_data_dir,

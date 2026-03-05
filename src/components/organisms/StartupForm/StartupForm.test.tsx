@@ -37,7 +37,7 @@ describe("StartupForm", () => {
       toast: { visible: false, pubkyText: "", type: "success", message: "" },
     });
     // Default mocks
-    vi.mocked(services.getPreviousPubkyKeys).mockResolvedValue([]);
+    vi.mocked(services.getKeys).mockResolvedValue([]);
     vi.mocked(services.getLastPubky).mockResolvedValue(null);
   });
 
@@ -69,9 +69,8 @@ describe("StartupForm", () => {
     expect(button).not.toBeDisabled();
   });
 
-  it("should call initialize on button click", async () => {
-    vi.mocked(services.initAppState).mockResolvedValue(undefined);
-    vi.mocked(services.backupControllerBegin).mockResolvedValue(undefined);
+  it("should call addKey on button click", async () => {
+    vi.mocked(services.addKey).mockResolvedValue(undefined);
 
     useUIStore.setState({ pubkyInputValue: "pk:test123" });
     render(<StartupForm />, { wrapper: createWrapper() });
@@ -80,13 +79,12 @@ describe("StartupForm", () => {
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(services.initAppState).toHaveBeenCalledWith("pk:test123");
+      expect(services.addKey).toHaveBeenCalledWith("pk:test123");
     });
   });
 
-  it("should navigate to dashboard on successful initialization", async () => {
-    vi.mocked(services.initAppState).mockResolvedValue(undefined);
-    vi.mocked(services.backupControllerBegin).mockResolvedValue(undefined);
+  it("should navigate to dashboard on successful add key", async () => {
+    vi.mocked(services.addKey).mockResolvedValue(undefined);
 
     useUIStore.setState({ pubkyInputValue: "pk:test123" });
     render(<StartupForm />, { wrapper: createWrapper() });
@@ -99,9 +97,9 @@ describe("StartupForm", () => {
     });
   });
 
-  it("should show error toast on initialization failure", async () => {
+  it("should show error toast on add key failure", async () => {
     const mockError = { type: "InvalidPubkyFormat", message: "Bad format" };
-    vi.mocked(services.initAppState).mockRejectedValue(mockError);
+    vi.mocked(services.addKey).mockRejectedValue(mockError);
 
     useUIStore.setState({ pubkyInputValue: "bad-pubky" });
     render(<StartupForm />, { wrapper: createWrapper() });
@@ -120,12 +118,11 @@ describe("StartupForm", () => {
   });
 
   it("should show spinner when loading", async () => {
-    let resolveInit: () => void;
-    const initPromise = new Promise<void>((resolve) => {
-      resolveInit = resolve;
+    let resolveAddKey: () => void;
+    const addKeyPromise = new Promise<void>((resolve) => {
+      resolveAddKey = resolve;
     });
-    vi.mocked(services.initAppState).mockReturnValue(initPromise);
-    vi.mocked(services.backupControllerBegin).mockResolvedValue(undefined);
+    vi.mocked(services.addKey).mockReturnValue(addKeyPromise);
 
     useUIStore.setState({ pubkyInputValue: "pk:test123" });
     const { container } = render(<StartupForm />, { wrapper: createWrapper() });
@@ -138,11 +135,11 @@ describe("StartupForm", () => {
       expect(spinner).toBeInTheDocument();
     });
 
-    resolveInit!();
+    resolveAddKey!();
   });
 
-  it("should use default placeholder when no previous keys", async () => {
-    vi.mocked(services.getPreviousPubkyKeys).mockResolvedValue([]);
+  it("should use default placeholder when no keys", async () => {
+    vi.mocked(services.getKeys).mockResolvedValue([]);
     render(<StartupForm />, { wrapper: createWrapper() });
 
     await waitFor(() => {
@@ -152,8 +149,8 @@ describe("StartupForm", () => {
     });
   });
 
-  it("should use different placeholder when previous keys exist", async () => {
-    vi.mocked(services.getPreviousPubkyKeys).mockResolvedValue([
+  it("should use different placeholder when keys exist", async () => {
+    vi.mocked(services.getKeys).mockResolvedValue([
       "pk:prev1",
       "pk:prev2",
     ]);
@@ -166,9 +163,8 @@ describe("StartupForm", () => {
     });
   });
 
-  it("should trim whitespace from pubky input before initializing", async () => {
-    vi.mocked(services.initAppState).mockResolvedValue(undefined);
-    vi.mocked(services.backupControllerBegin).mockResolvedValue(undefined);
+  it("should trim whitespace from pubky input before adding", async () => {
+    vi.mocked(services.addKey).mockResolvedValue(undefined);
 
     useUIStore.setState({ pubkyInputValue: "  pk:test123  " });
     render(<StartupForm />, { wrapper: createWrapper() });
@@ -177,23 +173,19 @@ describe("StartupForm", () => {
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(services.initAppState).toHaveBeenCalledWith("pk:test123");
+      expect(services.addKey).toHaveBeenCalledWith("pk:test123");
     });
   });
 
   describe("auto-load behavior", () => {
-    it("should auto-load and initialize when lastPubky exists", async () => {
+    it("should auto-load and add key when lastPubky exists", async () => {
       vi.mocked(services.getLastPubky).mockResolvedValue("pk:saved-pubky-123");
-      vi.mocked(services.initAppState).mockResolvedValue(undefined);
-      vi.mocked(services.backupControllerBegin).mockResolvedValue(undefined);
+      vi.mocked(services.addKey).mockResolvedValue(undefined);
 
       render(<StartupForm />, { wrapper: createWrapper() });
 
       await waitFor(() => {
-        expect(services.initAppState).toHaveBeenCalledWith(
-          "pk:saved-pubky-123",
-        );
-        expect(services.backupControllerBegin).toHaveBeenCalled();
+        expect(services.addKey).toHaveBeenCalledWith("pk:saved-pubky-123");
       });
 
       await waitFor(() => {
@@ -207,8 +199,7 @@ describe("StartupForm", () => {
 
     it("should not auto-load if hasAutoLoaded is already true", async () => {
       vi.mocked(services.getLastPubky).mockResolvedValue("pk:saved-pubky-123");
-      vi.mocked(services.initAppState).mockResolvedValue(undefined);
-      vi.mocked(services.backupControllerBegin).mockResolvedValue(undefined);
+      vi.mocked(services.addKey).mockResolvedValue(undefined);
 
       useUIStore.setState({ hasAutoLoaded: true });
       render(<StartupForm />, { wrapper: createWrapper() });
@@ -218,8 +209,8 @@ describe("StartupForm", () => {
         expect(services.getLastPubky).toHaveBeenCalled();
       });
 
-      // Should not have called initAppState because hasAutoLoaded is true
-      expect(services.initAppState).not.toHaveBeenCalled();
+      // Should not have called addKey because hasAutoLoaded is true
+      expect(services.addKey).not.toHaveBeenCalled();
       expect(useUIStore.getState().currentScreen).toBe("startup");
     });
 
@@ -232,19 +223,19 @@ describe("StartupForm", () => {
         expect(services.getLastPubky).toHaveBeenCalled();
       });
 
-      expect(services.initAppState).not.toHaveBeenCalled();
+      expect(services.addKey).not.toHaveBeenCalled();
       expect(useUIStore.getState().hasAutoLoaded).toBe(false);
     });
 
-    it("should handle auto-load initialization failure gracefully", async () => {
+    it("should handle auto-load add key failure gracefully", async () => {
       const mockError = { type: "HomeserverNotFound", message: "Not found" };
       vi.mocked(services.getLastPubky).mockResolvedValue("pk:invalid-pubky");
-      vi.mocked(services.initAppState).mockRejectedValue(mockError);
+      vi.mocked(services.addKey).mockRejectedValue(mockError);
 
       render(<StartupForm />, { wrapper: createWrapper() });
 
       await waitFor(() => {
-        expect(services.initAppState).toHaveBeenCalledWith("pk:invalid-pubky");
+        expect(services.addKey).toHaveBeenCalledWith("pk:invalid-pubky");
       });
 
       await waitFor(() => {

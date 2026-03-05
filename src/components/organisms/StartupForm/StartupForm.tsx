@@ -16,27 +16,27 @@ export function StartupForm() {
   );
   const { setPubkyInputValue, setScreen, setHasAutoLoaded } =
     Stores.useUIStore.getState();
-  const initializeMutation = Hooks.useInitialize();
-  const { data: previousKeys = [] } = Hooks.usePreviousPubkyKeys();
+  const addKeyMutation = Hooks.useAddKey();
+  const { data: keys = [] } = Hooks.useKeys();
   const { data: lastPubky } = Hooks.useLastPubky();
 
   const hasValue = pubkyInputValue.trim().length > 0;
-  const isLoading = initializeMutation.isPending;
+  const isLoading = addKeyMutation.isPending;
 
-  const handleInitialize = useCallback(
+  const handleAddKey = useCallback(
     async (value: string) => {
       const trimmedValue = value.trim();
       if (!trimmedValue) return;
 
       try {
-        await initializeMutation.mutateAsync({ pubkyValue: trimmedValue });
+        await addKeyMutation.mutateAsync({ pubkyValue: trimmedValue });
         setScreen("dashboard");
       } catch (error: unknown) {
-        Logger.error("StartupForm", "Initialization error", { error });
+        Logger.error("StartupForm", "Add key error", { error });
         Utils.handleBackendError(error);
       }
     },
-    [initializeMutation, setScreen],
+    [addKeyMutation, setScreen],
   );
 
   // Auto-load last pubky on mount (only once per app session)
@@ -44,23 +44,23 @@ export function StartupForm() {
     if (lastPubky && !hasAutoLoaded) {
       setHasAutoLoaded(true);
       setPubkyInputValue(lastPubky);
-      void handleInitialize(lastPubky);
+      void handleAddKey(lastPubky);
     }
   }, [
     lastPubky,
     hasAutoLoaded,
     setHasAutoLoaded,
     setPubkyInputValue,
-    handleInitialize,
+    handleAddKey,
   ]);
 
   const handleSubmit = () => {
-    void handleInitialize(pubkyInputValue);
+    void handleAddKey(pubkyInputValue);
   };
 
   // Determine placeholder based on available keys
   const placeholder =
-    previousKeys.length > 0 ? "Enter your pubky..." : "g1b6wp8bhhxt...";
+    keys.length > 0 ? "Enter your pubky..." : "g1b6wp8bhhxt...";
 
   return (
     <main className="flex flex-col items-center justify-start text-center relative">
@@ -78,7 +78,7 @@ export function StartupForm() {
           <Molecules.PubkyInput
             value={pubkyInputValue}
             onChange={setPubkyInputValue}
-            suggestions={previousKeys}
+            suggestions={keys}
             placeholder={placeholder}
           />
 
