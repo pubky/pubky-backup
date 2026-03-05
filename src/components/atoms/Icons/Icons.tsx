@@ -327,3 +327,24 @@ export function NavSettingsIcon({ className, size = 20 }: IconProps) {
     </svg>
   );
 }
+
+export function ChevronDownIcon({ className, size = 16 }: IconProps) {
+  return (
+    <svg
+      className={cn("shrink-0", className)}
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M4 6L8 10L12 6"
+        stroke="currentColor"
+        strokeWidth="1.33"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

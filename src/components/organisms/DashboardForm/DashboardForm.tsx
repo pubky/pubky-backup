@@ -21,6 +21,8 @@ export function DashboardForm() {
   const { forceSync, isPending: isForceSyncing } = Hooks.useForceSync();
   const { createSnapshotFn, isPending: isCreatingSnapshot } = Hooks.useCreateSnapshot();
   const { openDir } = Hooks.useOpenDataDir();
+  const keys = Hooks.useKeys();
+  const { setViewedPubky } = Hooks.useSetViewedPubky();
 
   const pubky = appState.pubky;
   const isSyncing = appState.is_syncing;
@@ -100,6 +102,10 @@ export function DashboardForm() {
     }
   };
 
+  const handleSelectKey = (selectedPubky: string) => {
+    void setViewedPubky(selectedPubky);
+  };
+
   // Consolidated status information derived from state
   const statusInfo = useMemo(() => {
     if (statusMessageMode === "snapshot-success") {
@@ -137,6 +143,8 @@ export function DashboardForm() {
         pubkyDisplay={Utils.displayPubky(pubky)}
         status={statusInfo.badge}
         onCopy={handleCopy}
+        keys={keys.map((k) => ({ pubky: k, isSelected: k === pubky }))}
+        onSelectKey={handleSelectKey}
       />
 
       {/* Sync message banner */}

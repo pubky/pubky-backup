@@ -14,4 +14,5 @@ export {
   NavActivityIcon,
   NavKeysIcon,
   NavSettingsIcon,
+  ChevronDownIcon,
 } from "./Icons";
