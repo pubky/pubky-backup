@@ -37,12 +37,6 @@ export function handleBackendError(error: unknown): void {
       );
       break;
 
-    case "DataNotFound":
-      showError(
-        `No Data Found: ${error.message || "No backup data exists for this pubky yet."}`,
-      );
-      break;
-
     case "Internal":
     case "Storage":
     case "Events":

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useKeyUpdates } from "./useKeyUpdates";
 import { useUIStore } from "@/stores/uiStore";
@@ -9,7 +9,7 @@ const mockUnlisten = vi.fn();
 let eventCallback: ((event: { payload: KeyUpdate }) => void) | null = null;
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn((eventName: string, callback: (event: { payload: KeyUpdate }) => void) => {
+  listen: vi.fn((_eventName: string, callback: (event: { payload: KeyUpdate }) => void) => {
     eventCallback = callback;
     return Promise.resolve(mockUnlisten);
   }),
@@ -168,8 +168,9 @@ describe("useKeyUpdates", () => {
     });
 
     const state = useUIStore.getState();
-    expect(state.keyStates["pk:error-key"].status.type).toBe("Error");
-    expect(state.keyStates["pk:error-key"].error?.message).toBe("Connection failed");
+    const keyState = state.keyStates["pk:error-key"];
+    expect(keyState?.status.type).toBe("Error");
+    expect(keyState?.error?.message).toBe("Connection failed");
   });
 
   it("should not create duplicate listeners on rerender", async () => {

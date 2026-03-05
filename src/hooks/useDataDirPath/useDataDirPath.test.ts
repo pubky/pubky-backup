@@ -12,22 +12,32 @@ describe("useDataDirPath", () => {
     vi.clearAllMocks();
   });
 
-  it("should return dataDirPath and isLoading state", () => {
+  it("should return dataDirPath and isLoading state", async () => {
     vi.mocked(services.getDataDirPath).mockResolvedValue("/home/user/.pubky-backup");
 
     const { result } = renderHook(() => useDataDirPath());
 
     expect(result.current).toHaveProperty("dataDirPath");
     expect(result.current).toHaveProperty("isLoading");
+
+    // Wait for async effect to settle
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
   });
 
-  it("should start with isLoading true and null dataDirPath", () => {
+  it("should start with isLoading true and null dataDirPath", async () => {
     vi.mocked(services.getDataDirPath).mockResolvedValue("/path");
 
     const { result } = renderHook(() => useDataDirPath());
 
     expect(result.current.isLoading).toBe(true);
     expect(result.current.dataDirPath).toBeNull();
+
+    // Wait for async effect to settle
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
   });
 
   it("should fetch data dir path on mount", async () => {

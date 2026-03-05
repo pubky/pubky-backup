@@ -12,22 +12,32 @@ describe("useLastPubky", () => {
     vi.clearAllMocks();
   });
 
-  it("should return lastPubky and isLoading state", () => {
+  it("should return lastPubky and isLoading state", async () => {
     vi.mocked(services.getLastPubky).mockResolvedValue("pk:test");
 
     const { result } = renderHook(() => useLastPubky());
 
     expect(result.current).toHaveProperty("lastPubky");
     expect(result.current).toHaveProperty("isLoading");
+
+    // Wait for async effect to settle
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
   });
 
-  it("should start with isLoading true and null lastPubky", () => {
+  it("should start with isLoading true and null lastPubky", async () => {
     vi.mocked(services.getLastPubky).mockResolvedValue("pk:test");
 
     const { result } = renderHook(() => useLastPubky());
 
     expect(result.current.isLoading).toBe(true);
     expect(result.current.lastPubky).toBeNull();
+
+    // Wait for async effect to settle
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
   });
 
   it("should fetch last pubky on mount", async () => {

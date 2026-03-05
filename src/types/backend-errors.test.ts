@@ -3,7 +3,6 @@ import {
   isBackendError,
   isInternalError,
   isHomeserverNotFoundError,
-  isDataNotFoundError,
   isInvalidPubkyFormatError,
   isStorageError,
   isEventsError,
@@ -16,7 +15,6 @@ describe("isBackendError", () => {
     const validErrors: BackendError[] = [
       { type: "Internal", message: "Internal error occurred" },
       { type: "HomeserverNotFound", message: "Homeserver not found" },
-      { type: "DataNotFound", message: "Data not found" },
       { type: "InvalidPubkyFormat", message: "Invalid pubky format" },
       { type: "Storage", message: "Storage error" },
       { type: "Events", message: "Events error" },
@@ -81,10 +79,6 @@ describe("specific type guards", () => {
     type: "HomeserverNotFound",
     message: "Homeserver not found",
   };
-  const dataNotFoundError: BackendError = {
-    type: "DataNotFound",
-    message: "Data not found",
-  };
   const invalidPubkyError: BackendError = {
     type: "InvalidPubkyFormat",
     message: "Invalid pubky",
@@ -109,7 +103,6 @@ describe("specific type guards", () => {
 
     it("should reject non-Internal errors", () => {
       expect(isInternalError(homeserverError)).toBe(false);
-      expect(isInternalError(dataNotFoundError)).toBe(false);
       expect(isInternalError(invalidPubkyError)).toBe(false);
     });
   });
@@ -121,20 +114,7 @@ describe("specific type guards", () => {
 
     it("should reject non-HomeserverNotFound errors", () => {
       expect(isHomeserverNotFoundError(internalError)).toBe(false);
-      expect(isHomeserverNotFoundError(dataNotFoundError)).toBe(false);
       expect(isHomeserverNotFoundError(invalidPubkyError)).toBe(false);
-    });
-  });
-
-  describe("isDataNotFoundError", () => {
-    it("should correctly identify DataNotFound errors", () => {
-      expect(isDataNotFoundError(dataNotFoundError)).toBe(true);
-    });
-
-    it("should reject non-DataNotFound errors", () => {
-      expect(isDataNotFoundError(internalError)).toBe(false);
-      expect(isDataNotFoundError(homeserverError)).toBe(false);
-      expect(isDataNotFoundError(invalidPubkyError)).toBe(false);
     });
   });
 
@@ -146,7 +126,6 @@ describe("specific type guards", () => {
     it("should reject non-InvalidPubkyFormat errors", () => {
       expect(isInvalidPubkyFormatError(internalError)).toBe(false);
       expect(isInvalidPubkyFormatError(homeserverError)).toBe(false);
-      expect(isInvalidPubkyFormatError(dataNotFoundError)).toBe(false);
     });
   });
 

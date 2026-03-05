@@ -151,4 +151,33 @@ describe("useSetViewedPubky", () => {
     expect(services.setLastPubky).toHaveBeenCalledTimes(3);
     expect(useUIStore.getState().viewedPubky).toBe("third");
   });
+
+  it("should strip 'pubky' prefix before storing and persisting", async () => {
+    vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useSetViewedPubky());
+
+    await act(async () => {
+      await result.current.setViewedPubky("pubkyabc123def456");
+    });
+
+    // Should strip the "pubky" prefix
+    const state = useUIStore.getState();
+    expect(state.viewedPubky).toBe("abc123def456");
+    expect(services.setLastPubky).toHaveBeenCalledWith("abc123def456");
+  });
+
+  it("should not modify pubky without prefix", async () => {
+    vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useSetViewedPubky());
+
+    await act(async () => {
+      await result.current.setViewedPubky("abc123def456");
+    });
+
+    const state = useUIStore.getState();
+    expect(state.viewedPubky).toBe("abc123def456");
+    expect(services.setLastPubky).toHaveBeenCalledWith("abc123def456");
+  });
 });

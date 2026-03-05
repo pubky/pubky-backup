@@ -99,36 +99,6 @@ describe("handleBackendError", () => {
     });
   });
 
-  describe("DataNotFound errors", () => {
-    it("should handle DataNotFound errors with custom message", () => {
-      const error: BackendError = {
-        type: "DataNotFound",
-        message: "No backup found for this key",
-      };
-
-      handleBackendError(error);
-
-      const toast = getLastErrorToast();
-      expect(toast.visible).toBe(true);
-      expect(toast.message).toBe("No Data Found: No backup found for this key");
-    });
-
-    it("should use fallback message when message is empty", () => {
-      const error: BackendError = {
-        type: "DataNotFound",
-        message: "",
-      };
-
-      handleBackendError(error);
-
-      const toast = getLastErrorToast();
-      expect(toast.visible).toBe(true);
-      expect(toast.message).toBe(
-        "No Data Found: No backup data exists for this pubky yet.",
-      );
-    });
-  });
-
   describe("Internal errors", () => {
     it("should handle Internal errors with custom message", () => {
       const error: BackendError = {

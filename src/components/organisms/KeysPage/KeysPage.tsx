@@ -16,9 +16,16 @@ interface KeyItemProps {
 
 function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       className={cn(
         "flex items-center justify-between w-full px-4 py-3 rounded-lg",
         "border transition-colors duration-200",
@@ -46,7 +53,7 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
           <Atoms.TrashIcon size={16} />
         </Atoms.IconButton>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -56,7 +63,7 @@ export function KeysPage() {
 
   const keys = Hooks.useKeys();
   const viewedPubky = Stores.useUIStore((s) => s.viewedPubky);
-  const { setViewedPubky, isPending: isSwitchingKey } = Hooks.useSetViewedPubky();
+  const { setViewedPubky } = Hooks.useSetViewedPubky();
   const { addKey, isPending: isAddingKey } = Hooks.useAddKey();
   const { setPage } = Stores.useUIStore.getState();
 
@@ -191,7 +198,6 @@ export function KeysPage() {
           variant="secondary"
           onClick={handleAddPubky}
           className="w-full"
-          disabled={isSwitchingKey}
         >
           <span className="text-white text-sm font-medium">Add another pubky</span>
         </Atoms.Button>

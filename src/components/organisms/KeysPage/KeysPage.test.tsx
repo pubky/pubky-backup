@@ -119,10 +119,10 @@ describe("KeysPage", () => {
 
       render(<KeysPage />);
 
-      // Click on a key item (not the remove button)
-      const key2Button = screen.getByText(/key2/i).closest("button");
-      if (key2Button) {
-        fireEvent.click(key2Button);
+      // Click on a key item (not the remove button) - KeyItem is now a div with role="button"
+      const key2Element = screen.getByText(/key2/i).closest("[role='button']");
+      if (key2Element) {
+        fireEvent.click(key2Element);
       }
 
       await waitFor(() => {
@@ -141,10 +141,10 @@ describe("KeysPage", () => {
 
       render(<KeysPage />);
 
-      // Click on the already selected key
-      const keyButton = screen.getByText(/key1/i).closest("button");
-      if (keyButton) {
-        fireEvent.click(keyButton);
+      // Click on the already selected key - KeyItem is now a div with role="button"
+      const keyElement = screen.getByText(/key1/i).closest("[role='button']");
+      if (keyElement) {
+        fireEvent.click(keyElement);
       }
 
       expect(useUIStore.getState().currentPage).toBe("sync");
