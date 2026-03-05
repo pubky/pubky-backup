@@ -9,15 +9,9 @@ import * as services from "@/services";
 vi.mock("@/services", () => ({
   addKey: vi.fn(),
   setLastPubky: vi.fn(),
+  deleteKey: vi.fn(),
 }));
 
-// Mock clipboard API
-const mockWriteText = vi.fn().mockResolvedValue(undefined);
-Object.defineProperty(navigator, "clipboard", {
-  value: { writeText: mockWriteText },
-  writable: true,
-  configurable: true,
-});
 
 describe("KeysPage", () => {
   const mockKeyState: KeyState = {
@@ -108,8 +102,8 @@ describe("KeysPage", () => {
       render(<KeysPage />);
 
       // The selected key should have a check icon
-      const checkIcons = screen.getAllByTitle("Copy pubky");
-      expect(checkIcons.length).toBe(2);
+      const removeButtons = screen.getAllByTitle("Remove pubky");
+      expect(removeButtons.length).toBe(2);
     });
 
     it("should call setViewedPubky when clicking a different key", async () => {
@@ -125,12 +119,7 @@ describe("KeysPage", () => {
 
       render(<KeysPage />);
 
-      // Find and click the second key
-      const keyButtons = screen.getAllByRole("button").filter(
-        (btn) => btn.textContent?.includes("key2") || btn.closest("[class*='pk:key2']")
-      );
-
-      // Click on a key item (not the copy button)
+      // Click on a key item (not the remove button)
       const key2Button = screen.getByText(/key2/i).closest("button");
       if (key2Button) {
         fireEvent.click(key2Button);
@@ -162,39 +151,87 @@ describe("KeysPage", () => {
     });
   });
 
-  describe("copy functionality", () => {
-    it("should copy pubky to clipboard when copy button is clicked", async () => {
+  describe("remove functionality", () => {
+    it("should call deleteKey and remove from state when remove button is clicked", async () => {
+      vi.mocked(services.deleteKey).mockResolvedValue(undefined);
+
       useUIStore.setState({
         keyStates: {
-          "pk:test-pubky-to-copy": mockKeyState,
+          "pk:test-pubky-to-remove": mockKeyState,
         },
       });
 
       render(<KeysPage />);
 
-      const copyButtons = screen.getAllByTitle("Copy pubky");
-      fireEvent.click(copyButtons[0]);
+      const removeButton = screen.getByTitle("Remove pubky");
+      fireEvent.click(removeButton);
 
       await waitFor(() => {
-        expect(mockWriteText).toHaveBeenCalledWith("pk:test-pubky-to-copy");
+        expect(services.deleteKey).toHaveBeenCalledWith("pk:test-pubky-to-remove");
+      });
+
+      await waitFor(() => {
+        expect(useUIStore.getState().keyStates["pk:test-pubky-to-remove"]).toBeUndefined();
       });
     });
 
-    it("should show toast after copying", async () => {
+    it("should select another key when deleting the currently viewed key", async () => {
+      vi.mocked(services.deleteKey).mockResolvedValue(undefined);
+      vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
+
       useUIStore.setState({
         keyStates: {
-          "pk:copy-me": mockKeyState,
+          "pk:key1": mockKeyState,
+          "pk:key2": mockKeyState,
         },
-        toast: { visible: false, pubkyText: "", type: "success", message: "" },
+        viewedPubky: "pk:key1",
       });
 
       render(<KeysPage />);
 
-      const copyButton = screen.getByTitle("Copy pubky");
-      fireEvent.click(copyButton);
+      // Find the remove button for the first key (which is the viewed key)
+      const removeButtons = screen.getAllByTitle("Remove pubky");
+      const firstRemoveButton = removeButtons[0];
+      if (firstRemoveButton) {
+        fireEvent.click(firstRemoveButton);
+      }
 
       await waitFor(() => {
-        expect(useUIStore.getState().toast.visible).toBe(true);
+        expect(services.deleteKey).toHaveBeenCalledWith("pk:key1");
+      });
+
+      // Should switch to the other key
+      await waitFor(() => {
+        expect(services.setLastPubky).toHaveBeenCalledWith("pk:key2");
+      });
+    });
+
+    it("should clear viewedPubky and go to startup screen when deleting the last key", async () => {
+      vi.mocked(services.deleteKey).mockResolvedValue(undefined);
+
+      useUIStore.setState({
+        keyStates: {
+          "pk:only-key": mockKeyState,
+        },
+        viewedPubky: "pk:only-key",
+        currentScreen: "dashboard",
+      });
+
+      render(<KeysPage />);
+
+      const removeButton = screen.getByTitle("Remove pubky");
+      fireEvent.click(removeButton);
+
+      await waitFor(() => {
+        expect(services.deleteKey).toHaveBeenCalledWith("pk:only-key");
+      });
+
+      await waitFor(() => {
+        expect(useUIStore.getState().viewedPubky).toBeNull();
+      });
+
+      await waitFor(() => {
+        expect(useUIStore.getState().currentScreen).toBe("startup");
       });
     });
   });

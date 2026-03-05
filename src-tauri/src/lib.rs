@@ -171,6 +171,23 @@ async fn remove_key(pubky_str: &str) -> Result<(), BackupAppError> {
     Ok(())
 }
 
+/// Delete a key from the backup manager and remove all backed-up data.
+#[tauri::command]
+async fn delete_key(pubky_str: &str) -> Result<(), BackupAppError> {
+    let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
+        message: e.to_string(),
+    })?;
+    let manager = get_manager()?;
+
+    manager
+        .delete_key(&pubky)
+        .await
+        .map_err(BackupAppError::internal)?;
+
+    debug!("Key deleted: {}", pubky);
+    Ok(())
+}
+
 /// Send backup controller task ForceSync message.
 #[tauri::command]
 async fn force_sync_now(pubky_str: &str) -> Result<(), BackupAppError> {
@@ -367,6 +384,7 @@ pub fn run() {
             get_last_pubky,
             set_last_pubky,
             remove_key,
+            delete_key,
             force_sync_now,
             get_data_dir_path,
             open_data_dir,

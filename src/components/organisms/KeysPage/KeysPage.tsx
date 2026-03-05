@@ -4,16 +4,17 @@ import * as Molecules from "@/components/molecules";
 import * as Hooks from "@/hooks";
 import * as Stores from "@/stores";
 import * as Utils from "@/utils";
+import * as Services from "@/services";
 import { cn, Logger } from "@/lib";
 
 interface KeyItemProps {
   pubky: string;
   isSelected: boolean;
   onSelect: () => void;
-  onCopy: () => void;
+  onRemove: () => void;
 }
 
-function KeyItem({ pubky, isSelected, onSelect, onCopy }: KeyItemProps) {
+function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
   return (
     <button
       type="button"
@@ -38,11 +39,11 @@ function KeyItem({ pubky, isSelected, onSelect, onCopy }: KeyItemProps) {
           variant="inline"
           onClick={(e) => {
             e.stopPropagation();
-            onCopy();
+            onRemove();
           }}
-          title="Copy pubky"
+          title="Remove pubky"
         >
-          <Atoms.CopyIcon size={16} />
+          <Atoms.TrashIcon size={16} />
         </Atoms.IconButton>
       </div>
     </button>
@@ -57,20 +58,34 @@ export function KeysPage() {
   const viewedPubky = Stores.useUIStore((s) => s.viewedPubky);
   const { setViewedPubky, isPending: isSwitchingKey } = Hooks.useSetViewedPubky();
   const { addKey, isPending: isAddingKey } = Hooks.useAddKey();
-  const { showToast, setPage } = Stores.useUIStore.getState();
+  const { setPage } = Stores.useUIStore.getState();
 
   // viewedPubky is already normalized (z32 without prefix) from the backend
   const currentPubky = viewedPubky;
 
-  const handleCopy = (pubky: string) => {
-    navigator.clipboard
-      .writeText(pubky)
-      .then(() => {
-        showToast(pubky);
-      })
-      .catch((err: unknown) => {
-        Logger.error("KeysPage", "Failed to copy pubky", { error: err });
-      });
+  const handleRemove = async (pubky: string) => {
+    try {
+      await Services.deleteKey(pubky);
+
+      // If we deleted the currently viewed key, select another one or go to startup screen
+      if (pubky === currentPubky) {
+        const remainingKeys = keys.filter((k) => k !== pubky);
+        const nextKey = remainingKeys[0];
+        if (nextKey) {
+          await setViewedPubky(nextKey);
+        } else {
+          // No keys left, clear state and return to startup screen
+          Stores.useUIStore.getState().setViewedPubky(null);
+          Stores.useUIStore.getState().setScreen("startup");
+        }
+      }
+
+      // Remove from UI state after handling viewed key transition
+      Stores.useUIStore.getState().removeKeyState(pubky);
+    } catch (error: unknown) {
+      Logger.error("KeysPage", "Failed to delete pubky", { error });
+      Utils.handleBackendError(error);
+    }
   };
 
   const handleSelect = async (pubky: string) => {
@@ -137,7 +152,7 @@ export function KeysPage() {
               pubky={pubky}
               isSelected={pubky === currentPubky}
               onSelect={() => handleSelect(pubky)}
-              onCopy={() => handleCopy(pubky)}
+              onRemove={() => handleRemove(pubky)}
             />
           ))}
         </div>

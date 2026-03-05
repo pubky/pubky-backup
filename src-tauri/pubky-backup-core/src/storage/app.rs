@@ -49,7 +49,6 @@ pub fn get_data_directory() -> Result<PathBuf, StorageError> {
     }
 }
 
-
 /// Storage for application-level data (config, global logs).
 ///
 /// Located at: `~/.pubky-backup/config/` and `~/.pubky-backup/logs/`

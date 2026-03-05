@@ -33,7 +33,11 @@ impl Storage {
     }
 
     /// Write data to a file, creating parent directories as needed.
-    pub async fn write(&self, file_path: &str, data: impl Into<Vec<u8>>) -> Result<(), StorageError> {
+    pub async fn write(
+        &self,
+        file_path: &str,
+        data: impl Into<Vec<u8>>,
+    ) -> Result<(), StorageError> {
         self.operator
             .write(file_path, data.into())
             .await
@@ -94,7 +98,11 @@ impl Storage {
     }
 
     /// Append data to a file, creating it if it doesn't exist.
-    pub async fn append(&self, file_path: &str, data: impl Into<Vec<u8>>) -> Result<(), StorageError> {
+    pub async fn append(
+        &self,
+        file_path: &str,
+        data: impl Into<Vec<u8>>,
+    ) -> Result<(), StorageError> {
         let mut writer = self
             .operator
             .writer_with(file_path)

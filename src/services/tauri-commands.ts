@@ -101,6 +101,19 @@ export async function removeKey(pubkyStr: string): Promise<void> {
 }
 
 /**
+ * Delete a key from the backup manager and remove all backed-up data
+ * @param pubkyStr - The pubky key to delete
+ * @throws {BackendError} If deleting the key fails
+ */
+export async function deleteKey(pubkyStr: string): Promise<void> {
+  try {
+    await invoke("delete_key", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
  * Force a sync to happen now for a specific pubky
  * @param pubkyStr - The pubky key to force sync
  * @throws {BackendError} If forcing sync fails

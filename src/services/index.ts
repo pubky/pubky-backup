@@ -6,6 +6,7 @@ export {
   getLastPubky,
   setLastPubky,
   removeKey,
+  deleteKey,
   forceSyncNow,
   getDataDirPath,
   openDataDir,

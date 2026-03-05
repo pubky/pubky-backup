@@ -21,4 +21,5 @@ export {
   NavKeysIcon,
   NavSettingsIcon,
   ChevronDownIcon,
+  TrashIcon,
 } from "./Icons";

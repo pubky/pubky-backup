@@ -25,7 +25,6 @@ pub(crate) const CURSOR_FILENAME: &str = "cursor";
 pub(crate) const ERROR_LOG_FILENAME: &str = "error.log";
 pub(crate) const KEYS_DIR_NAME: &str = "keys";
 
-
 /// Storage for a single Pubky key's backup data.
 ///
 /// Located at: `~/.pubky-backup/keys/<pubky>/`
