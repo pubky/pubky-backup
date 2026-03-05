@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { addKey } from "@/services";
 import { useUIStore } from "@/stores/uiStore";
+import { stripPubkyPrefix } from "@/utils/pubky";
 
 interface AddKeyParams {
   pubkyValue: string;
@@ -42,7 +43,7 @@ export function useAddKey() {
     async ({ pubkyValue }: AddKeyParams): Promise<string> => {
       setIsPending(true);
       try {
-        const normalizedPubky = await addKey(pubkyValue);
+        const normalizedPubky = stripPubkyPrefix(await addKey(pubkyValue));
         // Set the added key as the viewed key
         setViewedPubky(normalizedPubky);
         return normalizedPubky;

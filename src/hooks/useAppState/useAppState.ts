@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { useUIStore, type KeyState } from "@/stores/uiStore";
 
 /**
@@ -45,19 +46,20 @@ function deriveAppState(
 
   const keyState = keyStates[viewedPubky];
   if (keyState === undefined) {
+    // Key was just added but state hasn't arrived yet - show as syncing
     return {
       pubky: viewedPubky,
       developer_mode: developerMode,
-      is_syncing: false,
+      is_syncing: true,
       next_sync_time: 0,
       data_dir_size: 0,
       backup_controller_error: null,
-      backup_running: false,
+      backup_running: true,
       keyState: null,
     };
   }
 
-  const isSyncing = keyState.status.type === "Syncing";
+  const isSyncing = keyState.status.type === "Syncing" || keyState.status.type === "Starting";
   const isError = keyState.status.type === "Error";
   const isStopped = keyState.status.type === "Stopped";
 
@@ -96,9 +98,20 @@ function deriveAppState(
  * ```
  */
 export function useAppState(): DerivedAppState {
-  const viewedPubky = useUIStore((s) => s.viewedPubky);
-  const keyStates = useUIStore((s) => s.keyStates);
-  const developerMode = useUIStore((s) => s.developerMode);
+  // Use useShallow to ensure re-render when any property changes
+  const { viewedPubky, keyState, developerMode } = useUIStore(
+    useShallow((s) => ({
+      viewedPubky: s.viewedPubky,
+      keyState: s.viewedPubky !== null ? s.keyStates[s.viewedPubky] : undefined,
+      developerMode: s.developerMode,
+    })),
+  );
+
+  // Build keyStates with just the viewed key for deriveAppState
+  const keyStates: Record<string, KeyState> =
+    viewedPubky !== null && keyState !== undefined
+      ? { [viewedPubky]: keyState }
+      : {};
 
   return deriveAppState(viewedPubky, keyStates, developerMode);
 }

@@ -162,7 +162,7 @@ impl AppDataStorage {
     }
 
     pub async fn write_last_pubky(&self, pubky: &PublicKey) -> Result<(), StorageError> {
-        let pubky_str = pubky.to_string();
+        let pubky_str = pubky.z32();
         self.config_storage
             .write(LAST_PUBKY_FILENAME, pubky_str.clone())
             .await?;

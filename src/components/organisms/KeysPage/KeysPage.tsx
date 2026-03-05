@@ -59,8 +59,8 @@ export function KeysPage() {
   const { addKey, isPending: isAddingKey } = Hooks.useAddKey();
   const { showToast, setPage } = Stores.useUIStore.getState();
 
-  // Normalize pubky by stripping the "pubky" prefix if present
-  const currentPubky = viewedPubky ? Utils.stripPubkyPrefix(viewedPubky) : null;
+  // viewedPubky is already normalized (z32 without prefix) from the backend
+  const currentPubky = viewedPubky;
 
   const handleCopy = (pubky: string) => {
     navigator.clipboard

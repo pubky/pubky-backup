@@ -304,9 +304,11 @@ impl BackupController {
                                 time::Instant::now(),
                                 Duration::from_secs(SYNC_INTERVAL_SECONDS)
                             );
+                            // Continue syncing without sending Idle
+                            continue;
                         }
                         Ok(ControlFlow::Break(())) => {
-                            // Sync complete
+                            // Sync complete for this cycle, send Idle
                         }
                         Err(e) => {
                             let error_msg = format!("Critical sync batch failure: {}", e);

@@ -86,7 +86,7 @@ async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
             .write_last_pubky(&pubky)
             .await
             .map_err(BackupAppError::internal)?;
-        return Ok(pubky.to_string());
+        return Ok(pubky.z32());
     }
 
     // Add the key to start backing up
@@ -102,7 +102,7 @@ async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
         .map_err(BackupAppError::internal)?;
 
     info!("Key added and backup started for: {}", pubky);
-    Ok(pubky.to_string())
+    Ok(pubky.z32())
 }
 
 /// Get all key states for all tracked keys
@@ -135,7 +135,7 @@ async fn get_keys() -> Result<Vec<String>, BackupAppError> {
 async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
     let manager = get_or_create_manager().await?;
     match manager.read_last_pubky().await {
-        Ok(Some(pubky)) => Ok(Some(pubky.to_string())),
+        Ok(Some(pubky)) => Ok(Some(pubky.z32())),
         Ok(None) => Ok(None),
         Err(e) => Err(BackupAppError::internal(e)),
     }

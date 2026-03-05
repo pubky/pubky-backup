@@ -6,6 +6,7 @@ import * as Molecules from "@/components/molecules";
 import * as Hooks from "@/hooks";
 import { getAllKeyStates, getConfig, getLastPubky } from "@/services";
 import { Logger } from "@/lib";
+import { stripPubkyPrefix } from "@/utils/pubky";
 
 /**
  * Bootstrap the app by fetching initial state from backend.
@@ -30,10 +31,10 @@ function useBootstrap() {
         const keyStates = await getAllKeyStates();
         setAllKeyStates(keyStates);
 
-        // Restore last viewed pubky
+        // Restore last viewed pubky (normalize to strip any "pubky" prefix)
         const lastPubky = await getLastPubky();
         if (lastPubky !== null) {
-          setViewedPubky(lastPubky);
+          setViewedPubky(stripPubkyPrefix(lastPubky));
         }
       } catch (error) {
         Logger.error("App", "Failed to bootstrap", { error });

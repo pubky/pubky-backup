@@ -104,6 +104,7 @@ pub enum KeyErrorCode {
 
 /// Status of a key's backup process.
 #[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(tag = "type")]
 pub enum KeyStatus {
     /// Key is starting up (validating, discovering homeserver)
     Starting,
@@ -140,5 +141,5 @@ fn serialize_pubky<S>(pubky: &PublicKey, serializer: S) -> Result<S::Ok, S::Erro
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&pubky.to_string())
+    serializer.serialize_str(&pubky.z32())
 }

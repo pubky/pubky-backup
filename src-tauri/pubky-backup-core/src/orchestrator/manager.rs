@@ -279,7 +279,7 @@ impl BackupManager {
         inner
             .keys
             .iter()
-            .map(|(pubky, managed)| (pubky.to_string(), managed.state.clone()))
+            .map(|(pubky, managed)| (pubky.z32(), managed.state.clone()))
             .collect()
     }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getLastPubky } from "@/services";
+import { stripPubkyPrefix } from "@/utils/pubky";
 
 /**
  * useLastPubky
@@ -29,7 +30,8 @@ export function useLastPubky() {
   useEffect(() => {
     getLastPubky()
       .then((pubky) => {
-        setLastPubky(pubky);
+        // Normalize to strip any "pubky" prefix for consistency
+        setLastPubky(pubky ? stripPubkyPrefix(pubky) : null);
       })
       .catch(() => {
         // Ignore errors - lastPubky is optional
