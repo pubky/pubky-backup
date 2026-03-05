@@ -38,6 +38,7 @@
 //! [`migration`] module for details.
 
 mod app;
+mod common;
 pub mod error;
 mod keys;
 mod migration;

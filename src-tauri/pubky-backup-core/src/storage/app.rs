@@ -2,11 +2,11 @@
 //!
 //! This module provides the main [`AppStorage`] facade and app-level storage components.
 
-use super::error::{OperationFailedError, StorageError};
+use super::common::Storage;
+use super::error::StorageError;
 use super::keys::{KeyStorage, KeysStorage};
 use super::migration::migrate_old_structure;
 use log::{debug, error};
-use opendal::{services::Fs, Operator};
 use pubky::{PubkyResource, PublicKey};
 use std::{
     path::{Path, PathBuf},
@@ -49,84 +49,6 @@ pub fn get_data_directory() -> Result<PathBuf, StorageError> {
     }
 }
 
-/// Simple storage abstraction for reading/writing/deleting files.
-struct Storage {
-    operator: Operator,
-}
-
-impl Storage {
-    fn new(data_dir: &Path) -> Result<Self, StorageError> {
-        // Ensure the directory exists
-        std::fs::create_dir_all(data_dir).map_err(|e| {
-            StorageError::DirectoryCreation(format!("{}: {}", data_dir.display(), e))
-        })?;
-
-        let builder = Fs::default().root(data_dir.to_string_lossy().as_ref());
-        let operator = Operator::new(builder)?
-            .layer(opendal::layers::LoggingLayer::default())
-            .finish();
-        Ok(Storage { operator })
-    }
-
-    async fn write(&self, file_path: &str, data: impl Into<Vec<u8>>) -> Result<(), StorageError> {
-        self.operator
-            .write(file_path, data.into())
-            .await
-            .map_err(|e| {
-                StorageError::OperationFailed(Box::new(OperationFailedError {
-                    operation: "write".to_string(),
-                    path: file_path.to_string(),
-                    source: e,
-                }))
-            })?;
-        Ok(())
-    }
-
-    async fn read(&self, file_path: &str) -> Result<Vec<u8>, StorageError> {
-        let data = self.operator.read(file_path).await.map_err(|e| {
-            StorageError::OperationFailed(Box::new(OperationFailedError {
-                operation: "read".to_string(),
-                path: file_path.to_string(),
-                source: e,
-            }))
-        })?;
-        Ok(data.to_vec())
-    }
-
-    /// Append data to a file, creating it if it doesn't exist.
-    async fn append(&self, file_path: &str, data: impl Into<Vec<u8>>) -> Result<(), StorageError> {
-        let mut writer = self
-            .operator
-            .writer_with(file_path)
-            .append(true)
-            .await
-            .map_err(|e| {
-                StorageError::OperationFailed(Box::new(OperationFailedError {
-                    operation: "append (open writer)".to_string(),
-                    path: file_path.to_string(),
-                    source: e,
-                }))
-            })?;
-
-        writer.write(data.into()).await.map_err(|e| {
-            StorageError::OperationFailed(Box::new(OperationFailedError {
-                operation: "append (write)".to_string(),
-                path: file_path.to_string(),
-                source: e,
-            }))
-        })?;
-
-        writer.close().await.map_err(|e| {
-            StorageError::OperationFailed(Box::new(OperationFailedError {
-                operation: "append (close)".to_string(),
-                path: file_path.to_string(),
-                source: e,
-            }))
-        })?;
-
-        Ok(())
-    }
-}
 
 /// Storage for application-level data (config, global logs).
 ///

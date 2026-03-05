@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { displayPubky, stripPubkyPrefix } from "../pubky";
+import { displayPubky, stripPubkyPrefix } from "./pubky";
 
 describe("stripPubkyPrefix", () => {
   it("should strip 'pubky' prefix from string", () => {

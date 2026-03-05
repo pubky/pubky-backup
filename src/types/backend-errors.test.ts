@@ -9,7 +9,7 @@ import {
   isEventsError,
   isBackupError,
   type BackendError,
-} from "../backend-errors";
+} from "./backend-errors";
 
 describe("isBackendError", () => {
   it("should accept valid backend errors", () => {

@@ -1,8 +1,8 @@
-import { type ReactNode } from "react";
-import { cva, type VariantProps } from "class-variance-authority";
+import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils";
+import type { ButtonProps } from "./Button.types";
 
-const buttonVariants = cva(
+export const buttonVariants = cva(
   [
     "flex justify-center items-center gap-2",
     "py-5 px-8 rounded-full",
@@ -31,14 +31,6 @@ const buttonVariants = cva(
   },
 );
 
-export interface ButtonProps extends VariantProps<typeof buttonVariants> {
-  children: ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
-  className?: string;
-  type?: "button" | "submit" | "reset";
-}
-
 export function Button({
   children,
   onClick,
@@ -58,5 +50,3 @@ export function Button({
     </button>
   );
 }
-
-export { buttonVariants };

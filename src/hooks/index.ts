@@ -15,3 +15,9 @@ export { useSetViewedPubky } from "./useSetViewedPubky";
 // Utility hooks
 export { useLastSyncTime } from "./useLastSyncTime";
 export { useCountdown } from "./useCountdown";
+
+// Composite hooks
+export { useDashboardState } from "./useDashboardState";
+export type { DashboardState, StatusInfo } from "./useDashboardState";
+export { useDashboardActions } from "./useDashboardActions";
+export type { DashboardActions } from "./useDashboardActions";

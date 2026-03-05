@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { handleBackendError } from "../error-handler";
+import { handleBackendError } from "./error-handler";
 import { useUIStore } from "@/stores";
 import type { BackendError } from "@/types/backend-errors";
 
