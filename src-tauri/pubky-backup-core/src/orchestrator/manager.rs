@@ -165,7 +165,10 @@ impl BackupManager {
     /// Returns `OrchestratorError::KeyLimitReached` if MAX_KEYS limit is reached.
     /// Returns `OrchestratorError::ValidationFailed` if the key cannot be validated.
     pub async fn add_key(&self, pubky: PublicKey) -> Result<(), OrchestratorError> {
-        // Check if key already exists or limit reached
+        // Early check if key already exists or limit reached.
+        // Note: There's a small race window between this check and the actual insert in
+        // start_controller, but exceeding MAX_KEYS by a few is acceptable - it's a soft
+        // limit to prevent resource exhaustion, not a hard security boundary.
         {
             let inner = self.inner.read();
             if inner.keys.contains_key(&pubky) {
@@ -605,18 +608,25 @@ fn spawn_status_listener(
                 ControllerStatus::Error { pubky, .. } => pubky.clone(),
             };
 
-            // Get current data_size to preserve
-            let current_data_size = {
+            // Get current state values to preserve across transitions
+            let (current_data_size, current_last_sync, current_next_sync) = {
                 let inner_read = inner.read();
                 inner_read
                     .keys
                     .get(&pubky)
-                    .map(|k| k.state.data_size)
-                    .unwrap_or(0)
+                    .map(|k| (k.state.data_size, k.state.last_sync, k.state.next_sync))
+                    .unwrap_or((0, None, None))
             };
 
-            let new_state =
-                handle_controller_status(&pubky, &storage, &status, current_data_size).await;
+            let new_state = handle_controller_status(
+                &pubky,
+                &storage,
+                &status,
+                current_data_size,
+                current_last_sync,
+                current_next_sync,
+            )
+            .await;
 
             // Update internal state
             {
@@ -644,17 +654,23 @@ fn spawn_status_listener(
 /// * `pubky` - The public key being backed up
 /// * `storage` - Storage for calculating data size
 /// * `status` - The status from the backup controller
-/// * `current_data_size` - The current data size to use as fallback
+/// * `current_data_size` - The current data size to preserve
+/// * `current_last_sync` - The current last_sync timestamp to preserve
+/// * `current_next_sync` - The current next_sync timestamp to preserve
 async fn handle_controller_status(
     pubky: &PublicKey,
     storage: &Arc<AppStorage>,
     status: &ControllerStatus,
     current_data_size: u64,
+    current_last_sync: Option<u64>,
+    current_next_sync: Option<u64>,
 ) -> KeyState {
     match status {
         ControllerStatus::Starting { .. } => KeyState {
             status: KeyStatus::Starting,
             data_size: current_data_size,
+            last_sync: current_last_sync,
+            next_sync: current_next_sync,
             ..Default::default()
         },
         ControllerStatus::Syncing {
@@ -672,6 +688,8 @@ async fn handle_controller_status(
                     events_processed: *events_processed,
                 },
                 data_size,
+                last_sync: current_last_sync,
+                next_sync: current_next_sync,
                 ..Default::default()
             }
         }
@@ -688,11 +706,15 @@ async fn handle_controller_status(
         ControllerStatus::Ended { .. } => KeyState {
             status: KeyStatus::Stopped,
             data_size: current_data_size,
+            last_sync: current_last_sync,
+            next_sync: current_next_sync,
             ..Default::default()
         },
         ControllerStatus::Error { message, .. } => KeyState {
             status: KeyStatus::Error,
             data_size: current_data_size,
+            last_sync: current_last_sync,
+            next_sync: current_next_sync,
             error: Some(KeyError {
                 code: KeyErrorCode::Internal,
                 message: message.clone(),
@@ -1089,7 +1111,8 @@ mod tests {
             message: "Test error message".to_string(),
         };
 
-        let state = handle_controller_status(&pubky, &storage, &error_status, 1000).await;
+        let state =
+            handle_controller_status(&pubky, &storage, &error_status, 1000, None, None).await;
 
         // Verify error state mapping
         assert!(
@@ -1119,7 +1142,8 @@ mod tests {
             pubky: pubky.clone(),
         };
 
-        let state = handle_controller_status(&pubky, &storage, &starting_status, 1234).await;
+        let state =
+            handle_controller_status(&pubky, &storage, &starting_status, 1234, None, None).await;
 
         // Verify starting state mapping
         assert!(

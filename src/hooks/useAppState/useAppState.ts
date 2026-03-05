@@ -10,6 +10,7 @@ export interface DerivedAppState {
   developer_mode: boolean;
   is_syncing: boolean;
   next_sync_time: number;
+  last_sync_time: number | null;
   data_dir_size: number;
   backup_controller_error: string | null;
   backup_running: boolean;
@@ -37,6 +38,7 @@ function deriveAppState(
       developer_mode: developerMode,
       is_syncing: false,
       next_sync_time: 0,
+      last_sync_time: null,
       data_dir_size: 0,
       backup_controller_error: null,
       backup_running: false,
@@ -52,6 +54,7 @@ function deriveAppState(
       developer_mode: developerMode,
       is_syncing: true,
       next_sync_time: 0,
+      last_sync_time: null,
       data_dir_size: 0,
       backup_controller_error: null,
       backup_running: true,
@@ -68,6 +71,7 @@ function deriveAppState(
     developer_mode: developerMode,
     is_syncing: isSyncing,
     next_sync_time: keyState.next_sync ?? defaultNextSyncTime(),
+    last_sync_time: keyState.last_sync,
     data_dir_size: keyState.data_size,
     backup_controller_error: keyState.error?.message ?? null,
     backup_running: !isStopped && !isError,

@@ -60,8 +60,8 @@ export function useDashboardState(): DashboardState {
   const isSyncing = appState.is_syncing;
   const nextSyncTime = appState.next_sync_time;
   const dataSize = appState.data_dir_size;
+  const lastSyncTime = appState.last_sync_time;
 
-  const lastSyncTime = Hooks.useLastSyncTime(nextSyncTime, isSyncing);
   const countdownText = Hooks.useCountdown(nextSyncTime, isSyncing);
 
   // Consolidated status information derived from state
