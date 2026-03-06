@@ -28,11 +28,11 @@ cargo tauri dev
 ```
 
 
-### Development mode
+### Development mode (offline/no-network)
 
-Development mode is useful when working on the GUI: it skips network calls by auto-populating `AppState` and returning mock data from `fetch` calls.
+Development mode is useful when working on the GUI without a real homeserver. It skips network validation and returns empty data instead of making network calls.
 
-**You do not need to enter a valid pubky in this mode. A default is preset.**
+Existing backed-up data on disk is still readable in this mode.
 
 ```
 PUBKY_DEVELOPER_MODE=1 cargo tauri dev

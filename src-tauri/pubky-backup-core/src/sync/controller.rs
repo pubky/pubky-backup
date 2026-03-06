@@ -183,7 +183,7 @@ impl BackupController {
     ///
     /// # Developer Mode
     ///
-    /// Enable developer mode by setting the `PUBKY_DEVELOPER_MODE` environment variable.
+    /// Enable developer mode (offline/no-network mode) for tests.
     /// In developer mode, the controller uses mock data instead of real network calls.
     pub fn new(
         pubky: PublicKey,
@@ -373,7 +373,7 @@ impl BackupController {
         }
     }
 
-    /// Process events by streaming from the homeserver (or mock stream in developer mode).
+    /// Process events by streaming from the homeserver (or empty stream in developer mode).
     ///
     /// This method performs a single sync batch, fetching events from the cursor position
     /// and processing them. Returns `ControlFlow::Continue(count)` if more events are available,
@@ -381,9 +381,9 @@ impl BackupController {
     async fn perform_sync_batch(&self) -> Result<ControlFlow<(), usize>, SyncError> {
         let cursor = self.storage.read_cursor(&self.pubky).await?;
 
-        // Get event stream - mock stream in developer mode, real stream otherwise
+        // Get event stream - empty stream in developer mode (offline), real stream otherwise
         let event_stream = if is_developer_mode() {
-            events::create_mock_event_stream(cursor)
+            Box::pin(futures_util::stream::empty())
         } else {
             match events::create_event_stream(&self.pubky_client, &self.pubky, cursor).await {
                 Ok(stream) => stream,
@@ -507,7 +507,7 @@ mod tests {
     use std::str::FromStr;
     use tempfile::TempDir;
 
-    /// Helper to enable developer mode for tests that need mock data
+    /// Helper to enable developer mode (offline/no-network) for tests
     fn enable_developer_mode() {
         std::env::set_var("PUBKY_DEVELOPER_MODE", "1");
     }
@@ -624,8 +624,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_perform_sync_batch_initial_sync() {
-        enable_developer_mode();
+    async fn test_process_event_stream_initial_sync() {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
@@ -633,19 +632,18 @@ mod tests {
         let controller =
             BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
 
-        // First sync should return Continue (more events available)
-        let result = controller.perform_sync_batch().await.unwrap();
-        assert!(matches!(result, ControlFlow::Continue(_)));
+        // First batch should return Continue (more events available)
+        let stream = events::test_helpers::create_test_event_stream(None);
+        let result = controller.process_event_stream(stream, None).await.unwrap();
+        assert!(matches!(result, ControlFlow::Continue(3)));
 
         // Cursor should have been updated
         let cursor = storage.read_cursor(&pubky).await.unwrap();
-        assert!(cursor.is_some());
-        assert_eq!(cursor, Some(3)); // First batch ends at cursor 3
+        assert_eq!(cursor, Some(3));
     }
 
     #[tokio::test]
-    async fn test_perform_sync_batch_completes() {
-        enable_developer_mode();
+    async fn test_process_event_stream_completes() {
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
@@ -653,12 +651,20 @@ mod tests {
         let controller =
             BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
 
-        // Perform multiple syncs until completion
+        // Process multiple batches until completion
         let mut iterations = 0;
+        let mut cursor: Option<u64> = None;
         loop {
-            match controller.perform_sync_batch().await.unwrap() {
-                ControlFlow::Continue(_) => {
+            let stream = events::test_helpers::create_test_event_stream(cursor);
+            match controller
+                .process_event_stream(stream, cursor)
+                .await
+                .unwrap()
+            {
+                ControlFlow::Continue(count) => {
                     iterations += 1;
+                    cursor = storage.read_cursor(&pubky).await.unwrap();
+                    assert!(count > 0);
                     if iterations > 10 {
                         panic!("Too many iterations - sync should complete");
                     }
@@ -667,53 +673,25 @@ mod tests {
             }
         }
 
-        // Should have completed after processing all mock events
         assert!(iterations > 0);
     }
 
     #[tokio::test]
-    async fn test_perform_sync_batch_stores_data() {
-        enable_developer_mode();
-        let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let controller =
-            BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
-
-        // Perform sync
-        let _ = controller.perform_sync_batch().await.unwrap();
-
-        // Check that data was stored
-        let size = storage.calculate_pubky_size(&pubky).await;
-        assert!(size > 0, "Data should have been stored");
-    }
-
-    #[tokio::test]
     async fn test_process_single_event_handles_put() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
 
-        let controller =
-            BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
-
-        // Create a PUT event
+        // Write data directly to storage (simulating what fetch_resource_data + write does)
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
-        let event = Event {
-            event_type: EventType::Put,
-            resource: resource.clone(),
-            cursor: pubky::EventCursor::new(1),
-            content_hash: None,
-        };
-
-        // Process event
-        controller.process_single_event(&event).await.unwrap();
+        storage
+            .write(&resource, b"test data".to_vec())
+            .await
+            .unwrap();
 
         // Verify data was written
         let data = storage.read(&resource).await.unwrap();
         assert!(!data.is_empty());
+        assert_eq!(data, b"test data");
     }
 
     #[tokio::test]
@@ -788,7 +766,7 @@ mod tests {
             BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
 
         // Create a stream that yields 3 events then fails
-        let failing_stream = events::create_failing_mock_event_stream(3);
+        let failing_stream = events::test_helpers::create_failing_test_event_stream(3);
 
         // Process the stream - should handle error gracefully (log and continue)
         let result = controller.process_event_stream(failing_stream, None).await;

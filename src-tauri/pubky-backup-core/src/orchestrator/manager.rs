@@ -1041,6 +1041,16 @@ mod tests {
         .await
         .expect("Should reach Idle status within timeout");
 
+        // Write test data directly (offline mode doesn't fetch real data)
+        let data_dir = temp_dir
+            .path()
+            .join("keys")
+            .join(pubky.z32())
+            .join("data")
+            .join("pub");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(data_dir.join("test.json"), b"test data").unwrap();
+
         // Create snapshot
         let snapshot_path = manager.create_snapshot(&pubky).await.unwrap();
 

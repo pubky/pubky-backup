@@ -2,26 +2,25 @@
 //!
 //! This module handles fetching resource data from Pubky homeservers during
 //! the backup process. It includes retry logic, error handling, and support
-//! for developer mode with mock data.
+//! for developer mode (offline/no-network).
 //!
 //! # Responsibilities
 //!
 //! - Fetching resource data from homeservers
 //! - Retry logic with exponential backoff
 //! - Handling 404 responses gracefully
-//! - Mock data generation for developer mode
+//! - Returning empty data in developer mode (no network calls)
 
 use log::{debug, info};
 use pubky::{Pubky, PubkyResource};
 
 use super::error::SyncError;
-use super::events;
 use crate::is_developer_mode;
 use crate::utils::retry_with_backoff;
 
 /// Fetch data from a PubkyResource URL.
 ///
-/// In developer mode, returns mock data instead of making real network calls.
+/// In developer mode, returns empty data instead of making real network calls.
 /// Handles 404 responses by returning empty data rather than an error.
 ///
 /// # Arguments
@@ -31,7 +30,8 @@ use crate::utils::retry_with_backoff;
 ///
 /// # Returns
 ///
-/// The resource data as bytes. Returns an empty vector for 404 responses.
+/// The resource data as bytes. Returns an empty vector for 404 responses
+/// or in developer mode.
 ///
 /// # Errors
 ///
@@ -41,7 +41,7 @@ pub(super) async fn fetch_resource_data(
     resource: &PubkyResource,
 ) -> Result<Vec<u8>, SyncError> {
     if is_developer_mode() {
-        return Ok(events::get_mock_pubky_resource_data(&resource.to_string()));
+        return Ok(Vec::new());
     }
 
     let public_storage = pubky_client.public_storage();
@@ -91,7 +91,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_resource_data_developer_mode() {
+    async fn test_fetch_resource_data_developer_mode_returns_empty() {
         enable_developer_mode();
 
         let pubky_client = Pubky::testnet().expect("Failed to create testnet client");
@@ -100,14 +100,12 @@ mod tests {
 
         let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();
 
-        // Should return mock data
-        assert!(!data.is_empty());
-        let data_str = String::from_utf8(data).unwrap();
-        assert!(data_str.contains("Mock User"));
+        // Developer mode returns empty data (no network calls)
+        assert!(data.is_empty());
     }
 
     #[tokio::test]
-    async fn test_fetch_resource_data_developer_mode_posts() {
+    async fn test_fetch_resource_data_developer_mode_posts_returns_empty() {
         enable_developer_mode();
 
         let pubky_client = Pubky::testnet().expect("Failed to create testnet client");
@@ -116,10 +114,7 @@ mod tests {
 
         let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();
 
-        // Should return mock post data with the ID
-        assert!(!data.is_empty());
-        let data_str = String::from_utf8(data).unwrap();
-        assert!(data_str.contains("123"));
-        assert!(data_str.contains("content"));
+        // Developer mode returns empty data (no network calls)
+        assert!(data.is_empty());
     }
 }
