@@ -201,16 +201,24 @@ impl BackupManager {
     ///
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn remove_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        let managed_key = {
+        let (managed_key, no_keys_left) = {
             let mut inner = self.inner.write();
-            inner
+            let managed_key = inner
                 .keys
                 .remove(pubky)
-                .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?
+                .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?;
+            (managed_key, inner.keys.is_empty())
         };
 
         // Send cancel message to stop the controller (mpsc send is async but we use try_send)
         let _ = managed_key.control_tx.try_send(ControllerCommand::Cancel);
+
+        // Clear last_pubky when no keys remain so the app doesn't auto-load a removed key
+        if no_keys_left {
+            if let Err(e) = self.storage.clear_last_pubky().await {
+                warn!("Failed to clear last pubky: {}", e);
+            }
+        }
 
         info!("Stopped backup for key: {}", pubky);
         Ok(())
@@ -741,7 +749,7 @@ fn next_sync_time() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DEV_MODE_PUBKY;
+    use crate::TEST_PUBKY;
     use std::str::FromStr;
     use tempfile::TempDir;
 
@@ -765,7 +773,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         let manager = BackupManager::new(config).await.unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Add key
         manager.add_key(pubky.clone()).await.unwrap();
@@ -788,7 +796,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         let manager = BackupManager::new(config).await.unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Add key
         manager.add_key(pubky.clone()).await.unwrap();
@@ -811,7 +819,7 @@ mod tests {
         let manager = BackupManager::new(config).await.unwrap();
 
         let mut rx = manager.subscribe();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Add key
         manager.add_key(pubky.clone()).await.unwrap();
@@ -829,7 +837,7 @@ mod tests {
     async fn test_manager_resumes_stored_keys() {
         let temp_dir = TempDir::new().unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // First, create a manager and add a key (creates data directory)
         {
@@ -863,7 +871,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         let manager = BackupManager::new(config).await.unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Add key
         manager.add_key(pubky.clone()).await.unwrap();
@@ -885,7 +893,7 @@ mod tests {
         // No keys - not syncing
         assert!(!manager.any_syncing(), "Should not be syncing with no keys");
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         manager.add_key(pubky.clone()).await.unwrap();
 
         // After adding, we should be able to observe syncing at some point
@@ -913,7 +921,7 @@ mod tests {
         // No keys - none running
         assert!(!manager.any_running());
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         manager.add_key(pubky).await.unwrap();
 
         // After adding, should be running
@@ -936,7 +944,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         let manager = BackupManager::new(config).await.unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Add key first
         manager.add_key(pubky.clone()).await.unwrap();
@@ -952,7 +960,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         let manager = BackupManager::new(config).await.unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Test KeyAlreadyExists error
         manager.add_key(pubky.clone()).await.unwrap();
@@ -996,7 +1004,7 @@ mod tests {
     async fn test_manager_last_pubky_persistence() {
         let temp_dir = TempDir::new().unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Create manager and write last pubky
         {
@@ -1020,7 +1028,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         let manager = BackupManager::new(config).await.unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Subscribe to status updates before adding key
         let mut rx = manager.subscribe();
@@ -1077,7 +1085,7 @@ mod tests {
         let config = create_test_config(&temp_dir);
         let manager = BackupManager::new(config).await.unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Try to delete non-existent key - should return KeyNotFound
         let result = manager.delete_key(&pubky).await;
@@ -1097,7 +1105,7 @@ mod tests {
         // No keys - no errors
         assert!(!manager.any_error(), "Should have no errors with no keys");
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         manager.add_key(pubky).await.unwrap();
 
         // After adding in dev mode, should not have errors
@@ -1114,7 +1122,7 @@ mod tests {
         // Test that ControllerStatus::Error maps correctly to KeyState
         let temp_dir = TempDir::new().unwrap();
         let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         let error_status = ControllerStatus::Error {
             pubky: pubky.clone(),
@@ -1146,7 +1154,7 @@ mod tests {
         // Test that ControllerStatus::Starting maps correctly to KeyState
         let temp_dir = TempDir::new().unwrap();
         let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         let starting_status = ControllerStatus::Starting {
             pubky: pubky.clone(),
@@ -1177,7 +1185,7 @@ mod tests {
         };
         let manager = BackupManager::new(config).await.unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let mut rx = manager.subscribe();
 
         // Add the first key

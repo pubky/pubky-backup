@@ -53,6 +53,7 @@ pub fn get_data_directory() -> Result<PathBuf, StorageError> {
 ///
 /// Located at: `~/.pubky-backup/config/` and `~/.pubky-backup/logs/`
 struct AppDataStorage {
+    config_dir: PathBuf,
     config_storage: Storage,
     logs_storage: Storage,
 }
@@ -64,6 +65,7 @@ impl AppDataStorage {
         Ok(AppDataStorage {
             config_storage: Storage::new(&config_dir)?,
             logs_storage: Storage::new(&logs_dir)?,
+            config_dir,
         })
     }
 
@@ -92,6 +94,10 @@ impl AppDataStorage {
     }
 
     pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
+        // Check existence via std::fs first to avoid noisy opendal WARN logs for missing files
+        if !self.config_dir.join(LAST_PUBKY_FILENAME).exists() {
+            return Ok(None);
+        }
         match self.config_storage.read(LAST_PUBKY_FILENAME).await {
             Ok(data) => {
                 let pubky = PublicKey::from_str(&String::from_utf8(data.to_vec())?)
@@ -100,6 +106,12 @@ impl AppDataStorage {
             }
             Err(_) => Ok(None),
         }
+    }
+
+    pub async fn clear_last_pubky(&self) -> Result<(), StorageError> {
+        self.config_storage.delete(LAST_PUBKY_FILENAME).await?;
+        debug!("Last pubky value cleared");
+        Ok(())
     }
 }
 
@@ -357,6 +369,11 @@ impl AppStorage {
         self.app_data.read_last_pubky().await
     }
 
+    /// Clear the last used pubky from storage.
+    pub async fn clear_last_pubky(&self) -> Result<(), StorageError> {
+        self.app_data.clear_last_pubky().await
+    }
+
     /// Create a snapshot (zip archive) of the backed-up data for a specific pubky.
     ///
     /// Creates a compressed zip file containing all data for the given pubky.
@@ -385,7 +402,7 @@ impl AppStorage {
 
 #[cfg(test)]
 mod tests {
-    use crate::DEV_MODE_PUBKY;
+    use crate::TEST_PUBKY;
 
     use super::*;
     use std::str::FromStr;
@@ -400,7 +417,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_and_read_cursor() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Write cursor
         storage.write_cursor(&pubky, 123).await.unwrap();
@@ -413,7 +430,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_cursor_returns_none_if_not_exists() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Read cursor before writing - should return None
         let cursor = storage.read_cursor(&pubky).await.unwrap();
@@ -427,7 +444,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_and_delete_resource() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
         let test_data = b"Hello, World!".to_vec();
@@ -449,7 +466,7 @@ mod tests {
     #[tokio::test]
     async fn test_calculate_pubky_size() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Initial size should be 0
         let size = storage.calculate_pubky_size(&pubky).await;
@@ -471,7 +488,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_and_read_last_pubky() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Initially should be None
         let last = storage.read_last_pubky().await.unwrap();
@@ -488,7 +505,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_pubky_directories() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky1 = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky1 = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky2 =
             PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
 
@@ -515,7 +532,7 @@ mod tests {
         use std::io::Read;
 
         let (storage, temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Create some test data first
         let resource1 = PubkyResource::new(pubky.clone(), "/pub/test1.json").unwrap();
@@ -587,7 +604,7 @@ mod tests {
     #[tokio::test]
     async fn test_storage_directory_structure() {
         let (storage, temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Write some data to trigger directory creation
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();

@@ -82,7 +82,7 @@ pub(super) async fn fetch_resource_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DEV_MODE_PUBKY;
+    use crate::TEST_PUBKY;
     use pubky::PublicKey;
     use std::str::FromStr;
 
@@ -95,7 +95,7 @@ mod tests {
         enable_developer_mode();
 
         let pubky_client = Pubky::testnet().expect("Failed to create testnet client");
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let resource = PubkyResource::new(pubky, "/pub/profile.json").unwrap();
 
         let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();
@@ -109,7 +109,7 @@ mod tests {
         enable_developer_mode();
 
         let pubky_client = Pubky::testnet().expect("Failed to create testnet client");
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let resource = PubkyResource::new(pubky, "/pub/posts/123").unwrap();
 
         let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();

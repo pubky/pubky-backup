@@ -109,7 +109,7 @@ use std::env;
 
 /// Test-only pubky constant (for unit tests that need a valid pubky string)
 #[cfg(test)]
-pub const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
+pub const TEST_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
 
 /// Check if developer mode is enabled via environment variable.
 ///

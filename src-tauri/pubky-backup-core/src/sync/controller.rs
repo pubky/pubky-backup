@@ -25,7 +25,7 @@ use super::fetcher;
 use crate::is_developer_mode;
 use crate::storage::AppStorage;
 #[cfg(test)]
-use crate::DEV_MODE_PUBKY;
+use crate::TEST_PUBKY;
 use futures_util::StreamExt;
 use log::{debug, error, info, warn};
 use pubky::{Event, EventType, Pubky, PublicKey};
@@ -528,7 +528,7 @@ mod tests {
     async fn test_controller_runs_and_can_be_cancelled() {
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
@@ -581,7 +581,7 @@ mod tests {
     async fn test_controller_force_sync() {
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
@@ -626,7 +626,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_event_stream_initial_sync() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let controller =
@@ -645,7 +645,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_event_stream_completes() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let controller =
@@ -679,7 +679,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_single_event_handles_put() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Write data directly to storage (simulating what fetch_resource_data + write does)
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
@@ -697,7 +697,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_single_event_handles_delete() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let controller =
@@ -731,7 +731,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_single_event_skips_other_pubky() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky1 = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky1 = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky2 =
             PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
         let pubky_client = create_test_pubky_client();
@@ -759,7 +759,7 @@ mod tests {
     async fn test_stream_error_saves_cursor_progress() {
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let controller =
@@ -799,7 +799,7 @@ mod tests {
         // Test that controller works when no channels are provided (uses pending futures)
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         // Create controller without any channels
@@ -821,7 +821,7 @@ mod tests {
     async fn test_controller_status_ended_on_cancel() {
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
@@ -884,7 +884,7 @@ mod tests {
     async fn test_controller_emits_starting_status() {
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
@@ -923,7 +923,7 @@ mod tests {
     async fn test_controller_with_initial_delay_responds_to_cancel() {
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
@@ -975,7 +975,7 @@ mod tests {
     async fn test_controller_with_initial_delay_responds_to_force_sync() {
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
@@ -1022,7 +1022,7 @@ mod tests {
     async fn test_controller_with_zero_delay_proceeds_immediately() {
         enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
         let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);

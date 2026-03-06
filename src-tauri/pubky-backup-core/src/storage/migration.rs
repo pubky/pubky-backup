@@ -267,7 +267,7 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
 mod tests {
     use super::*;
     use crate::storage::AppStorage;
-    use crate::DEV_MODE_PUBKY;
+    use crate::TEST_PUBKY;
     use pubky::PubkyResource;
     use std::path::Path;
     use tempfile::TempDir;
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn test_migration_old_to_new_single_key() {
         let temp_dir = TempDir::new().unwrap();
-        let pubky_str = DEV_MODE_PUBKY;
+        let pubky_str = TEST_PUBKY;
 
         // Setup old structure
         create_old_structure(
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn test_migration_old_to_new_multiple_keys() {
         let temp_dir = TempDir::new().unwrap();
-        let pubky1 = DEV_MODE_PUBKY;
+        let pubky1 = TEST_PUBKY;
         let pubky2 = "o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo";
 
         // Setup old structure for both keys
@@ -454,7 +454,7 @@ mod tests {
         // Create storage with new structure
         let temp_dir = TempDir::new().unwrap();
         let storage = AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Write some data using new structure
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
@@ -491,7 +491,7 @@ mod tests {
     #[test]
     fn test_migration_handles_invalid_pubky_names() {
         let temp_dir = TempDir::new().unwrap();
-        let valid_pubky = DEV_MODE_PUBKY;
+        let valid_pubky = TEST_PUBKY;
 
         // Create valid pubky directory
         create_old_structure(
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn test_list_keys_normalizes_to_z32() {
         let temp_dir = TempDir::new().unwrap();
-        let z32_key = DEV_MODE_PUBKY;
+        let z32_key = TEST_PUBKY;
         let prefixed_key = format!("pubky{}", z32_key);
 
         // Create keys directory with prefixed directory name

@@ -54,7 +54,7 @@ pub async fn read_last_pubky(storage: &AppStorage) -> Result<Option<PublicKey>, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DEV_MODE_PUBKY;
+    use crate::TEST_PUBKY;
     use std::str::FromStr;
     use tempfile::TempDir;
 
@@ -63,7 +63,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let storage = AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap();
 
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Initially no last pubky
         let result = read_last_pubky(&storage).await.unwrap();

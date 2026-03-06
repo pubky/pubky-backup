@@ -129,12 +129,12 @@ async fn verify_pubky_has_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DEV_MODE_PUBKY;
+    use crate::TEST_PUBKY;
     use std::str::FromStr;
 
     #[tokio::test]
     async fn test_validate_pubky_developer_mode_skips_validation() {
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // In developer mode, should return the pubky itself as "homeserver"
         let result = validate_pubky(&pubky, 30, true).await;

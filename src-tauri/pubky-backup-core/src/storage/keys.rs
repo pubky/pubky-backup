@@ -361,12 +361,12 @@ impl KeysStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DEV_MODE_PUBKY;
+    use crate::TEST_PUBKY;
     use tempfile::TempDir;
 
     fn create_test_key_storage() -> (KeyStorage, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let storage = KeyStorage::new(temp_dir.path(), &pubky).unwrap();
         (storage, temp_dir)
     }
@@ -395,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn test_atomic_cursor_write() {
         let (storage, temp_dir) = create_test_key_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Write cursor multiple times
         storage.write_cursor(1).await.unwrap();
@@ -421,7 +421,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_and_delete_data() {
         let (storage, _temp_dir) = create_test_key_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
         let test_data = b"Hello, World!".to_vec();
@@ -446,7 +446,7 @@ mod tests {
     #[tokio::test]
     async fn test_calculate_data_size() {
         let (storage, _temp_dir) = create_test_key_storage();
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Initial size should be 0
         let size = storage.calculate_data_size().await;
@@ -481,7 +481,7 @@ mod tests {
         assert!(keys.is_empty());
 
         // Create a key directory
-        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let _key_storage = keys_storage.get_key_storage(&pubky).unwrap();
 
         // Now should list the key

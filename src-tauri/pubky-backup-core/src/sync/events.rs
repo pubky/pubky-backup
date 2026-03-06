@@ -42,7 +42,7 @@ pub(super) async fn create_event_stream(
 #[cfg(test)]
 pub mod test_helpers {
     use super::*;
-    use crate::DEV_MODE_PUBKY;
+    use crate::TEST_PUBKY;
     use pubky::{EventCursor, EventType, PubkyResource};
     use std::str::FromStr;
 
@@ -70,7 +70,7 @@ pub mod test_helpers {
     pub fn create_test_event_stream(
         cursor: Option<u64>,
     ) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
-        let mock_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Test pubky should be valid");
+        let mock_pubky = PublicKey::from_str(TEST_PUBKY).expect("Test pubky should be valid");
         let z32 = mock_pubky.z32();
 
         let events: Vec<Event> = match cursor {
@@ -123,7 +123,7 @@ pub mod test_helpers {
     pub fn create_failing_test_event_stream(
         fail_after: usize,
     ) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
-        let mock_pubky = PublicKey::from_str(DEV_MODE_PUBKY).expect("Test pubky should be valid");
+        let mock_pubky = PublicKey::from_str(TEST_PUBKY).expect("Test pubky should be valid");
         let z32 = mock_pubky.z32();
 
         let mut items: Vec<Result<Event, EventsError>> = (1..=fail_after as u64)
