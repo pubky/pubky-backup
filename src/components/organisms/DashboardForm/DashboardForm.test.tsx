@@ -59,46 +59,49 @@ describe("DashboardForm", () => {
   });
 
   describe("rendering", () => {
-    it("should render dashboard header with pubky", () => {
+    it("should render dashboard header with pubky", async () => {
       render(<DashboardForm />);
-
-      // Pubky should be displayed (truncated)
-      expect(screen.getByText(/test-pubky/i)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText(/test-pubky/i)).toBeInTheDocument();
+      });
     });
 
-    it("should render sync message area", () => {
+    it("should render sync message area", async () => {
       render(<DashboardForm />);
-
-      // Should render the action buttons (sync message is also rendered)
-      expect(
-        screen.getByRole("button", { name: /force sync/i }),
-      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /force sync/i }),
+        ).toBeInTheDocument();
+      });
     });
 
-    it("should render info cards", () => {
+    it("should render info cards", async () => {
       render(<DashboardForm />);
-
-      expect(screen.getByText("Backup Size")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText("Backup Size")).toBeInTheDocument();
+      });
       expect(screen.getByText("Last Sync")).toBeInTheDocument();
       expect(screen.getByText("Backup Location")).toBeInTheDocument();
     });
 
-    it("should render action buttons", () => {
+    it("should render action buttons", async () => {
       render(<DashboardForm />);
-
-      expect(
-        screen.getByRole("button", { name: /create snapshot/i }),
-      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /create snapshot/i }),
+        ).toBeInTheDocument();
+      });
       expect(
         screen.getByRole("button", { name: /force sync/i }),
       ).toBeInTheDocument();
     });
 
-    it("should display formatted backup size", () => {
+    it("should display formatted backup size", async () => {
       render(<DashboardForm />);
-
-      // 1024 bytes should display as "1 KB" or similar
-      expect(screen.getByText(/1.*KB/i)).toBeInTheDocument();
+      await waitFor(() => {
+        // 1024 bytes should display as "1 KB" or similar
+        expect(screen.getByText(/1.*KB/i)).toBeInTheDocument();
+      });
     });
 
     it("should display data directory path", async () => {
@@ -111,7 +114,7 @@ describe("DashboardForm", () => {
   });
 
   describe("syncing state", () => {
-    it("should show syncing badge when syncing", () => {
+    it("should show syncing badge when syncing", async () => {
       useUIStore.setState({
         keyStates: { "pk:test-pubky": syncingKeyState },
         viewedPubky: "pk:test-pubky",
@@ -119,11 +122,13 @@ describe("DashboardForm", () => {
 
       render(<DashboardForm />);
 
-      // StatusBadge displays "SYNCING" in uppercase
-      expect(screen.getByText("SYNCING")).toBeInTheDocument();
+      await waitFor(() => {
+        // StatusBadge displays "SYNCING" in uppercase
+        expect(screen.getByText("SYNCING")).toBeInTheDocument();
+      });
     });
 
-    it("should disable action buttons when syncing", () => {
+    it("should disable action buttons when syncing", async () => {
       useUIStore.setState({
         keyStates: { "pk:test-pubky": syncingKeyState },
         viewedPubky: "pk:test-pubky",
@@ -131,9 +136,11 @@ describe("DashboardForm", () => {
 
       render(<DashboardForm />);
 
-      expect(
-        screen.getByRole("button", { name: /create snapshot/i }),
-      ).toBeDisabled();
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /create snapshot/i }),
+        ).toBeDisabled();
+      });
       expect(
         screen.getByRole("button", { name: /force sync/i }),
       ).toBeDisabled();
@@ -274,7 +281,7 @@ describe("DashboardForm", () => {
   });
 
   describe("null pubky handling", () => {
-    it("should handle null viewedPubky gracefully", () => {
+    it("should handle null viewedPubky gracefully", async () => {
       useUIStore.setState({
         keyStates: {},
         viewedPubky: null,
@@ -282,8 +289,10 @@ describe("DashboardForm", () => {
 
       render(<DashboardForm />);
 
-      // Should render without crashing
-      expect(screen.getByText("Backup Size")).toBeInTheDocument();
+      await waitFor(() => {
+        // Should render without crashing
+        expect(screen.getByText("Backup Size")).toBeInTheDocument();
+      });
     });
   });
 });

@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { KeysPage } from "./KeysPage";
 import { useUIStore } from "@/stores/uiStore";
 import type { KeyState } from "@/stores/uiStore";
@@ -375,8 +381,10 @@ describe("KeysPage", () => {
 
       expect(screen.getByText("Adding...")).toBeInTheDocument();
 
-      // Cleanup
-      resolveAdd!("done");
+      // Resolve the pending promise to avoid act() warning
+      await act(async () => {
+        resolveAdd!("done");
+      });
     });
   });
 });
