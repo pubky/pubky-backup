@@ -59,7 +59,9 @@ describe("useForceSync", () => {
   });
 
   it("should set isPending to false on error", async () => {
-    vi.mocked(services.forceSyncNow).mockRejectedValue(new Error("Sync failed"));
+    vi.mocked(services.forceSyncNow).mockRejectedValue(
+      new Error("Sync failed"),
+    );
 
     const { result } = renderHook(() => useForceSync());
 
@@ -83,7 +85,7 @@ describe("useForceSync", () => {
     await expect(
       act(async () => {
         await result.current.forceSync("pubky");
-      })
+      }),
     ).rejects.toThrow("Network error");
   });
 

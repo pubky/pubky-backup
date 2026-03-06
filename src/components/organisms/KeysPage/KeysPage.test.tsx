@@ -12,7 +12,6 @@ vi.mock("@/services", () => ({
   deleteKey: vi.fn(),
 }));
 
-
 describe("KeysPage", () => {
   const mockKeyState: KeyState = {
     status: { type: "Idle" },
@@ -40,7 +39,7 @@ describe("KeysPage", () => {
 
       expect(screen.getByText("Manage keys")).toBeInTheDocument();
       expect(
-        screen.getByText(/Select a pubky to see its backup activity/i)
+        screen.getByText(/Select a pubky to see its backup activity/i),
       ).toBeInTheDocument();
     });
 
@@ -60,8 +59,8 @@ describe("KeysPage", () => {
     it("should render list of keys", () => {
       useUIStore.setState({
         keyStates: {
-          "g1b6wp8bhhxt1234567890abcdef": mockKeyState,
-          "a2c7xq9ciiyv0987654321fedcba": mockKeyState,
+          g1b6wp8bhhxt1234567890abcdef: mockKeyState,
+          a2c7xq9ciiyv0987654321fedcba: mockKeyState,
         },
       });
 
@@ -78,7 +77,7 @@ describe("KeysPage", () => {
       render(<KeysPage />);
 
       expect(
-        screen.getByRole("button", { name: /add another pubky/i })
+        screen.getByRole("button", { name: /add another pubky/i }),
       ).toBeInTheDocument();
     });
 
@@ -167,11 +166,15 @@ describe("KeysPage", () => {
       fireEvent.click(removeButton);
 
       await waitFor(() => {
-        expect(services.deleteKey).toHaveBeenCalledWith("pk:test-pubky-to-remove");
+        expect(services.deleteKey).toHaveBeenCalledWith(
+          "pk:test-pubky-to-remove",
+        );
       });
 
       await waitFor(() => {
-        expect(useUIStore.getState().keyStates["pk:test-pubky-to-remove"]).toBeUndefined();
+        expect(
+          useUIStore.getState().keyStates["pk:test-pubky-to-remove"],
+        ).toBeUndefined();
       });
     });
 
@@ -240,27 +243,43 @@ describe("KeysPage", () => {
     it("should show input when 'Add another pubky' is clicked", () => {
       render(<KeysPage />);
 
-      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
 
-      expect(screen.getByPlaceholderText(/enter pubky to add/i)).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /^add$/i })).toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText(/enter pubky to add/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /cancel/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /^add$/i }),
+      ).toBeInTheDocument();
     });
 
     it("should hide input when Cancel is clicked", () => {
       render(<KeysPage />);
 
-      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
       fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
 
-      expect(screen.queryByPlaceholderText(/enter pubky to add/i)).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /add another pubky/i })).toBeInTheDocument();
+      expect(
+        screen.queryByPlaceholderText(/enter pubky to add/i),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      ).toBeInTheDocument();
     });
 
     it("should disable Add button when input is empty", () => {
       render(<KeysPage />);
 
-      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
 
       expect(screen.getByRole("button", { name: /^add$/i })).toBeDisabled();
     });
@@ -268,7 +287,9 @@ describe("KeysPage", () => {
     it("should enable Add button when input has value", () => {
       render(<KeysPage />);
 
-      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky-value" },
       });
@@ -281,7 +302,9 @@ describe("KeysPage", () => {
 
       render(<KeysPage />);
 
-      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "my-new-pubky" },
       });
@@ -297,14 +320,18 @@ describe("KeysPage", () => {
 
       render(<KeysPage />);
 
-      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky" },
       });
       fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
 
       await waitFor(() => {
-        expect(screen.queryByPlaceholderText(/enter pubky to add/i)).not.toBeInTheDocument();
+        expect(
+          screen.queryByPlaceholderText(/enter pubky to add/i),
+        ).not.toBeInTheDocument();
       });
     });
 
@@ -314,7 +341,9 @@ describe("KeysPage", () => {
 
       render(<KeysPage />);
 
-      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky" },
       });
@@ -328,12 +357,17 @@ describe("KeysPage", () => {
     it("should show 'Adding...' text while adding", async () => {
       let resolveAdd: (value: string) => void;
       vi.mocked(services.addKey).mockImplementation(
-        () => new Promise((resolve) => { resolveAdd = resolve; })
+        () =>
+          new Promise((resolve) => {
+            resolveAdd = resolve;
+          }),
       );
 
       render(<KeysPage />);
 
-      fireEvent.click(screen.getByRole("button", { name: /add another pubky/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky" },
       });

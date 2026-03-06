@@ -62,7 +62,8 @@ function deriveAppState(
     };
   }
 
-  const isSyncing = keyState.status.type === "Syncing" || keyState.status.type === "Starting";
+  const isSyncing =
+    keyState.status.type === "Syncing" || keyState.status.type === "Starting";
   const isError = keyState.status.type === "Error";
   const isStopped = keyState.status.type === "Stopped";
 

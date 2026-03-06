@@ -76,7 +76,9 @@ describe("useLastPubky", () => {
   });
 
   it("should handle errors gracefully", async () => {
-    vi.mocked(services.getLastPubky).mockRejectedValue(new Error("Failed to get last pubky"));
+    vi.mocked(services.getLastPubky).mockRejectedValue(
+      new Error("Failed to get last pubky"),
+    );
 
     const { result } = renderHook(() => useLastPubky());
 

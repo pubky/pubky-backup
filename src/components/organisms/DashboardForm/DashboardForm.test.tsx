@@ -46,7 +46,9 @@ describe("DashboardForm", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(services.getDataDirPath).mockResolvedValue("/home/user/.pubky-backup");
+    vi.mocked(services.getDataDirPath).mockResolvedValue(
+      "/home/user/.pubky-backup",
+    );
 
     useUIStore.setState({
       keyStates: { "pk:test-pubky": mockKeyState },
@@ -68,7 +70,9 @@ describe("DashboardForm", () => {
       render(<DashboardForm />);
 
       // Should render the action buttons (sync message is also rendered)
-      expect(screen.getByRole("button", { name: /force sync/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /force sync/i }),
+      ).toBeInTheDocument();
     });
 
     it("should render info cards", () => {
@@ -82,8 +86,12 @@ describe("DashboardForm", () => {
     it("should render action buttons", () => {
       render(<DashboardForm />);
 
-      expect(screen.getByRole("button", { name: /create snapshot/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /force sync/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /create snapshot/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /force sync/i }),
+      ).toBeInTheDocument();
     });
 
     it("should display formatted backup size", () => {
@@ -123,8 +131,12 @@ describe("DashboardForm", () => {
 
       render(<DashboardForm />);
 
-      expect(screen.getByRole("button", { name: /create snapshot/i })).toBeDisabled();
-      expect(screen.getByRole("button", { name: /force sync/i })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /create snapshot/i }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /force sync/i }),
+      ).toBeDisabled();
     });
   });
 
@@ -174,7 +186,9 @@ describe("DashboardForm", () => {
 
   describe("snapshot creation", () => {
     it("should call createSnapshot when snapshot button is clicked", async () => {
-      vi.mocked(services.createSnapshot).mockResolvedValue("/path/to/snapshot.zip");
+      vi.mocked(services.createSnapshot).mockResolvedValue(
+        "/path/to/snapshot.zip",
+      );
 
       render(<DashboardForm />);
 
@@ -186,7 +200,9 @@ describe("DashboardForm", () => {
     });
 
     it("should show success message after snapshot creation", async () => {
-      vi.mocked(services.createSnapshot).mockResolvedValue("/path/to/snapshot.zip");
+      vi.mocked(services.createSnapshot).mockResolvedValue(
+        "/path/to/snapshot.zip",
+      );
 
       render(<DashboardForm />);
 
@@ -198,19 +214,25 @@ describe("DashboardForm", () => {
     });
 
     it("should show error message when snapshot fails", async () => {
-      vi.mocked(services.createSnapshot).mockRejectedValue(new Error("Disk full"));
+      vi.mocked(services.createSnapshot).mockRejectedValue(
+        new Error("Disk full"),
+      );
 
       render(<DashboardForm />);
 
       fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/failed to create snapshot/i)).toBeInTheDocument();
+        expect(
+          screen.getByText(/failed to create snapshot/i),
+        ).toBeInTheDocument();
       });
     });
 
     it("should set statusMessageMode to snapshot-success on successful snapshot", async () => {
-      vi.mocked(services.createSnapshot).mockResolvedValue("/path/to/snapshot.zip");
+      vi.mocked(services.createSnapshot).mockResolvedValue(
+        "/path/to/snapshot.zip",
+      );
       useUIStore.setState({ statusMessageMode: "sync" });
 
       render(<DashboardForm />);
@@ -218,7 +240,9 @@ describe("DashboardForm", () => {
       fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
 
       await waitFor(() => {
-        expect(useUIStore.getState().statusMessageMode).toBe("snapshot-success");
+        expect(useUIStore.getState().statusMessageMode).toBe(
+          "snapshot-success",
+        );
       });
     });
   });
@@ -230,16 +254,22 @@ describe("DashboardForm", () => {
       render(<DashboardForm />);
 
       // Wait for data dir path to load
-      await waitFor(() => {
-        expect(screen.getByText(/\.pubky-backup/i)).toBeInTheDocument();
-      }, { timeout: 2000 });
+      await waitFor(
+        () => {
+          expect(screen.getByText(/\.pubky-backup/i)).toBeInTheDocument();
+        },
+        { timeout: 2000 },
+      );
 
       const openDirButton = screen.getByTitle("Open data directory");
       fireEvent.click(openDirButton);
 
-      await waitFor(() => {
-        expect(services.openDataDir).toHaveBeenCalled();
-      }, { timeout: 1000 });
+      await waitFor(
+        () => {
+          expect(services.openDataDir).toHaveBeenCalled();
+        },
+        { timeout: 1000 },
+      );
     });
   });
 

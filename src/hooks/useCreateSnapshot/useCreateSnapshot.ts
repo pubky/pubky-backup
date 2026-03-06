@@ -33,14 +33,17 @@ import { createSnapshot } from "@/services";
 export function useCreateSnapshot() {
   const [isPending, setIsPending] = useState(false);
 
-  const createSnapshotFn = useCallback(async (pubky: string): Promise<string> => {
-    setIsPending(true);
-    try {
-      return await createSnapshot(pubky);
-    } finally {
-      setIsPending(false);
-    }
-  }, []);
+  const createSnapshotFn = useCallback(
+    async (pubky: string): Promise<string> => {
+      setIsPending(true);
+      try {
+        return await createSnapshot(pubky);
+      } finally {
+        setIsPending(false);
+      }
+    },
+    [],
+  );
 
   return { createSnapshotFn, isPending };
 }

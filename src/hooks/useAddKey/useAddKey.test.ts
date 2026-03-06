@@ -70,7 +70,9 @@ describe("useAddKey", () => {
 
     let returnedPubky: string;
     await act(async () => {
-      returnedPubky = await result.current.addKey({ pubkyValue: "input-pubky" });
+      returnedPubky = await result.current.addKey({
+        pubkyValue: "input-pubky",
+      });
     });
 
     expect(returnedPubky!).toBe("normalized-pubky-123");
@@ -90,7 +92,9 @@ describe("useAddKey", () => {
   });
 
   it("should set isPending to false on error", async () => {
-    vi.mocked(services.addKey).mockRejectedValue(new Error("Failed to add key"));
+    vi.mocked(services.addKey).mockRejectedValue(
+      new Error("Failed to add key"),
+    );
 
     const { result } = renderHook(() => useAddKey());
 
@@ -114,7 +118,7 @@ describe("useAddKey", () => {
     await expect(
       act(async () => {
         await result.current.addKey({ pubkyValue: "invalid" });
-      })
+      }),
     ).rejects.toThrow("Invalid pubky format");
   });
 

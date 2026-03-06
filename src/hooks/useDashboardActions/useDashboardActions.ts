@@ -41,7 +41,8 @@ export function useDashboardActions(): DashboardActions {
   const { showToast, setStatusMessageMode } = Stores.useUIStore.getState();
 
   const { forceSync, isPending: isForceSyncing } = Hooks.useForceSync();
-  const { createSnapshotFn, isPending: isCreatingSnapshot } = Hooks.useCreateSnapshot();
+  const { createSnapshotFn, isPending: isCreatingSnapshot } =
+    Hooks.useCreateSnapshot();
   const { openDir } = Hooks.useOpenDataDir();
   const { setViewedPubky } = Hooks.useSetViewedPubky();
 
@@ -84,7 +85,9 @@ export function useDashboardActions(): DashboardActions {
           showToast(pubky);
         })
         .catch((err: unknown) => {
-          Logger.error("DashboardActions", "Failed to copy pubky", { error: err });
+          Logger.error("DashboardActions", "Failed to copy pubky", {
+            error: err,
+          });
           alert("Failed to copy to clipboard");
         });
     },
@@ -123,7 +126,9 @@ export function useDashboardActions(): DashboardActions {
     try {
       await openDir();
     } catch (error: unknown) {
-      Logger.error("DashboardActions", "Failed to open data directory", { error });
+      Logger.error("DashboardActions", "Failed to open data directory", {
+        error,
+      });
     }
   }, [openDir]);
 

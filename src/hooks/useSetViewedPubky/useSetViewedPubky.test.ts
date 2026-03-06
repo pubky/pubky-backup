@@ -77,7 +77,9 @@ describe("useSetViewedPubky", () => {
   });
 
   it("should set isPending to false on error", async () => {
-    vi.mocked(services.setLastPubky).mockRejectedValue(new Error("Failed to persist"));
+    vi.mocked(services.setLastPubky).mockRejectedValue(
+      new Error("Failed to persist"),
+    );
 
     const { result } = renderHook(() => useSetViewedPubky());
 
@@ -119,7 +121,7 @@ describe("useSetViewedPubky", () => {
     await expect(
       act(async () => {
         await result.current.setViewedPubky("bad-pubky");
-      })
+      }),
     ).rejects.toThrow("Persistence failed");
   });
 

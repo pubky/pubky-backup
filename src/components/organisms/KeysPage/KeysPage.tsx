@@ -32,7 +32,7 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
         "text-left cursor-pointer",
         isSelected
           ? "bg-pubky-purple/15 border-pubky-purple"
-          : "bg-surface-light border-transparent hover:border-border"
+          : "bg-surface-light border-transparent hover:border-border",
       )}
     >
       <span className="text-white font-medium">
@@ -199,7 +199,9 @@ export function KeysPage() {
           onClick={handleAddPubky}
           className="w-full"
         >
-          <span className="text-white text-sm font-medium">Add another pubky</span>
+          <span className="text-white text-sm font-medium">
+            Add another pubky
+          </span>
         </Atoms.Button>
       )}
     </div>

@@ -54,9 +54,7 @@ export function DashboardForm() {
             icon={<Atoms.ClockIcon size={18} />}
             label="Last Sync"
             value={
-              lastSyncTime !== null
-                ? Utils.formatTimestamp(lastSyncTime)
-                : "--"
+              lastSyncTime !== null ? Utils.formatTimestamp(lastSyncTime) : "--"
             }
           />
         </div>

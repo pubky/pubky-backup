@@ -29,7 +29,7 @@ function NavButton({
         "flex items-center justify-center w-7 h-7 rounded-md border-none cursor-pointer transition-colors duration-200",
         isActive
           ? "bg-surface-light text-white"
-          : "bg-transparent text-text-secondary hover:text-white hover:bg-surface-light/50"
+          : "bg-transparent text-text-secondary hover:text-white hover:bg-surface-light/50",
       )}
     >
       {children}

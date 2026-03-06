@@ -9,10 +9,12 @@ const mockUnlisten = vi.fn();
 let eventCallback: ((event: { payload: KeyUpdate }) => void) | null = null;
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn((_eventName: string, callback: (event: { payload: KeyUpdate }) => void) => {
-    eventCallback = callback;
-    return Promise.resolve(mockUnlisten);
-  }),
+  listen: vi.fn(
+    (_eventName: string, callback: (event: { payload: KeyUpdate }) => void) => {
+      eventCallback = callback;
+      return Promise.resolve(mockUnlisten);
+    },
+  ),
 }));
 
 import { listen } from "@tauri-apps/api/event";

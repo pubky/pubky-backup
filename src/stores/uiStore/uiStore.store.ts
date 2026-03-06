@@ -104,7 +104,11 @@ export const useUIStore = create<UIStore>()(
         set({ viewedPubky: pubky }, false, UIActionTypes.SET_VIEWED_PUBKY),
 
       setDeveloperMode: (enabled: boolean) =>
-        set({ developerMode: enabled }, false, UIActionTypes.SET_DEVELOPER_MODE),
+        set(
+          { developerMode: enabled },
+          false,
+          UIActionTypes.SET_DEVELOPER_MODE,
+        ),
     }),
     {
       name: "ui-store",

@@ -125,7 +125,10 @@ export function DashboardHeader({
 
   return (
     <div className="flex items-center self-stretch gap-1.5">
-      <div className="flex items-center gap-1.5 flex-1 relative" ref={dropdownRef}>
+      <div
+        className="flex items-center gap-1.5 flex-1 relative"
+        ref={dropdownRef}
+      >
         <h4 className="text-base font-bold text-white m-0">{pubkyDisplay}</h4>
         <Atoms.IconButton
           variant="inline"
@@ -147,7 +150,7 @@ export function DashboardHeader({
                 size={16}
                 className={cn(
                   "transition-transform duration-200",
-                  isDropdownOpen && "rotate-180"
+                  isDropdownOpen && "rotate-180",
                 )}
               />
             </Atoms.IconButton>
@@ -173,15 +176,21 @@ export function DashboardHeader({
                       "flex items-center gap-2 w-full px-3 py-2.5 text-left",
                       "hover:bg-surface-light transition-colors duration-150",
                       "focus:bg-surface-light focus:outline-none",
-                      key.isSelected && "bg-surface-light"
+                      key.isSelected && "bg-surface-light",
                     )}
                   >
-                    <Atoms.NavKeysIcon size={16} className="text-text-secondary shrink-0" />
+                    <Atoms.NavKeysIcon
+                      size={16}
+                      className="text-text-secondary shrink-0"
+                    />
                     <span className="text-sm text-white font-medium">
                       {Utils.displayPubky(key.pubky)}
                     </span>
                     {key.isSelected && (
-                      <Atoms.CheckIcon size={14} className="text-pubky-lime ml-auto shrink-0" />
+                      <Atoms.CheckIcon
+                        size={14}
+                        className="text-pubky-lime ml-auto shrink-0"
+                      />
                     )}
                   </button>
                 ))}

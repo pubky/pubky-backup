@@ -58,7 +58,9 @@ describe("useOpenDataDir", () => {
   });
 
   it("should set isPending to false on error", async () => {
-    vi.mocked(services.openDataDir).mockRejectedValue(new Error("Failed to open"));
+    vi.mocked(services.openDataDir).mockRejectedValue(
+      new Error("Failed to open"),
+    );
 
     const { result } = renderHook(() => useOpenDataDir());
 
@@ -82,7 +84,7 @@ describe("useOpenDataDir", () => {
     await expect(
       act(async () => {
         await result.current.openDir();
-      })
+      }),
     ).rejects.toThrow("Directory not found");
   });
 

@@ -161,9 +161,7 @@ describe("DashboardHeader", () => {
 
     it("should call onSelectKey with correct pubky when key clicked", () => {
       const onSelectKey = vi.fn();
-      render(
-        <DashboardHeader {...multiKeyProps} onSelectKey={onSelectKey} />,
-      );
+      render(<DashboardHeader {...multiKeyProps} onSelectKey={onSelectKey} />);
 
       fireEvent.click(screen.getByTitle("Switch key"));
       const options = screen.getAllByRole("option");
@@ -240,9 +238,7 @@ describe("DashboardHeader", () => {
 
     it("should select option with Enter key", () => {
       const onSelectKey = vi.fn();
-      render(
-        <DashboardHeader {...multiKeyProps} onSelectKey={onSelectKey} />,
-      );
+      render(<DashboardHeader {...multiKeyProps} onSelectKey={onSelectKey} />);
 
       fireEvent.click(screen.getByTitle("Switch key"));
       const listbox = screen.getByRole("listbox");

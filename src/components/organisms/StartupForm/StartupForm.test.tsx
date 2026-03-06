@@ -44,7 +44,9 @@ describe("StartupForm", () => {
 
       // Wait for async hooks to settle
       await waitFor(() => {
-        expect(screen.getByText(/securely mirror your pubky data/i)).toBeInTheDocument();
+        expect(
+          screen.getByText(/securely mirror your pubky data/i),
+        ).toBeInTheDocument();
       });
     });
 
@@ -52,7 +54,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/g1b6wp8bhhxt/i)).toBeInTheDocument();
+        expect(
+          screen.getByPlaceholderText(/g1b6wp8bhhxt/i),
+        ).toBeInTheDocument();
       });
     });
 
@@ -60,7 +64,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: /backup/i }),
+        ).toBeInTheDocument();
       });
     });
 
@@ -68,7 +74,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/g1b6wp8bhhxt/i)).toBeInTheDocument();
+        expect(
+          screen.getByPlaceholderText(/g1b6wp8bhhxt/i),
+        ).toBeInTheDocument();
       });
     });
 
@@ -80,7 +88,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/enter your pubky/i)).toBeInTheDocument();
+        expect(
+          screen.getByPlaceholderText(/enter your pubky/i),
+        ).toBeInTheDocument();
       });
     });
   });
@@ -90,7 +100,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/g1b6wp8bhhxt/i)).toBeInTheDocument();
+        expect(
+          screen.getByPlaceholderText(/g1b6wp8bhhxt/i),
+        ).toBeInTheDocument();
       });
 
       const input = screen.getByPlaceholderText(/g1b6wp8bhhxt/i);
@@ -114,7 +126,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).not.toBeDisabled();
+        expect(
+          screen.getByRole("button", { name: /backup/i }),
+        ).not.toBeDisabled();
       });
     });
   });
@@ -126,7 +140,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).not.toBeDisabled();
+        expect(
+          screen.getByRole("button", { name: /backup/i }),
+        ).not.toBeDisabled();
       });
 
       fireEvent.click(screen.getByRole("button", { name: /backup/i }));
@@ -142,7 +158,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).not.toBeDisabled();
+        expect(
+          screen.getByRole("button", { name: /backup/i }),
+        ).not.toBeDisabled();
       });
 
       fireEvent.click(screen.getByRole("button", { name: /backup/i }));
@@ -158,7 +176,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).not.toBeDisabled();
+        expect(
+          screen.getByRole("button", { name: /backup/i }),
+        ).not.toBeDisabled();
       });
 
       fireEvent.click(screen.getByRole("button", { name: /backup/i }));
@@ -214,7 +234,9 @@ describe("StartupForm", () => {
 
       // Wait for hooks to settle
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/g1b6wp8bhhxt/i)).toBeInTheDocument();
+        expect(
+          screen.getByPlaceholderText(/g1b6wp8bhhxt/i),
+        ).toBeInTheDocument();
       });
 
       // Should not have called addKey
@@ -240,7 +262,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).not.toBeDisabled();
+        expect(
+          screen.getByRole("button", { name: /backup/i }),
+        ).not.toBeDisabled();
       });
 
       fireEvent.click(screen.getByRole("button", { name: /backup/i }));
@@ -260,7 +284,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).not.toBeDisabled();
+        expect(
+          screen.getByRole("button", { name: /backup/i }),
+        ).not.toBeDisabled();
       });
 
       fireEvent.click(screen.getByRole("button", { name: /backup/i }));
@@ -287,7 +313,9 @@ describe("StartupForm", () => {
 
       // When keys exist, placeholder changes
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/enter your pubky/i)).toBeInTheDocument();
+        expect(
+          screen.getByPlaceholderText(/enter your pubky/i),
+        ).toBeInTheDocument();
       });
     });
   });

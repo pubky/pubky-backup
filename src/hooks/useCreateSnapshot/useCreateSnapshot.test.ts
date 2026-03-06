@@ -59,7 +59,9 @@ describe("useCreateSnapshot", () => {
   });
 
   it("should return snapshot path from service", async () => {
-    vi.mocked(services.createSnapshot).mockResolvedValue("/path/to/my-snapshot.zip");
+    vi.mocked(services.createSnapshot).mockResolvedValue(
+      "/path/to/my-snapshot.zip",
+    );
 
     const { result } = renderHook(() => useCreateSnapshot());
 
@@ -72,7 +74,9 @@ describe("useCreateSnapshot", () => {
   });
 
   it("should set isPending to false on error", async () => {
-    vi.mocked(services.createSnapshot).mockRejectedValue(new Error("Snapshot failed"));
+    vi.mocked(services.createSnapshot).mockRejectedValue(
+      new Error("Snapshot failed"),
+    );
 
     const { result } = renderHook(() => useCreateSnapshot());
 
@@ -96,7 +100,7 @@ describe("useCreateSnapshot", () => {
     await expect(
       act(async () => {
         await result.current.createSnapshotFn("pubky");
-      })
+      }),
     ).rejects.toThrow("Disk full");
   });
 

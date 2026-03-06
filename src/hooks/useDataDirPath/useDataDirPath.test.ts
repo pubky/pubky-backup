@@ -13,7 +13,9 @@ describe("useDataDirPath", () => {
   });
 
   it("should return dataDirPath and isLoading state", async () => {
-    vi.mocked(services.getDataDirPath).mockResolvedValue("/home/user/.pubky-backup");
+    vi.mocked(services.getDataDirPath).mockResolvedValue(
+      "/home/user/.pubky-backup",
+    );
 
     const { result } = renderHook(() => useDataDirPath());
 
@@ -41,7 +43,9 @@ describe("useDataDirPath", () => {
   });
 
   it("should fetch data dir path on mount", async () => {
-    vi.mocked(services.getDataDirPath).mockResolvedValue("/home/user/.pubky-backup");
+    vi.mocked(services.getDataDirPath).mockResolvedValue(
+      "/home/user/.pubky-backup",
+    );
 
     const { result } = renderHook(() => useDataDirPath());
 
@@ -66,7 +70,9 @@ describe("useDataDirPath", () => {
   });
 
   it("should handle errors gracefully", async () => {
-    vi.mocked(services.getDataDirPath).mockRejectedValue(new Error("Failed to get path"));
+    vi.mocked(services.getDataDirPath).mockRejectedValue(
+      new Error("Failed to get path"),
+    );
 
     const { result } = renderHook(() => useDataDirPath());
 
@@ -96,7 +102,9 @@ describe("useDataDirPath", () => {
   });
 
   it("should handle different path formats", async () => {
-    vi.mocked(services.getDataDirPath).mockResolvedValue("C:\\Users\\test\\.pubky-backup");
+    vi.mocked(services.getDataDirPath).mockResolvedValue(
+      "C:\\Users\\test\\.pubky-backup",
+    );
 
     const { result } = renderHook(() => useDataDirPath());
 
