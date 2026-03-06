@@ -64,41 +64,45 @@ export function StartupForm() {
   return (
     <main className="flex flex-col items-center justify-start text-center relative">
       <Atoms.Card>
-        {/* Header */}
-        <div className="flex flex-col items-center gap-2 py-4">
-          <Atoms.PubkyLogo />
-          <h1 className="text-lg font-normal text-text-secondary m-0">
-            Securely mirror your Pubky data.
-          </h1>
-        </div>
+        <div className="flex flex-col items-stretch gap-8">
+          {/* Header */}
+          <div className="flex flex-col items-center gap-2 py-4">
+            <Atoms.PubkyLogo />
+            <h1 className="text-xl font-normal text-text-secondary m-0">
+              Securely mirror your Pubky data.
+            </h1>
+          </div>
 
-        {/* Form content */}
-        <div className="flex flex-col gap-4">
-          <Molecules.PubkyInput
-            value={pubkyInputValue}
-            onChange={setPubkyInputValue}
-            suggestions={keys}
-            placeholder={placeholder}
-          />
-
-          <Atoms.Button
-            onClick={handleSubmit}
-            disabled={!hasValue || isLoading}
-            className={cn(
-              !hasValue && "opacity-30",
-              hasValue && !isLoading && "opacity-100",
-              isLoading && "opacity-100 bg-surface-dark border-border",
-            )}
-          >
-            <span className="text-sm font-bold text-pubky-purple">Backup</span>
-            <Atoms.RefreshIcon
-              className={cn(
-                "w-4 h-4 text-pubky-purple",
-                isLoading && "animate-spin",
-              )}
-              size={16}
+          {/* Form content */}
+          <div className="flex flex-col gap-4">
+            <Molecules.PubkyInput
+              value={pubkyInputValue}
+              onChange={setPubkyInputValue}
+              suggestions={keys}
+              placeholder={placeholder}
             />
-          </Atoms.Button>
+
+            <Atoms.Button
+              onClick={handleSubmit}
+              disabled={!hasValue || isLoading}
+              className={cn(
+                !hasValue && "opacity-30",
+                hasValue && !isLoading && "opacity-100",
+                isLoading && "opacity-100 bg-surface-dark border-border",
+              )}
+            >
+              <span className="text-sm font-bold text-pubky-purple">
+                Backup
+              </span>
+              <Atoms.RefreshIcon
+                className={cn(
+                  "w-4 h-4 text-pubky-purple",
+                  isLoading && "animate-spin",
+                )}
+                size={16}
+              />
+            </Atoms.Button>
+          </div>
         </div>
       </Atoms.Card>
     </main>

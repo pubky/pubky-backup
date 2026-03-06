@@ -27,31 +27,32 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
         }
       }}
       className={cn(
-        "flex items-center justify-between w-full px-4 py-3 rounded-lg",
+        "flex items-center w-full px-5 py-4 rounded-lg gap-4",
         "border transition-colors duration-200",
         "text-left cursor-pointer",
         isSelected
-          ? "bg-pubky-purple/15 border-pubky-purple"
-          : "bg-surface-light border-transparent hover:border-border",
+          ? "bg-pubky-purple/10 border-pubky-purple"
+          : "bg-[rgba(5,5,10,0.1)] border-border hover:border-text-secondary",
       )}
     >
-      <span className="text-white font-medium">
+      <span className="text-text-light font-medium text-base flex-1">
         {Utils.displayPubky(pubky)}
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-4">
         {isSelected && (
-          <Atoms.CheckIcon size={16} className="text-pubky-purple" />
+          <Atoms.CheckIcon size={16} className="text-text-light" />
         )}
-        <Atoms.IconButton
-          variant="inline"
+        <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onRemove();
           }}
           title="Remove pubky"
+          className="flex items-center justify-center w-9 h-9 rounded-full bg-surface-light shadow-[0_1px_2px_rgba(5,5,10,0.2)] cursor-pointer hover:opacity-80 transition-opacity"
         >
           <Atoms.TrashIcon size={16} />
-        </Atoms.IconButton>
+        </button>
       </div>
     </div>
   );
@@ -135,21 +136,19 @@ export function KeysPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4 self-stretch">
+    <div className="flex flex-col gap-6 self-stretch">
       {/* Header */}
-      <div className="text-left">
-        <h2 className="text-lg font-semibold text-white mb-1">Manage keys</h2>
-        <p className="text-sm text-text-secondary">
+      <div className="flex flex-col gap-1 text-left">
+        <h2 className="text-xl font-bold text-white m-0">Manage keys</h2>
+        <p className="text-base font-medium text-text-light m-0">
           Select a pubky to see its backup activity and status.
-        </p>
-        <p className="text-sm text-text-secondary">
-          Don't worry, all your keys will be synced in the background.
+          {"\n"}Don't worry, all your keys will be synced in the background.
         </p>
       </div>
 
       {/* Keys list */}
       <div className="flex flex-col gap-2">
-        <span className="text-xs text-text-secondary uppercase tracking-wider">
+        <span className="text-xs font-medium text-text-secondary uppercase tracking-widest">
           Your pubkys ({keys.length})
         </span>
         <div className="flex flex-col gap-2">
@@ -199,7 +198,7 @@ export function KeysPage() {
           onClick={handleAddPubky}
           className="w-full"
         >
-          <span className="text-white text-sm font-medium">
+          <span className="text-text-light text-sm font-bold">
             Add another pubky
           </span>
         </Atoms.Button>

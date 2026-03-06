@@ -43,8 +43,8 @@ export function DashboardForm() {
       />
 
       {/* Info cards */}
-      <div className="flex flex-col self-stretch p-3 bg-surface-light rounded-lg gap-0">
-        <div className="flex justify-stretch items-stretch self-stretch">
+      <div className="flex flex-col self-stretch p-3 bg-surface-light rounded-lg">
+        <div className="flex justify-stretch items-stretch self-stretch gap-4">
           <Molecules.InfoCard
             icon={<Atoms.DatabaseIcon size={18} />}
             label="Backup Size"

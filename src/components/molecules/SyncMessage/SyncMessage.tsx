@@ -3,7 +3,7 @@ import * as Atoms from "@/components/atoms";
 import { cn } from "@/lib/utils";
 
 const syncMessageVariants = cva(
-  "flex flex-row justify-between items-center self-stretch py-2.5 px-3.5 rounded-md gap-2",
+  "flex flex-row justify-between items-center self-stretch py-4 px-6 rounded-lg gap-2",
   {
     variants: {
       status: {
@@ -19,7 +19,7 @@ const syncMessageVariants = cva(
   },
 );
 
-const textVariants = cva("text-xs font-bold", {
+const textVariants = cva("text-sm font-bold", {
   variants: {
     status: {
       synced: "text-pubky-green",
@@ -33,7 +33,7 @@ const textVariants = cva("text-xs font-bold", {
   },
 });
 
-const iconVariants = cva("w-[18px] h-[18px] shrink-0", {
+const iconVariants = cva("w-6 h-6 shrink-0", {
   variants: {
     status: {
       synced: "text-pubky-green",
@@ -61,9 +61,9 @@ export function SyncMessage({ status, message, className }: SyncMessageProps) {
       </div>
       <div className="flex items-center gap-2">
         {status === "syncing" ? (
-          <Atoms.Spinner className={iconVariants({ status })} size={16} />
+          <Atoms.Spinner className={iconVariants({ status })} size={24} />
         ) : (
-          <Atoms.CheckIcon className={iconVariants({ status })} size={18} />
+          <Atoms.CheckIcon className={iconVariants({ status })} size={24} />
         )}
       </div>
     </div>

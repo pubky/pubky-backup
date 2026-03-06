@@ -33,7 +33,9 @@ export function ActionButtons({
         ) : (
           <Atoms.SnapshotIcon className="w-4 h-4 text-white" size={16} />
         )}
-        <span className="text-sm font-bold text-white">Create Snapshot</span>
+        <span className="text-sm font-bold text-white whitespace-nowrap">
+          Create Snapshot
+        </span>
       </Atoms.Button>
 
       {/* Force Sync button */}
@@ -42,7 +44,7 @@ export function ActionButtons({
         onClick={onForceSync}
         disabled={forceSyncDisabled}
         className={cn(
-          "self-stretch",
+          "flex-1",
           isForceSyncing && "bg-surface-dark border-border",
         )}
       >

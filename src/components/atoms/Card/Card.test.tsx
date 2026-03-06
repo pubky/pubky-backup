@@ -21,7 +21,7 @@ describe("Card", () => {
     );
 
     const card = screen.getByText("Content").parentElement;
-    expect(card).toHaveClass("w-[360px]");
+    expect(card).toHaveClass("w-[480px]");
     expect(card).toHaveClass("min-h-[380px]");
     expect(card).toHaveClass("bg-surface-dark");
     expect(card).toHaveClass("border");
@@ -62,10 +62,10 @@ describe("Card", () => {
     );
 
     const card = screen.getByText("Content").parentElement;
-    expect(card).toHaveClass("p-4");
-    expect(card).toHaveClass("pb-5");
-    expect(card).toHaveClass("px-5");
-    expect(card).toHaveClass("gap-3");
+    expect(card).toHaveClass("pt-6");
+    expect(card).toHaveClass("px-8");
+    expect(card).toHaveClass("pb-8");
+    expect(card).toHaveClass("gap-6");
   });
 
   it("should have shadow", () => {

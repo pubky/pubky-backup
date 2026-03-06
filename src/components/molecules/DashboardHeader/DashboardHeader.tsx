@@ -124,18 +124,18 @@ export function DashboardHeader({
   const showDropdown = keys.length > 1;
 
   return (
-    <div className="flex items-center self-stretch gap-1.5">
+    <div className="flex items-center self-stretch gap-2">
       <div
-        className="flex items-center gap-1.5 flex-1 relative"
+        className="flex items-center gap-2 flex-1 relative"
         ref={dropdownRef}
       >
-        <h4 className="text-base font-bold text-white m-0">{pubkyDisplay}</h4>
+        <h4 className="text-xl font-bold text-white m-0">{pubkyDisplay}</h4>
         <Atoms.IconButton
           variant="inline"
           onClick={onCopy}
           title="Copy full pubky"
         >
-          <Atoms.CopyIcon size={16} />
+          <Atoms.CopyIcon size={20} />
         </Atoms.IconButton>
         {showDropdown && (
           <>
@@ -147,7 +147,7 @@ export function DashboardHeader({
               aria-haspopup="listbox"
             >
               <Atoms.ChevronDownIcon
-                size={16}
+                size={20}
                 className={cn(
                   "transition-transform duration-200",
                   isDropdownOpen && "rotate-180",

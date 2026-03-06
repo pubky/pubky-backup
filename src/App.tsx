@@ -72,7 +72,7 @@ export function App() {
         <Organisms.StartupForm />
       ) : (
         <main className="flex flex-col items-center justify-start text-center relative">
-          <Atoms.Card>
+          <Atoms.Card className="justify-start">
             <div className="flex justify-end">
               <Molecules.NavBar />
             </div>

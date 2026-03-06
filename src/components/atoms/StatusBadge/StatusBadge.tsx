@@ -2,13 +2,13 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const statusBadgeVariants = cva(
-  "inline-flex items-center justify-end px-1.5 py-0.5 rounded text-[10px] font-medium tracking-wider uppercase",
+  "inline-flex items-center justify-end px-2 py-1 rounded text-xs font-medium tracking-widest uppercase",
   {
     variants: {
       status: {
         synced: "bg-pubky-green text-surface-dark",
         syncing: "bg-pubky-purple text-white",
-        snapshot: "bg-pubky-blue text-white",
+        snapshot: "bg-pubky-blue text-surface-dark",
       },
     },
     defaultVariants: {
