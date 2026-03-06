@@ -1,17 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { getLastPubky } from "@/services";
+import { stripPubkyPrefix } from "@/utils/pubky";
 
 /**
  * useLastPubky
  *
- * Query hook for fetching the last used pubky.
- * Used for auto-loading the previous pubky on app startup.
+ * Hook for fetching the last used pubky on initial load.
+ * Only fetches once on component mount.
  *
- * @returns TanStack Query result with pubky string or null
+ * @returns Object with lastPubky value and isLoading state
  *
  * @example
  * ```tsx
- * const { data: lastPubky } = useLastPubky();
+ * const { lastPubky, isLoading } = useLastPubky();
  *
  * useEffect(() => {
  *   if (lastPubky && !hasAutoLoaded) {
@@ -23,9 +24,22 @@ import { getLastPubky } from "@/services";
  * ```
  */
 export function useLastPubky() {
-  return useQuery({
-    queryKey: ["lastPubky"],
-    queryFn: getLastPubky,
-    staleTime: Infinity, // Only needed once at startup
-  });
+  const [lastPubky, setLastPubky] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    getLastPubky()
+      .then((pubky) => {
+        // Normalize to strip any "pubky" prefix for consistency
+        setLastPubky(pubky ? stripPubkyPrefix(pubky) : null);
+      })
+      .catch(() => {
+        // Ignore errors - lastPubky is optional
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
+  }, []);
+
+  return { lastPubky, isLoading };
 }

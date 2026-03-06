@@ -1,11 +1,35 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useUIStore } from "./uiStore.store";
+import type { KeyState } from "./uiStore.types";
+
+const mockKeyState: KeyState = {
+  status: { type: "Idle" },
+  data_size: 1024,
+  last_sync: 1672531200,
+  next_sync: 1672531230,
+  error: null,
+  total_files: null,
+  files_synced: null,
+  bytes_downloaded: null,
+};
+
+const mockSyncingKeyState: KeyState = {
+  status: { type: "Syncing", events_processed: 5 },
+  data_size: 2048,
+  last_sync: null,
+  next_sync: null,
+  error: null,
+  total_files: 100,
+  files_synced: 50,
+  bytes_downloaded: 1024,
+};
 
 describe("useUIStore", () => {
   beforeEach(() => {
     // Reset store to initial state before each test
     useUIStore.setState({
       currentScreen: "startup",
+      currentPage: "sync",
       statusMessageMode: "sync",
       pubkyInputValue: "",
       hasAutoLoaded: false,
@@ -15,6 +39,9 @@ describe("useUIStore", () => {
         type: "success",
         message: "",
       },
+      keyStates: {},
+      viewedPubky: null,
+      developerMode: false,
     });
   });
 
@@ -46,6 +73,11 @@ describe("useUIStore", () => {
       const state = useUIStore.getState();
       expect(state.hasAutoLoaded).toBe(false);
     });
+
+    it("should have sync as default page", () => {
+      const state = useUIStore.getState();
+      expect(state.currentPage).toBe("sync");
+    });
   });
 
   describe("setScreen", () => {
@@ -58,6 +90,29 @@ describe("useUIStore", () => {
       useUIStore.getState().setScreen("dashboard");
       useUIStore.getState().setScreen("startup");
       expect(useUIStore.getState().currentScreen).toBe("startup");
+    });
+  });
+
+  describe("setPage", () => {
+    it("should change page to activity", () => {
+      useUIStore.getState().setPage("activity");
+      expect(useUIStore.getState().currentPage).toBe("activity");
+    });
+
+    it("should change page to keys", () => {
+      useUIStore.getState().setPage("keys");
+      expect(useUIStore.getState().currentPage).toBe("keys");
+    });
+
+    it("should change page to settings", () => {
+      useUIStore.getState().setPage("settings");
+      expect(useUIStore.getState().currentPage).toBe("settings");
+    });
+
+    it("should change page back to sync", () => {
+      useUIStore.getState().setPage("settings");
+      useUIStore.getState().setPage("sync");
+      expect(useUIStore.getState().currentPage).toBe("sync");
     });
   });
 
@@ -193,6 +248,185 @@ describe("useUIStore", () => {
       const state = useUIStore.getState();
       expect(state.currentScreen).toBe("dashboard");
       expect(state.pubkyInputValue).toBe("test-value");
+    });
+  });
+
+  describe("setKeyState", () => {
+    it("should add a new key state", () => {
+      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
+
+      const state = useUIStore.getState();
+      expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
+    });
+
+    it("should update an existing key state", () => {
+      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
+      useUIStore.getState().setKeyState("pk:key1", mockSyncingKeyState);
+
+      const state = useUIStore.getState();
+      expect(state.keyStates["pk:key1"]).toEqual(mockSyncingKeyState);
+    });
+
+    it("should not affect other key states", () => {
+      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
+      useUIStore.getState().setKeyState("pk:key2", mockSyncingKeyState);
+
+      const state = useUIStore.getState();
+      expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
+      expect(state.keyStates["pk:key2"]).toEqual(mockSyncingKeyState);
+    });
+
+    it("should handle multiple keys", () => {
+      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
+      useUIStore.getState().setKeyState("pk:key2", mockKeyState);
+      useUIStore.getState().setKeyState("pk:key3", mockSyncingKeyState);
+
+      const state = useUIStore.getState();
+      expect(Object.keys(state.keyStates)).toHaveLength(3);
+    });
+  });
+
+  describe("setAllKeyStates", () => {
+    it("should replace all key states", () => {
+      useUIStore.getState().setKeyState("pk:existing", mockKeyState);
+
+      useUIStore.getState().setAllKeyStates({
+        "pk:new1": mockKeyState,
+        "pk:new2": mockSyncingKeyState,
+      });
+
+      const state = useUIStore.getState();
+      expect(state.keyStates["pk:existing"]).toBeUndefined();
+      expect(state.keyStates["pk:new1"]).toEqual(mockKeyState);
+      expect(state.keyStates["pk:new2"]).toEqual(mockSyncingKeyState);
+    });
+
+    it("should handle empty object", () => {
+      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
+      useUIStore.getState().setAllKeyStates({});
+
+      const state = useUIStore.getState();
+      expect(state.keyStates).toEqual({});
+    });
+
+    it("should not affect other state", () => {
+      useUIStore.getState().setViewedPubky("pk:viewed");
+      useUIStore.getState().setDeveloperMode(true);
+
+      useUIStore.getState().setAllKeyStates({
+        "pk:key1": mockKeyState,
+      });
+
+      const state = useUIStore.getState();
+      expect(state.viewedPubky).toBe("pk:viewed");
+      expect(state.developerMode).toBe(true);
+    });
+  });
+
+  describe("removeKeyState", () => {
+    it("should remove a key state", () => {
+      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
+      useUIStore.getState().setKeyState("pk:key2", mockSyncingKeyState);
+
+      useUIStore.getState().removeKeyState("pk:key1");
+
+      const state = useUIStore.getState();
+      expect(state.keyStates["pk:key1"]).toBeUndefined();
+      expect(state.keyStates["pk:key2"]).toEqual(mockSyncingKeyState);
+    });
+
+    it("should handle removing non-existent key", () => {
+      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
+
+      useUIStore.getState().removeKeyState("pk:nonexistent");
+
+      const state = useUIStore.getState();
+      expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
+    });
+
+    it("should handle removing from empty state", () => {
+      useUIStore.getState().removeKeyState("pk:key1");
+
+      const state = useUIStore.getState();
+      expect(state.keyStates).toEqual({});
+    });
+  });
+
+  describe("setViewedPubky", () => {
+    it("should set viewed pubky", () => {
+      useUIStore.getState().setViewedPubky("pk:mykey");
+
+      const state = useUIStore.getState();
+      expect(state.viewedPubky).toBe("pk:mykey");
+    });
+
+    it("should update viewed pubky", () => {
+      useUIStore.getState().setViewedPubky("pk:first");
+      useUIStore.getState().setViewedPubky("pk:second");
+
+      const state = useUIStore.getState();
+      expect(state.viewedPubky).toBe("pk:second");
+    });
+
+    it("should clear viewed pubky with null", () => {
+      useUIStore.getState().setViewedPubky("pk:mykey");
+      useUIStore.getState().setViewedPubky(null);
+
+      const state = useUIStore.getState();
+      expect(state.viewedPubky).toBeNull();
+    });
+
+    it("should not affect key states", () => {
+      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
+      useUIStore.getState().setViewedPubky("pk:key1");
+
+      const state = useUIStore.getState();
+      expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
+    });
+  });
+
+  describe("setDeveloperMode", () => {
+    it("should enable developer mode", () => {
+      useUIStore.getState().setDeveloperMode(true);
+
+      const state = useUIStore.getState();
+      expect(state.developerMode).toBe(true);
+    });
+
+    it("should disable developer mode", () => {
+      useUIStore.getState().setDeveloperMode(true);
+      useUIStore.getState().setDeveloperMode(false);
+
+      const state = useUIStore.getState();
+      expect(state.developerMode).toBe(false);
+    });
+
+    it("should not affect other state", () => {
+      useUIStore.getState().setViewedPubky("pk:mykey");
+      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
+
+      useUIStore.getState().setDeveloperMode(true);
+
+      const state = useUIStore.getState();
+      expect(state.viewedPubky).toBe("pk:mykey");
+      expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
+    });
+  });
+
+  describe("initial key state values", () => {
+    it("should have empty keyStates by default", () => {
+      const state = useUIStore.getState();
+      expect(state.keyStates).toEqual({});
+    });
+
+    it("should have null viewedPubky by default", () => {
+      const state = useUIStore.getState();
+      expect(state.viewedPubky).toBeNull();
+    });
+
+    it("should have developerMode false by default", () => {
+      const state = useUIStore.getState();
+      expect(state.developerMode).toBe(false);
     });
   });
 });

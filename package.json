@@ -15,8 +15,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@tanstack/react-query": "^5.90.17",
-    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/api": "^2.10.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "react": "^19.2.3",
@@ -27,9 +26,9 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.1",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
-    "@testing-library/react": "^16.3.1",
     "@vitejs/plugin-react": "^5.1.2",
     "@vitest/ui": "^4.0.16",
     "happy-dom": "^20.0.11",

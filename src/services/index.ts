@@ -1,12 +1,15 @@
 export {
-  initAppState,
-  fetchState,
-  getPreviousPubkyKeys,
+  addKey,
+  getAllKeyStates,
+  getConfig,
+  getKeys,
   getLastPubky,
-  backupControllerBegin,
-  backupControllerClose,
+  setLastPubky,
+  removeKey,
+  deleteKey,
   forceSyncNow,
   getDataDirPath,
   openDataDir,
   createSnapshot,
 } from "./tauri-commands";
+export type { AppConfig } from "./tauri-commands";

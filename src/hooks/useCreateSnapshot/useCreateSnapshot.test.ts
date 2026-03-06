@@ -1,63 +1,57 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
 import { useCreateSnapshot } from "./useCreateSnapshot";
 import * as services from "@/services";
 
-vi.mock("@/services");
-
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
+vi.mock("@/services", () => ({
+  createSnapshot: vi.fn(),
+}));
 
 describe("useCreateSnapshot", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("should call createSnapshot and return path on mutate", async () => {
-    const mockPath = "/path/to/snapshot.zip";
-    vi.mocked(services.createSnapshot).mockResolvedValue(mockPath);
+  it("should call createSnapshot, toggle isPending, and return path", async () => {
+    let resolvePromise: (value: string) => void;
+    vi.mocked(services.createSnapshot).mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolvePromise = resolve;
+      }),
+    );
 
-    const { result } = renderHook(() => useCreateSnapshot(), {
-      wrapper: createWrapper(),
+    const { result } = renderHook(() => useCreateSnapshot());
+    expect(result.current.isPending).toBe(false);
+
+    let snapshotPromise: Promise<string>;
+    act(() => {
+      snapshotPromise = result.current.createSnapshotFn("my-pubky");
     });
 
-    let snapshotPath: string | undefined;
+    expect(result.current.isPending).toBe(true);
+
     await act(async () => {
-      snapshotPath = await result.current.mutateAsync();
+      resolvePromise!("/path/to/snapshot.zip");
+      await snapshotPromise;
     });
 
-    expect(services.createSnapshot).toHaveBeenCalled();
-    expect(snapshotPath).toBe(mockPath);
+    expect(result.current.isPending).toBe(false);
+    expect(services.createSnapshot).toHaveBeenCalledWith("my-pubky");
   });
 
-  it("should handle errors", async () => {
-    const mockError = { type: "Storage", message: "Disk full" };
-    vi.mocked(services.createSnapshot).mockRejectedValue(mockError);
+  it("should reset isPending and propagate errors", async () => {
+    vi.mocked(services.createSnapshot).mockRejectedValue(
+      new Error("Disk full"),
+    );
 
-    const { result } = renderHook(() => useCreateSnapshot(), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useCreateSnapshot());
 
     await expect(
       act(async () => {
-        await result.current.mutateAsync();
+        await result.current.createSnapshotFn("pubky");
       }),
-    ).rejects.toEqual(mockError);
+    ).rejects.toThrow("Disk full");
+
+    expect(result.current.isPending).toBe(false);
   });
 });

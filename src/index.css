@@ -15,6 +15,7 @@
   --color-text-primary: #ffffff;
   --color-text-secondary: #89898f;
   --color-text-muted: #eeeef6;
+  --color-text-light: #d4d4db;
 
   /* Status colors with transparency */
   --color-status-synced-bg: rgba(200, 255, 0, 0.16);

@@ -1,63 +1,57 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { renderHook, act } from "@testing-library/react";
 import { useOpenDataDir } from "./useOpenDataDir";
 import * as services from "@/services";
 
-vi.mock("@/services");
-
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
+vi.mock("@/services", () => ({
+  openDataDir: vi.fn(),
+}));
 
 describe("useOpenDataDir", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("should call openDataDir service when mutated", async () => {
-    vi.mocked(services.openDataDir).mockResolvedValue(undefined);
+  it("should call openDataDir and toggle isPending", async () => {
+    let resolvePromise: () => void;
+    vi.mocked(services.openDataDir).mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolvePromise = resolve;
+      }),
+    );
 
-    const { result } = renderHook(() => useOpenDataDir(), {
-      wrapper: createWrapper(),
+    const { result } = renderHook(() => useOpenDataDir());
+    expect(result.current.isPending).toBe(false);
+
+    let openPromise: Promise<void>;
+    act(() => {
+      openPromise = result.current.openDir();
     });
 
-    result.current.mutate();
+    expect(result.current.isPending).toBe(true);
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
+    await act(async () => {
+      resolvePromise!();
+      await openPromise;
     });
 
-    expect(services.openDataDir).toHaveBeenCalledOnce();
+    expect(result.current.isPending).toBe(false);
+    expect(services.openDataDir).toHaveBeenCalledTimes(1);
   });
 
-  it("should handle errors from openDataDir service", async () => {
-    const mockError = new Error("Failed to open directory");
-    vi.mocked(services.openDataDir).mockRejectedValue(mockError);
+  it("should reset isPending and propagate errors", async () => {
+    vi.mocked(services.openDataDir).mockRejectedValue(
+      new Error("Failed to open"),
+    );
 
-    const { result } = renderHook(() => useOpenDataDir(), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useOpenDataDir());
 
-    result.current.mutate();
+    await expect(
+      act(async () => {
+        await result.current.openDir();
+      }),
+    ).rejects.toThrow("Failed to open");
 
-    await waitFor(() => {
-      expect(result.current.isError).toBe(true);
-    });
-
-    expect(result.current.error).toBe(mockError);
+    expect(result.current.isPending).toBe(false);
   });
 });

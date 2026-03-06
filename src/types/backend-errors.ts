@@ -6,7 +6,6 @@
 export type BackendError =
   | { type: "Internal"; message: string }
   | { type: "HomeserverNotFound"; message: string }
-  | { type: "DataNotFound"; message: string }
   | { type: "InvalidPubkyFormat"; message: string }
   | { type: "Storage"; message: string }
   | { type: "Events"; message: string }
@@ -29,7 +28,6 @@ export function isBackendError(error: unknown): error is BackendError {
   const validTypes = [
     "Internal",
     "HomeserverNotFound",
-    "DataNotFound",
     "InvalidPubkyFormat",
     "Storage",
     "Events",
@@ -52,12 +50,6 @@ export function isHomeserverNotFoundError(
   error: BackendError,
 ): error is { type: "HomeserverNotFound"; message: string } {
   return error.type === "HomeserverNotFound";
-}
-
-export function isDataNotFoundError(
-  error: BackendError,
-): error is { type: "DataNotFound"; message: string } {
-  return error.type === "DataNotFound";
 }
 
 export function isInvalidPubkyFormatError(

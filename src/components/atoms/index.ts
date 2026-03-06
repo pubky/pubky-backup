@@ -16,4 +16,10 @@ export {
   ClockIcon,
   FolderIcon,
   SnapshotIcon,
+  NavSyncIcon,
+  NavActivityIcon,
+  NavKeysIcon,
+  NavSettingsIcon,
+  ChevronDownIcon,
+  TrashIcon,
 } from "./Icons";

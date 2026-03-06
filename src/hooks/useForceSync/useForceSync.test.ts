@@ -1,60 +1,57 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
 import { useForceSync } from "./useForceSync";
 import * as services from "@/services";
 
-vi.mock("@/services");
-
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
+vi.mock("@/services", () => ({
+  forceSyncNow: vi.fn(),
+}));
 
 describe("useForceSync", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("should call forceSyncNow on mutate", async () => {
-    vi.mocked(services.forceSyncNow).mockResolvedValue(undefined);
+  it("should call forceSyncNow and toggle isPending", async () => {
+    let resolvePromise: () => void;
+    vi.mocked(services.forceSyncNow).mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolvePromise = resolve;
+      }),
+    );
 
-    const { result } = renderHook(() => useForceSync(), {
-      wrapper: createWrapper(),
+    const { result } = renderHook(() => useForceSync());
+    expect(result.current.isPending).toBe(false);
+
+    let syncPromise: Promise<void>;
+    act(() => {
+      syncPromise = result.current.forceSync("test-pubky");
     });
+
+    expect(result.current.isPending).toBe(true);
 
     await act(async () => {
-      await result.current.mutateAsync();
+      resolvePromise!();
+      await syncPromise;
     });
 
-    expect(services.forceSyncNow).toHaveBeenCalled();
+    expect(result.current.isPending).toBe(false);
+    expect(services.forceSyncNow).toHaveBeenCalledWith("test-pubky");
   });
 
-  it("should handle errors", async () => {
-    const mockError = { type: "Backup", message: "Sync failed" };
-    vi.mocked(services.forceSyncNow).mockRejectedValue(mockError);
+  it("should reset isPending and propagate errors", async () => {
+    vi.mocked(services.forceSyncNow).mockRejectedValue(
+      new Error("Sync failed"),
+    );
 
-    const { result } = renderHook(() => useForceSync(), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useForceSync());
 
     await expect(
       act(async () => {
-        await result.current.mutateAsync();
+        await result.current.forceSync("pubky");
       }),
-    ).rejects.toEqual(mockError);
+    ).rejects.toThrow("Sync failed");
+
+    expect(result.current.isPending).toBe(false);
   });
 });

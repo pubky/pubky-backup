@@ -27,7 +27,7 @@ export function InfoCard({
       )}
     >
       <div className="col-span-1 row-span-1 text-text-secondary">{icon}</div>
-      <span className="col-span-1 row-span-1 text-xs font-medium uppercase text-text-secondary pt-0.5">
+      <span className="col-span-1 row-span-1 text-xs font-medium uppercase tracking-widest text-text-secondary pt-0.5">
         {label}
       </span>
       <div className="col-span-2 row-span-1 flex items-center gap-2">

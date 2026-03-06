@@ -1,0 +1,125 @@
+//! Resource fetching for backup synchronization.
+//!
+//! This module handles fetching resource data from Pubky homeservers during
+//! the backup process. It includes retry logic, error handling, and support
+//! for developer mode with mock data.
+//!
+//! # Responsibilities
+//!
+//! - Fetching resource data from homeservers
+//! - Retry logic with exponential backoff
+//! - Handling 404 responses gracefully
+//! - Mock data generation for developer mode
+
+use log::{debug, info};
+use pubky::{Pubky, PubkyResource};
+
+use super::error::SyncError;
+use super::events;
+use crate::is_developer_mode;
+use crate::utils::retry_with_backoff;
+
+/// Fetch data from a PubkyResource URL.
+///
+/// In developer mode, returns mock data instead of making real network calls.
+/// Handles 404 responses by returning empty data rather than an error.
+///
+/// # Arguments
+///
+/// * `pubky_client` - The Pubky client for making requests
+/// * `resource` - The resource to fetch
+///
+/// # Returns
+///
+/// The resource data as bytes. Returns an empty vector for 404 responses.
+///
+/// # Errors
+///
+/// Returns `SyncError::Internal` if the fetch fails for non-404 reasons.
+pub(super) async fn fetch_resource_data(
+    pubky_client: &Pubky,
+    resource: &PubkyResource,
+) -> Result<Vec<u8>, SyncError> {
+    if is_developer_mode() {
+        return Ok(events::get_mock_pubky_resource_data(&resource.to_string()));
+    }
+
+    let public_storage = pubky_client.public_storage();
+    let response = match retry_with_backoff(|| async {
+        public_storage
+            .get(resource)
+            .await
+            .map_err(|e| format!("{}", e))
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(e) => {
+            // Handle 404s gracefully - resource was deleted between event and fetch
+            if e.contains("404") || e.to_lowercase().contains("not found") {
+                info!("404 response: Returning empty data for {}", resource);
+                return Ok(Vec::new());
+            }
+            return Err(SyncError::Internal(format!(
+                "Failed to fetch data for {}: {}",
+                resource, e
+            )));
+        }
+    };
+
+    let data = response.bytes().await.map_err(|e| {
+        SyncError::Internal(format!(
+            "Failed to read response bytes for {}: {}",
+            resource, e
+        ))
+    })?;
+
+    let data_vec = data.to_vec();
+    debug!("Successfully fetched data: {} bytes", data_vec.len());
+    Ok(data_vec)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DEV_MODE_PUBKY;
+    use pubky::PublicKey;
+    use std::str::FromStr;
+
+    fn enable_developer_mode() {
+        std::env::set_var("PUBKY_DEVELOPER_MODE", "1");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_resource_data_developer_mode() {
+        enable_developer_mode();
+
+        let pubky_client = Pubky::testnet().expect("Failed to create testnet client");
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let resource = PubkyResource::new(pubky, "/pub/profile.json").unwrap();
+
+        let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();
+
+        // Should return mock data
+        assert!(!data.is_empty());
+        let data_str = String::from_utf8(data).unwrap();
+        assert!(data_str.contains("Mock User"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_resource_data_developer_mode_posts() {
+        enable_developer_mode();
+
+        let pubky_client = Pubky::testnet().expect("Failed to create testnet client");
+        let pubky = PublicKey::from_str(DEV_MODE_PUBKY).unwrap();
+        let resource = PubkyResource::new(pubky, "/pub/posts/123").unwrap();
+
+        let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();
+
+        // Should return mock post data with the ID
+        assert!(!data.is_empty());
+        let data_str = String::from_utf8(data).unwrap();
+        assert!(data_str.contains("123"));
+        assert!(data_str.contains("content"));
+    }
+}

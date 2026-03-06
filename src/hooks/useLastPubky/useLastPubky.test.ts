@@ -1,76 +1,56 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
 import { useLastPubky } from "./useLastPubky";
 import * as services from "@/services";
 
-vi.mock("@/services");
-
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(
-      QueryClientProvider,
-      { client: queryClient },
-      children,
-    );
-  };
-}
+vi.mock("@/services", () => ({
+  getLastPubky: vi.fn(),
+}));
 
 describe("useLastPubky", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("should fetch last used pubky", async () => {
-    const mockPubky = "pk:lastused123";
-    vi.mocked(services.getLastPubky).mockResolvedValue(mockPubky);
+  it("should fetch last pubky on mount and update state", async () => {
+    vi.mocked(services.getLastPubky).mockResolvedValue("pk:my-last-pubky");
 
-    const { result } = renderHook(() => useLastPubky(), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useLastPubky());
+
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.lastPubky).toBeNull();
 
     await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isLoading).toBe(false);
     });
 
-    expect(result.current.data).toBe(mockPubky);
-    expect(services.getLastPubky).toHaveBeenCalled();
+    expect(result.current.lastPubky).toBe("pk:my-last-pubky");
+    expect(services.getLastPubky).toHaveBeenCalledTimes(1);
   });
 
-  it("should handle null (no previous pubky)", async () => {
+  it("should handle null response", async () => {
     vi.mocked(services.getLastPubky).mockResolvedValue(null);
 
-    const { result } = renderHook(() => useLastPubky(), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useLastPubky());
 
     await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
+      expect(result.current.isLoading).toBe(false);
     });
 
-    expect(result.current.data).toBeNull();
+    expect(result.current.lastPubky).toBeNull();
   });
 
-  it("should handle errors", async () => {
-    const mockError = { type: "Storage", message: "Read failed" };
-    vi.mocked(services.getLastPubky).mockRejectedValue(mockError);
+  it("should handle errors gracefully", async () => {
+    vi.mocked(services.getLastPubky).mockRejectedValue(
+      new Error("Failed to get last pubky"),
+    );
 
-    const { result } = renderHook(() => useLastPubky(), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(() => useLastPubky());
 
     await waitFor(() => {
-      expect(result.current.isError).toBe(true);
+      expect(result.current.isLoading).toBe(false);
     });
 
-    expect(result.current.error).toEqual(mockError);
+    expect(result.current.lastPubky).toBeNull();
   });
 });

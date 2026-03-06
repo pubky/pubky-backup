@@ -16,27 +16,26 @@ export function StartupForm() {
   );
   const { setPubkyInputValue, setScreen, setHasAutoLoaded } =
     Stores.useUIStore.getState();
-  const initializeMutation = Hooks.useInitialize();
-  const { data: previousKeys = [] } = Hooks.usePreviousPubkyKeys();
-  const { data: lastPubky } = Hooks.useLastPubky();
+  const { addKey, isPending: isLoading } = Hooks.useAddKey();
+  const keys = Hooks.useKeys();
+  const { lastPubky } = Hooks.useLastPubky();
 
   const hasValue = pubkyInputValue.trim().length > 0;
-  const isLoading = initializeMutation.isPending;
 
-  const handleInitialize = useCallback(
+  const handleAddKey = useCallback(
     async (value: string) => {
       const trimmedValue = value.trim();
       if (!trimmedValue) return;
 
       try {
-        await initializeMutation.mutateAsync({ pubkyValue: trimmedValue });
+        await addKey({ pubkyValue: trimmedValue });
         setScreen("dashboard");
       } catch (error: unknown) {
-        Logger.error("StartupForm", "Initialization error", { error });
+        Logger.error("StartupForm", "Add key error", { error });
         Utils.handleBackendError(error);
       }
     },
-    [initializeMutation, setScreen],
+    [addKey, setScreen],
   );
 
   // Auto-load last pubky on mount (only once per app session)
@@ -44,62 +43,66 @@ export function StartupForm() {
     if (lastPubky && !hasAutoLoaded) {
       setHasAutoLoaded(true);
       setPubkyInputValue(lastPubky);
-      void handleInitialize(lastPubky);
+      void handleAddKey(lastPubky);
     }
   }, [
     lastPubky,
     hasAutoLoaded,
     setHasAutoLoaded,
     setPubkyInputValue,
-    handleInitialize,
+    handleAddKey,
   ]);
 
   const handleSubmit = () => {
-    void handleInitialize(pubkyInputValue);
+    void handleAddKey(pubkyInputValue);
   };
 
   // Determine placeholder based on available keys
   const placeholder =
-    previousKeys.length > 0 ? "Enter your pubky..." : "g1b6wp8bhhxt...";
+    keys.length > 0 ? "Enter your pubky..." : "g1b6wp8bhhxt...";
 
   return (
     <main className="flex flex-col items-center justify-start text-center relative">
       <Atoms.Card>
-        {/* Header */}
-        <div className="flex flex-col items-center gap-2 py-4">
-          <Atoms.PubkyLogo />
-          <h1 className="text-lg font-normal text-text-secondary m-0">
-            Securely mirror your Pubky data.
-          </h1>
-        </div>
+        <div className="flex flex-col items-stretch gap-8">
+          {/* Header */}
+          <div className="flex flex-col items-center gap-2 py-4">
+            <Atoms.PubkyLogo />
+            <h1 className="text-xl font-normal text-text-secondary m-0">
+              Securely mirror your Pubky data.
+            </h1>
+          </div>
 
-        {/* Form content */}
-        <div className="flex flex-col gap-4">
-          <Molecules.PubkyInput
-            value={pubkyInputValue}
-            onChange={setPubkyInputValue}
-            suggestions={previousKeys}
-            placeholder={placeholder}
-          />
-
-          <Atoms.Button
-            onClick={handleSubmit}
-            disabled={!hasValue || isLoading}
-            className={cn(
-              !hasValue && "opacity-30",
-              hasValue && !isLoading && "opacity-100",
-              isLoading && "opacity-100 bg-surface-dark border-border",
-            )}
-          >
-            <span className="text-sm font-bold text-pubky-purple">Backup</span>
-            <Atoms.RefreshIcon
-              className={cn(
-                "w-4 h-4 text-pubky-purple",
-                isLoading && "animate-spin",
-              )}
-              size={16}
+          {/* Form content */}
+          <div className="flex flex-col gap-4">
+            <Molecules.PubkyInput
+              value={pubkyInputValue}
+              onChange={setPubkyInputValue}
+              suggestions={keys}
+              placeholder={placeholder}
             />
-          </Atoms.Button>
+
+            <Atoms.Button
+              onClick={handleSubmit}
+              disabled={!hasValue || isLoading}
+              className={cn(
+                !hasValue && "opacity-30",
+                hasValue && !isLoading && "opacity-100",
+                isLoading && "opacity-100 bg-surface-dark border-border",
+              )}
+            >
+              <span className="text-sm font-bold text-pubky-purple">
+                Backup
+              </span>
+              <Atoms.RefreshIcon
+                className={cn(
+                  "w-4 h-4 text-pubky-purple",
+                  isLoading && "animate-spin",
+                )}
+                size={16}
+              />
+            </Atoms.Button>
+          </div>
         </div>
       </Atoms.Card>
     </main>
