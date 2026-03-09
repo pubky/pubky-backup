@@ -74,10 +74,11 @@
 //! }
 //! ```
 //!
-//! # Developer Mode
+//! # Developer Mode (Offline/No-Network Mode)
 //!
 //! Enable developer mode by setting the `PUBKY_DEVELOPER_MODE` environment variable.
-//! This uses mock data instead of real network calls, useful for testing and development.
+//! This skips network validation and returns empty data instead of making real network
+//! calls, useful for offline development and testing with arbitrary pubky keys.
 
 pub mod orchestrator;
 pub mod storage;
@@ -106,12 +107,14 @@ pub use pubky::{Event, EventType};
 
 use std::env;
 
-/// Developer mode mock pubky (for testing without real pubky)
-pub const DEV_MODE_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
+/// Test-only pubky constant (for unit tests that need a valid pubky string)
+#[cfg(test)]
+pub const TEST_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
 
 /// Check if developer mode is enabled via environment variable.
 ///
-/// Developer mode uses mock data instead of real network calls.
+/// Developer mode skips network validation and returns empty data instead of
+/// making real network calls, allowing offline development with arbitrary keys.
 /// Enable by setting `PUBKY_DEVELOPER_MODE` environment variable.
 ///
 /// # Example

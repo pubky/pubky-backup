@@ -71,7 +71,7 @@ let config = BackupManagerConfig {
     data_dir: Some(PathBuf::from("/custom/backup/path")),
     // Timeout for key validation/homeserver discovery in seconds (default: 30)
     validation_timeout_secs: 30,
-    // Enable developer mode with mock data (default: false)
+    // Enable developer mode / offline mode (default: false)
     developer_mode: false,
 };
 ```
@@ -125,12 +125,12 @@ while let Ok(update) = rx.recv().await {
 | `ForceSync` | Trigger an immediate sync (bypasses the interval timer) |
 | `Cancel` | Stop the backup controller gracefully |
 
-## Developer Mode
+## Developer Mode (Offline/No-Network)
 
-Enable developer mode to use mock data instead of real network calls:
+Enable developer mode to skip network validation and work offline:
 
 ```bash
 PUBKY_DEVELOPER_MODE=1 cargo run
 ```
 
-This is useful for testing and development without needing a real homeserver.
+In this mode, any valid pubky key is accepted without homeserver validation, and sync operations return empty data (no network calls). Existing backed-up data on disk remains readable. This is useful for GUI development and testing without needing a real homeserver.

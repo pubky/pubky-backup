@@ -14,7 +14,7 @@ use tauri::{
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_developer_mode, BackupManager, BackupManagerConfig, KeyState, KeyStatus, DEV_MODE_PUBKY,
+    is_developer_mode, BackupManager, BackupManagerConfig, KeyState, KeyStatus,
 };
 
 /// Global manager instance
@@ -65,15 +65,9 @@ async fn get_or_create_manager() -> Result<&'static BackupManager, BackupAppErro
 /// Add a key to start backing up.
 #[tauri::command]
 async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
-    // Handle developer mode
-    let pubky = if is_developer_mode() {
-        info!("Developer mode: using dev pubky");
-        PublicKey::from_str(DEV_MODE_PUBKY).expect("Dev mode pubky is valid")
-    } else {
-        PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
-            message: e.to_string(),
-        })?
-    };
+    let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
+        message: e.to_string(),
+    })?;
 
     // Get or create the manager
     let manager = get_or_create_manager().await?;
