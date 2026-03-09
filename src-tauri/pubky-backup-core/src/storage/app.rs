@@ -6,7 +6,7 @@ use super::common::Storage;
 use super::error::StorageError;
 use super::keys::{KeyStorage, KeysStorage};
 use super::migration::migrate_old_structure;
-use log::{debug, error};
+use log::{debug, error, warn};
 use pubky::{PubkyResource, PublicKey};
 use std::{
     path::{Path, PathBuf},
@@ -22,6 +22,7 @@ pub(crate) const KEYS_DIR_NAME: &str = "keys";
 
 // App-level file names
 pub(crate) const LAST_PUBKY_FILENAME: &str = "last_pubky";
+pub(crate) const SYNC_INTERVAL_FILENAME: &str = "sync_interval";
 pub(crate) const ERROR_LOG_FILENAME: &str = "error.log";
 
 // Per-key directory/file names (re-exported from keys module)
@@ -112,6 +113,36 @@ impl AppDataStorage {
         self.config_storage.delete(LAST_PUBKY_FILENAME).await?;
         debug!("Last pubky value cleared");
         Ok(())
+    }
+
+    pub async fn write_sync_interval(&self, interval_secs: u64) -> Result<(), StorageError> {
+        self.config_storage
+            .write(SYNC_INTERVAL_FILENAME, interval_secs.to_string())
+            .await?;
+        debug!("Sync interval written: {}s", interval_secs);
+        Ok(())
+    }
+
+    pub async fn read_sync_interval(&self) -> Result<Option<u64>, StorageError> {
+        match self.config_storage.read(SYNC_INTERVAL_FILENAME).await {
+            Ok(data) => {
+                let value_str = String::from_utf8(data.to_vec())?;
+                match value_str.trim().parse::<u64>() {
+                    Ok(secs) => Ok(Some(secs)),
+                    Err(_) => {
+                        warn!(
+                            "Failed to parse sync interval '{}', using default",
+                            value_str.trim()
+                        );
+                        Ok(None)
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("No sync interval file found: {}", e);
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -374,6 +405,18 @@ impl AppStorage {
         self.app_data.clear_last_pubky().await
     }
 
+    /// Write the sync interval to storage.
+    pub async fn write_sync_interval(&self, interval_secs: u64) -> Result<(), StorageError> {
+        self.app_data.write_sync_interval(interval_secs).await
+    }
+
+    /// Read the sync interval from storage.
+    ///
+    /// Returns `None` if no interval has been stored.
+    pub async fn read_sync_interval(&self) -> Result<Option<u64>, StorageError> {
+        self.app_data.read_sync_interval().await
+    }
+
     /// Create a snapshot (zip archive) of the backed-up data for a specific pubky.
     ///
     /// Creates a compressed zip file containing all data for the given pubky.
@@ -599,6 +642,44 @@ mod tests {
         assert!(result.is_err(), "Should fail when no backup data exists");
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("No files to snapshot"));
+    }
+
+    #[tokio::test]
+    async fn test_write_and_read_sync_interval() {
+        let (storage, _temp_dir) = create_test_storage();
+
+        // Initially should be None
+        let interval = storage.read_sync_interval().await.unwrap();
+        assert!(interval.is_none());
+
+        // Write an interval
+        storage.write_sync_interval(600).await.unwrap();
+
+        // Read it back
+        let interval = storage.read_sync_interval().await.unwrap();
+        assert_eq!(interval, Some(600));
+
+        // Overwrite with a new value
+        storage.write_sync_interval(1800).await.unwrap();
+        let interval = storage.read_sync_interval().await.unwrap();
+        assert_eq!(interval, Some(1800));
+    }
+
+    #[tokio::test]
+    async fn test_read_sync_interval_with_corrupted_file() {
+        let (storage, temp_dir) = create_test_storage();
+
+        // Write a non-numeric value directly to the sync_interval file
+        let config_dir = temp_dir.path().join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("sync_interval"), "not_a_number").unwrap();
+
+        // Should return None (graceful fallback), not error
+        let interval = storage.read_sync_interval().await.unwrap();
+        assert!(
+            interval.is_none(),
+            "Should return None for unparseable sync interval"
+        );
     }
 
     #[tokio::test]

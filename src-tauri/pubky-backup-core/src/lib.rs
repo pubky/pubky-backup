@@ -96,7 +96,8 @@ pub use storage::{get_data_directory, AppStorage, StorageError};
 
 // Re-export main types from sync module
 pub use sync::{
-    BackupController, ControllerCommand, ControllerStatus, SyncError, SYNC_INTERVAL_SECONDS,
+    BackupController, ControllerCommand, ControllerStatus, SyncError,
+    DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS,
 };
 
 // Re-export utility functions

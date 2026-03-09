@@ -13,6 +13,7 @@ import { isBackendError } from "@/types/backend-errors";
  */
 export interface AppConfig {
   developer_mode: boolean;
+  sync_interval_secs: number;
 }
 
 /**
@@ -159,6 +160,19 @@ export async function openDataDir(): Promise<void> {
 export async function createSnapshot(pubkyStr: string): Promise<string> {
   try {
     return await invoke<string>("create_snapshot", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
+ * Set the sync interval in seconds and restart all controllers
+ * @param intervalSecs - The new sync interval in seconds
+ * @throws {BackendError} If setting interval fails
+ */
+export async function setSyncInterval(intervalSecs: number): Promise<void> {
+  try {
+    await invoke("set_sync_interval", { intervalSecs });
   } catch (error: unknown) {
     throw normalizeError(error);
   }

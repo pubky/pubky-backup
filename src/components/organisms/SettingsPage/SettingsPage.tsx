@@ -1,22 +1,44 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import * as Atoms from "@/components/atoms";
 import { cn } from "@/lib/utils";
+import { getConfig, setSyncInterval } from "@/services/tauri-commands";
 
 const SYNC_INTERVALS = [
-  { label: "5 min", value: 5 },
-  { label: "10 min", value: 10 },
-  { label: "15 min", value: 15 },
-  { label: "30 min", value: 30 },
-  { label: "45 min", value: 45 },
-  { label: "60 min", value: 60 },
+  { label: "30 sec", value: 30 },
+  { label: "5 min", value: 300 },
+  { label: "10 min", value: 600 },
+  { label: "15 min", value: 900 },
+  { label: "30 min", value: 1800 },
+  { label: "60 min", value: 3600 },
 ];
 
 export function SettingsPage() {
-  // Local form state (GUI only — no backend wiring yet)
   const [backupLocation, _setBackupLocation] = useState(
     "/Documents/PubkyBackup/",
   );
-  const [selectedInterval, setSelectedInterval] = useState(5);
+  const [selectedInterval, setSelectedInterval] = useState<number | null>(null);
+
+  // Load current interval from backend on mount
+  useEffect(() => {
+    getConfig()
+      .then((config) => {
+        setSelectedInterval(config.sync_interval_secs);
+      })
+      .catch((err) => {
+        console.error("Failed to load config:", err);
+      });
+  }, []);
+
+  const handleIntervalChange = async (secs: number) => {
+    const previousInterval = selectedInterval;
+    setSelectedInterval(secs);
+    try {
+      await setSyncInterval(secs);
+    } catch (err) {
+      console.error("Failed to set sync interval:", err);
+      setSelectedInterval(previousInterval);
+    }
+  };
 
   const handleBrowse = () => {
     // TODO: wire to Tauri file dialog
@@ -61,16 +83,21 @@ export function SettingsPage() {
           </label>
           <div className="grid grid-cols-3 gap-4">
             {SYNC_INTERVALS.map(({ label, value }) => {
+              const isLoading = selectedInterval === null;
               const isSelected = selectedInterval === value;
               return (
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setSelectedInterval(value)}
+                  disabled={isLoading}
+                  onClick={() => handleIntervalChange(value)}
                   className={cn(
-                    "flex items-center justify-center gap-2 h-10 rounded-full cursor-pointer transition-all duration-200",
+                    "flex items-center justify-center gap-2 h-10 rounded-full transition-all duration-200",
                     "shadow-[0_1px_2px_rgba(5,5,10,0.2)]",
                     "bg-pubky-purple/15",
+                    isLoading
+                      ? "opacity-50 cursor-not-allowed"
+                      : "cursor-pointer",
                     isSelected
                       ? "border border-pubky-purple"
                       : "border border-border hover:border-pubky-purple/50",

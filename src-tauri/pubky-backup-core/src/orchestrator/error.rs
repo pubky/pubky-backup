@@ -29,6 +29,10 @@ pub enum OrchestratorError {
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
 
+    /// Invalid configuration value
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
+
     /// Internal orchestration error
     #[error("Internal error: {0}")]
     Internal(String),

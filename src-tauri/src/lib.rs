@@ -26,6 +26,7 @@ static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 #[derive(Clone, Serialize)]
 pub struct AppConfig {
     developer_mode: bool,
+    sync_interval_secs: u64,
 }
 
 fn get_manager() -> Result<&'static BackupManager, BackupAppError> {
@@ -108,10 +109,12 @@ async fn get_all_key_states() -> Result<HashMap<String, KeyState>, BackupAppErro
 
 /// Get application config (one-time fetch)
 #[tauri::command]
-fn get_config() -> AppConfig {
-    AppConfig {
+async fn get_config() -> Result<AppConfig, BackupAppError> {
+    let manager = get_or_create_manager().await?;
+    Ok(AppConfig {
         developer_mode: is_developer_mode(),
-    }
+        sync_interval_secs: manager.get_sync_interval(),
+    })
 }
 
 /// Get list of pubky keys that have data stored
@@ -217,6 +220,16 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppErro
     app_handle
         .opener()
         .open_path(backup_dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(BackupAppError::internal)
+}
+
+/// Set the sync interval in seconds and restart all controllers.
+#[tauri::command]
+async fn set_sync_interval(interval_secs: u64) -> Result<(), BackupAppError> {
+    let manager = get_manager()?;
+    manager
+        .set_sync_interval(interval_secs)
+        .await
         .map_err(BackupAppError::internal)
 }
 
@@ -382,7 +395,8 @@ pub fn run() {
             force_sync_now,
             get_data_dir_path,
             open_data_dir,
-            create_snapshot
+            create_snapshot,
+            set_sync_interval
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

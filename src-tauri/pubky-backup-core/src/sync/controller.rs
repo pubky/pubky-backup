@@ -35,8 +35,11 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time;
 
+/// Minimum allowed sync interval in seconds.
+pub const MIN_SYNC_INTERVAL_SECONDS: u64 = 10;
+
 /// Default sync interval in seconds between backup batches.
-pub const SYNC_INTERVAL_SECONDS: u64 = 30;
+pub const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 30;
 
 /// Messages that can be sent to control the backup controller.
 ///
@@ -164,6 +167,8 @@ pub struct BackupController {
     status_tx: Option<broadcast::Sender<ControllerStatus>>,
     /// Initial delay before starting the first sync (for staggering multiple controllers)
     initial_delay: Duration,
+    /// Interval between sync batches
+    sync_interval: Duration,
 }
 
 impl BackupController {
@@ -199,6 +204,7 @@ impl BackupController {
             control_rx,
             status_tx,
             initial_delay: Duration::ZERO,
+            sync_interval: Duration::from_secs(DEFAULT_SYNC_INTERVAL_SECONDS),
         }
     }
 
@@ -216,6 +222,12 @@ impl BackupController {
         self
     }
 
+    /// Sets the sync interval between backup batches.
+    pub fn with_sync_interval(mut self, interval: Duration) -> Self {
+        self.sync_interval = interval;
+        self
+    }
+
     /// Runs the backup controller loop.
     ///
     /// This method consumes `self` and runs until:
@@ -228,7 +240,7 @@ impl BackupController {
     /// 2. Poll for new events from the pubky's homeserver
     /// 3. Download and store new/updated resources
     /// 4. Delete resources that have been removed
-    /// 5. Wait for the next sync interval (30 seconds)
+    /// 5. Wait for the next sync interval
     /// 6. Emit status updates via the status channel
     ///
     /// During the starting phase, the controller responds to commands:
@@ -282,7 +294,7 @@ impl BackupController {
         }
 
         // Main sync loop
-        let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
+        let mut interval = time::interval(self.sync_interval);
 
         loop {
             tokio::select! {
@@ -302,7 +314,7 @@ impl BackupController {
                             });
                             interval = time::interval_at(
                                 time::Instant::now(),
-                                Duration::from_secs(SYNC_INTERVAL_SECONDS)
+                                self.sync_interval
                             );
                             // Continue syncing without sending Idle
                             continue;
@@ -346,7 +358,7 @@ impl BackupController {
                             // Reset interval to trigger immediately
                             interval = time::interval_at(
                                 time::Instant::now(),
-                                Duration::from_secs(SYNC_INTERVAL_SECONDS)
+                                self.sync_interval
                             );
                         }
                         None => {
