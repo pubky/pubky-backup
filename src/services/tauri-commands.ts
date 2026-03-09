@@ -166,7 +166,7 @@ export async function createSnapshot(pubkyStr: string): Promise<string> {
 }
 
 /**
- * Set the sync interval in seconds and restart all controllers
+ * Set the sync interval in seconds. Controllers pick up the new value dynamically.
  * @param intervalSecs - The new sync interval in seconds
  * @throws {BackendError} If setting interval fails
  */

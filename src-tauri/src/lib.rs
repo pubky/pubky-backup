@@ -223,7 +223,7 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppErro
         .map_err(BackupAppError::internal)
 }
 
-/// Set the sync interval in seconds and restart all controllers.
+/// Set the sync interval in seconds. Controllers pick up the new value dynamically.
 #[tauri::command]
 async fn set_sync_interval(interval_secs: u64) -> Result<(), BackupAppError> {
     let manager = get_manager()?;

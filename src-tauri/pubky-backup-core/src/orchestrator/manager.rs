@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use log::{error, info, warn};
 use parking_lot::RwLock;
 use pubky::{Pubky, PublicKey};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::discovery;
@@ -92,6 +92,8 @@ pub struct BackupManager {
     update_tx: broadcast::Sender<KeyUpdate>,
     /// Shared status channel sender - all controllers send to this channel
     status_tx: broadcast::Sender<ControllerStatus>,
+    /// Shared sync interval - controllers read this dynamically
+    sync_interval_tx: watch::Sender<u64>,
 }
 
 impl BackupManager {
@@ -140,6 +142,9 @@ impl BackupManager {
         // Create shared status channel - all controllers send to this channel
         let (status_tx, status_rx) = broadcast::channel(100);
 
+        // Create shared sync interval watch channel
+        let (sync_interval_tx, _) = watch::channel(sync_interval_secs);
+
         let inner = Arc::new(RwLock::new(ManagerInner {
             keys: HashMap::new(),
             pubky_client,
@@ -152,6 +157,7 @@ impl BackupManager {
             config,
             update_tx: update_tx.clone(),
             status_tx,
+            sync_interval_tx,
         };
 
         // Spawn the centralized status listener task
@@ -425,9 +431,11 @@ impl BackupManager {
         inner.sync_interval_secs
     }
 
-    /// Set the sync interval and restart all controllers.
+    /// Set the sync interval for all controllers.
     ///
-    /// Persists the new interval to disk, then restarts controllers.
+    /// Persists the new interval to disk, then notifies all running controllers
+    /// via a shared watch channel. Controllers pick up the new interval on their
+    /// next sleep cycle — no restart required.
     pub async fn set_sync_interval(&self, interval_secs: u64) -> Result<(), OrchestratorError> {
         if interval_secs < crate::sync::MIN_SYNC_INTERVAL_SECONDS {
             return Err(OrchestratorError::InvalidConfig(format!(
@@ -449,51 +457,9 @@ impl BackupManager {
             inner.sync_interval_secs = interval_secs;
         }
 
-        // Collect all pubkeys and their current state to restart
-        let keys_to_restart: Vec<(PublicKey, KeyState)> = {
-            let inner = self.inner.read();
-            inner
-                .keys
-                .iter()
-                .map(|(pk, mk)| (pk.clone(), mk.state.clone()))
-                .collect()
-        };
-
-        // Broadcast Starting status for all keys so the UI can show a loading state
-        for (pubky, state) in &keys_to_restart {
-            let _ = self.update_tx.send(KeyUpdate {
-                pubky: pubky.clone(),
-                state: KeyState {
-                    status: KeyStatus::Starting,
-                    data_size: state.data_size,
-                    last_sync: state.last_sync,
-                    ..Default::default()
-                },
-            });
-        }
-
-        // Stop all controllers first, then restart them.
-        // If start_controller fails, the key remains on disk and will be
-        // re-discovered on the next app restart.
-        let mut stopped_keys = Vec::new();
-        for (pubky, _) in &keys_to_restart {
-            if let Err(e) = self.stop_controller(pubky) {
-                warn!(
-                    "Failed to stop controller for {} during interval change: {}",
-                    pubky, e
-                );
-            } else {
-                stopped_keys.push(pubky.clone());
-            }
-        }
-        for pubky in stopped_keys {
-            if let Err(e) = self.start_controller(pubky.clone()).await {
-                error!(
-                    "Failed to restart controller for {} after interval change: {}",
-                    pubky, e
-                );
-            }
-        }
+        // Notify all controllers of the new interval via the shared watch channel.
+        // Controllers will pick up the change on their next sleep cycle.
+        let _ = self.sync_interval_tx.send(interval_secs);
 
         info!("Sync interval updated to {}s", interval_secs);
         Ok(())
@@ -530,7 +496,6 @@ impl BackupManager {
             state: initial_state.clone(),
         });
 
-        // Get pubky client and sync interval
         let (pubky_client, sync_interval_secs, key_count) = {
             let inner = self.inner.read();
             (
@@ -555,9 +520,9 @@ impl BackupManager {
             pubky_client,
             Some(control_rx),
             Some(self.status_tx.clone()),
+            self.sync_interval_tx.subscribe(),
         )
-        .with_initial_delay(initial_delay)
-        .with_sync_interval(std::time::Duration::from_secs(sync_interval_secs));
+        .with_initial_delay(initial_delay);
 
         // Spawn the controller task - delay is now handled inside controller.run()
         let task_handle = tokio::spawn(async move {
@@ -1377,7 +1342,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_sync_interval_restarts_controllers() {
+    async fn test_set_sync_interval_keeps_controllers_running() {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         let manager = BackupManager::new(config).await.unwrap();
@@ -1385,10 +1350,10 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         manager.add_key(pubky.clone()).await.unwrap();
 
-        // Change interval — controller should be restarted
+        // Change interval — controller should keep running (no restart)
         manager.set_sync_interval(600).await.unwrap();
 
-        // Key should still be managed after restart
+        // Key should still be managed
         assert!(manager.get_key_state(&pubky).is_some());
         assert_eq!(manager.get_keys().len(), 1);
     }
@@ -1476,39 +1441,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_sync_interval_broadcasts_starting_status() {
+    async fn test_config_sync_interval_used_when_no_stored_value() {
         let temp_dir = TempDir::new().unwrap();
-        let config = create_test_config(&temp_dir);
+
+        // Create a config with a non-default interval and no stored value on disk
+        enable_developer_mode();
+        let config = BackupManagerConfig {
+            data_dir: Some(temp_dir.path().to_path_buf()),
+            validation_timeout_secs: 30,
+            developer_mode: true,
+            sync_interval_secs: 900,
+        };
         let manager = BackupManager::new(config).await.unwrap();
 
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        manager.add_key(pubky.clone()).await.unwrap();
-
-        // Wait for initial Starting status to pass
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        let mut rx = manager.subscribe();
-
-        // Change interval — should broadcast Starting for the key
-        manager.set_sync_interval(600).await.unwrap();
-
-        // Expect a Starting status update
-        let update = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            loop {
-                if let Ok(update) = rx.recv().await {
-                    if update.pubky == pubky && matches!(update.state.status, KeyStatus::Starting) {
-                        return update;
-                    }
-                }
-            }
-        })
-        .await
-        .expect("Should receive Starting status during interval change");
-
-        assert_eq!(update.pubky, pubky);
-        assert!(
-            matches!(update.state.status, KeyStatus::Starting),
-            "Status should be Starting during controller restart"
+        assert_eq!(
+            manager.get_sync_interval(),
+            900,
+            "Should use config.sync_interval_secs when no stored value exists"
         );
     }
 }

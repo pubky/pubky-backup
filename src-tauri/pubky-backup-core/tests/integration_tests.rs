@@ -19,7 +19,13 @@ use serial_test::serial;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tempfile::TempDir;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
+
+use pubky_backup_core::sync::DEFAULT_SYNC_INTERVAL_SECONDS;
+
+fn create_test_interval_rx() -> (watch::Sender<u64>, watch::Receiver<u64>) {
+    watch::channel(DEFAULT_SYNC_INTERVAL_SECONDS)
+}
 
 /// Helper to create a storage instance with a temporary directory
 fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
@@ -78,6 +84,7 @@ async fn run_controller_until_idle(
         pubky_client,
         Some(control_rx),
         Some(status_tx),
+        create_test_interval_rx().1,
     );
 
     // Spawn the controller
@@ -245,6 +252,7 @@ async fn test_backup_controller_run_loop() {
         pubky_client,
         Some(control_rx),
         Some(status_tx),
+        create_test_interval_rx().1,
     );
 
     // Spawn the controller
