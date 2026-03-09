@@ -1,7 +1,14 @@
 import { useState, useEffect } from "react";
 import * as Atoms from "@/components/atoms";
+import * as Stores from "@/stores";
 import { cn } from "@/lib/utils";
-import { getConfig, setSyncInterval } from "@/services/tauri-commands";
+import { open } from "@tauri-apps/plugin-dialog";
+import {
+  getConfig,
+  setSyncInterval,
+  setBackupLocation,
+} from "@/services/tauri-commands";
+import { handleBackendError } from "@/utils/error-handler";
 
 const SYNC_INTERVALS = [
   { label: "30 sec", value: 30 },
@@ -13,16 +20,19 @@ const SYNC_INTERVALS = [
 ];
 
 export function SettingsPage() {
-  const [backupLocation, _setBackupLocation] = useState(
-    "/Documents/PubkyBackup/",
+  const [backupLocation, setBackupLocationState] = useState<string | null>(
+    null,
   );
+  const [isMoving, setIsMoving] = useState(false);
   const [selectedInterval, setSelectedInterval] = useState<number | null>(null);
+  const setNavDisabled = Stores.useUIStore((s) => s.setNavDisabled);
 
-  // Load current interval from backend on mount
+  // Load current config from backend on mount
   useEffect(() => {
     getConfig()
       .then((config) => {
         setSelectedInterval(config.sync_interval_secs);
+        setBackupLocationState(config.keys_dir);
       })
       .catch((err) => {
         console.error("Failed to load config:", err);
@@ -40,8 +50,28 @@ export function SettingsPage() {
     }
   };
 
-  const handleBrowse = () => {
-    // TODO: wire to Tauri file dialog
+  const handleBrowse = async () => {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Choose Backup Location",
+    });
+
+    if (!selected) return; // User cancelled
+
+    const previousLocation = backupLocation;
+    setIsMoving(true);
+    setNavDisabled(true);
+    try {
+      const newKeysDir = await setBackupLocation(selected);
+      setBackupLocationState(newKeysDir);
+    } catch (err) {
+      handleBackendError(err);
+      setBackupLocationState(previousLocation);
+    } finally {
+      setIsMoving(false);
+      setNavDisabled(false);
+    }
   };
 
   return (
@@ -63,21 +93,33 @@ export function SettingsPage() {
           <label className="text-xs font-medium tracking-[0.1em] uppercase text-text-secondary text-left">
             Choose Backup location
           </label>
-          <div className="flex items-center bg-black/10 border border-dashed border-border-dashed rounded-lg px-6 py-4 gap-1">
-            <span className="flex-1 text-base font-medium leading-normal text-white text-left truncate">
-              {backupLocation}
-            </span>
-            <Atoms.IconButton
-              onClick={handleBrowse}
-              className="w-9 h-9 rounded-full bg-surface-light shadow-[0_1px_2px_rgba(5,5,10,0.2)] flex items-center justify-center"
-            >
-              <Atoms.FolderIcon size={20} className="text-text-light" />
-            </Atoms.IconButton>
-          </div>
+          {isMoving ? (
+            <div className="flex items-center bg-[#303034] rounded-lg px-6 py-[18px] gap-6">
+              <span className="text-sm font-bold leading-normal text-white">
+                Copying data to new location...
+              </span>
+              <div className="flex-1 h-2 rounded-full bg-black/80 overflow-hidden">
+                <div className="h-full rounded-full bg-pubky-purple animate-progress-indeterminate" />
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center bg-black/10 border border-dashed border-border-dashed rounded-lg px-6 py-4 gap-1">
+              <span className="flex-1 text-base font-medium leading-normal text-white text-left truncate">
+                {backupLocation ?? "Loading..."}
+              </span>
+              <Atoms.IconButton
+                onClick={handleBrowse}
+                disabled={backupLocation === null}
+                className="w-9 h-9 rounded-full bg-surface-light shadow-[0_1px_2px_rgba(5,5,10,0.2)] flex items-center justify-center"
+              >
+                <Atoms.FolderIcon size={20} className="text-text-light" />
+              </Atoms.IconButton>
+            </div>
+          )}
         </div>
 
         {/* Sync Interval */}
-        <div className="flex flex-col gap-4">
+        <div className={cn("flex flex-col gap-4", isMoving && "opacity-30 pointer-events-none")}>
           <label className="text-xs font-medium tracking-[0.1em] uppercase text-text-secondary text-left">
             Sync Interval
           </label>
@@ -89,7 +131,7 @@ export function SettingsPage() {
                 <button
                   key={value}
                   type="button"
-                  disabled={isLoading}
+                  disabled={isLoading || isMoving}
                   onClick={() => handleIntervalChange(value)}
                   className={cn(
                     "flex items-center justify-center gap-2 h-10 rounded-full transition-all duration-200",

@@ -22,7 +22,7 @@ export interface DashboardState {
   dataSize: number;
   lastSyncTime: number | null;
   countdownText: string;
-  dataDirPath: string | null;
+  backupLocation: string | null;
   keys: string[];
   statusInfo: StatusInfo;
 }
@@ -53,7 +53,7 @@ export function useDashboardState(): DashboardState {
   );
 
   const appState = Hooks.useAppState();
-  const { dataDirPath } = Hooks.useDataDirPath();
+  const { backupLocation } = Hooks.useBackupLocation();
   const keys = Hooks.useKeys();
 
   const pubky = appState.pubky;
@@ -101,7 +101,7 @@ export function useDashboardState(): DashboardState {
     dataSize,
     lastSyncTime,
     countdownText,
-    dataDirPath,
+    backupLocation,
     keys,
     statusInfo,
   };

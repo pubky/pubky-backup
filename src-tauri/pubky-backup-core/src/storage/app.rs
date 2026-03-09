@@ -6,7 +6,7 @@ use super::common::Storage;
 use super::error::StorageError;
 use super::keys::{KeyStorage, KeysStorage};
 use super::migration::migrate_old_structure;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use pubky::{PubkyResource, PublicKey};
 use std::{
     path::{Path, PathBuf},
@@ -23,6 +23,7 @@ pub(crate) const KEYS_DIR_NAME: &str = "keys";
 // App-level file names
 pub(crate) const LAST_PUBKY_FILENAME: &str = "last_pubky";
 pub(crate) const SYNC_INTERVAL_FILENAME: &str = "sync_interval";
+pub(crate) const KEYS_LOCATION_FILENAME: &str = "keys_location";
 pub(crate) const ERROR_LOG_FILENAME: &str = "error.log";
 
 // Per-key directory/file names (re-exported from keys module)
@@ -123,6 +124,50 @@ impl AppDataStorage {
         Ok(())
     }
 
+    /// Read keys_location synchronously (needed during construction).
+    pub fn read_keys_location(&self) -> Option<PathBuf> {
+        let path = self.config_dir.join(KEYS_LOCATION_FILENAME);
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                use std::ffi::OsStr;
+                #[cfg(unix)]
+                let os_str = {
+                    use std::os::unix::ffi::OsStrExt;
+                    OsStr::from_bytes(&bytes)
+                };
+                #[cfg(not(unix))]
+                let os_str = OsStr::new(std::str::from_utf8(&bytes).ok()?);
+
+                let path = PathBuf::from(os_str);
+                if path.as_os_str().is_empty() {
+                    None
+                } else {
+                    Some(path)
+                }
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Write keys_location synchronously (needed during construction).
+    pub fn write_keys_location(&self, keys_dir: &Path) -> Result<(), StorageError> {
+        std::fs::create_dir_all(&self.config_dir).map_err(|e| {
+            StorageError::DirectoryCreation(format!("{}: {}", self.config_dir.display(), e))
+        })?;
+        #[cfg(unix)]
+        let bytes = {
+            use std::os::unix::ffi::OsStrExt;
+            keys_dir.as_os_str().as_bytes().to_vec()
+        };
+        #[cfg(not(unix))]
+        let bytes = keys_dir.to_string_lossy().as_bytes().to_vec();
+
+        std::fs::write(self.config_dir.join(KEYS_LOCATION_FILENAME), bytes)
+            .map_err(|e| StorageError::Internal(format!("Failed to write keys_location: {}", e)))?;
+        debug!("Keys location written: {}", keys_dir.display());
+        Ok(())
+    }
+
     pub async fn read_sync_interval(&self) -> Result<Option<u64>, StorageError> {
         match self.config_storage.read(SYNC_INTERVAL_FILENAME).await {
             Ok(data) => {
@@ -207,27 +252,42 @@ impl AppStorage {
     /// - Storage initialization fails
     pub fn new() -> Result<Self, StorageError> {
         let data_dir = get_data_directory()?;
-        // Migrate from old structure if needed
-        migrate_old_structure(&data_dir)?;
-
-        Ok(AppStorage {
-            app_data: AppDataStorage::new(&data_dir)?,
-            keys_storage: KeysStorage::new(&data_dir)?,
-            data_dir,
-        })
+        Self::init(data_dir)
     }
 
     /// Create AppStorage with a custom data directory path.
     ///
     /// This is primarily useful for testing with temporary directories.
     pub fn new_with_path(data_dir: &Path) -> Result<Self, StorageError> {
+        Self::init(data_dir.to_path_buf())
+    }
+
+    fn init(data_dir: PathBuf) -> Result<Self, StorageError> {
         // Migrate from old structure if needed
-        migrate_old_structure(data_dir)?;
+        migrate_old_structure(&data_dir)?;
+
+        let app_data = AppDataStorage::new(&data_dir)?;
+
+        // Resolve keys directory: use stored location if valid, otherwise default
+        let keys_dir = match app_data.read_keys_location() {
+            Some(path) if path.exists() => path,
+            other => {
+                if let Some(path) = other {
+                    warn!(
+                        "Stored keys location {} does not exist, falling back to default",
+                        path.display()
+                    );
+                }
+                let default = data_dir.join(KEYS_DIR_NAME);
+                app_data.write_keys_location(&default)?;
+                default
+            }
+        };
 
         Ok(AppStorage {
-            app_data: AppDataStorage::new(data_dir)?,
-            keys_storage: KeysStorage::new(data_dir)?,
-            data_dir: data_dir.to_path_buf(),
+            app_data,
+            keys_storage: KeysStorage::new_with_keys_dir(&keys_dir)?,
+            data_dir,
         })
     }
 
@@ -371,13 +431,14 @@ impl AppStorage {
         self.keys_storage.list_keys()
     }
 
-    /// Get the data directory path.
-    ///
-    /// # Returns
-    ///
-    /// Path to the root data directory
+    /// Get the root data directory path (e.g. `~/.pubky-backup`).
     pub fn get_backup_data_dir(&self) -> Result<PathBuf, StorageError> {
         Ok(self.data_dir.clone())
+    }
+
+    /// Get the current keys directory path.
+    pub fn keys_dir(&self) -> &Path {
+        self.keys_storage.keys_dir()
     }
 
     /// Write the last used pubky to storage.
@@ -403,6 +464,95 @@ impl AppStorage {
     /// Clear the last used pubky from storage.
     pub async fn clear_last_pubky(&self) -> Result<(), StorageError> {
         self.app_data.clear_last_pubky().await
+    }
+
+    /// Read the current keys location from config.
+    pub fn read_keys_location(&self) -> Option<PathBuf> {
+        self.app_data.read_keys_location()
+    }
+
+    /// Write the keys location to config.
+    pub fn write_keys_location(&self, keys_dir: &Path) -> Result<(), StorageError> {
+        self.app_data.write_keys_location(keys_dir)
+    }
+
+    /// Move the keys directory to a new location.
+    ///
+    /// Tries `fs::rename` first (instant on same filesystem).
+    /// Falls back to recursive copy + delete for cross-filesystem moves.
+    /// Updates the `keys_location` config file on success.
+    ///
+    /// **Must be called with no active controllers** — the caller is
+    /// responsible for shutting down the BackupManager first.
+    pub fn move_keys(&self, new_parent: &Path) -> Result<PathBuf, StorageError> {
+        let old_keys_dir = self.keys_dir();
+        let new_keys_dir = new_parent.join(KEYS_DIR_NAME);
+
+        if old_keys_dir == new_keys_dir {
+            return Ok(new_keys_dir);
+        }
+
+        if new_keys_dir.exists() {
+            return Err(StorageError::Internal(format!(
+                "Destination already contains a 'keys' directory: {}",
+                new_keys_dir.display()
+            )));
+        }
+
+        // Ensure parent exists
+        std::fs::create_dir_all(new_parent).map_err(|e| {
+            StorageError::DirectoryCreation(format!("{}: {}", new_parent.display(), e))
+        })?;
+
+        info!(
+            "Moving keys from {} to {}",
+            old_keys_dir.display(),
+            new_keys_dir.display()
+        );
+
+        // Try atomic rename first (same filesystem)
+        match std::fs::rename(old_keys_dir, &new_keys_dir) {
+            Ok(()) => {
+                info!("Keys moved via rename (same filesystem)");
+            }
+            Err(e) => {
+                // Cross-device: copy, update config, then delete old
+                let is_cross_device = e.kind() == std::io::ErrorKind::CrossesDevices;
+                if !is_cross_device {
+                    return Err(StorageError::Internal(format!(
+                        "Failed to move keys directory: {}",
+                        e
+                    )));
+                }
+
+                info!("Cross-filesystem move detected, copying...");
+                if let Err(e) = copy_dir_recursive(old_keys_dir, &new_keys_dir) {
+                    let _ = std::fs::remove_dir_all(&new_keys_dir);
+                    return Err(e);
+                }
+
+                // Update config BEFORE deleting old dir — if delete fails, config
+                // already points to the complete new copy.
+                self.app_data.write_keys_location(&new_keys_dir)?;
+                info!("Keys location updated to {}", new_keys_dir.display());
+
+                std::fs::remove_dir_all(old_keys_dir).map_err(|e| {
+                    StorageError::Internal(format!(
+                        "Failed to remove old keys directory after copy: {}",
+                        e
+                    ))
+                })?;
+                info!("Keys copied and old directory removed");
+
+                return Ok(new_keys_dir);
+            }
+        }
+
+        // Update config to point to new location (same-filesystem rename path)
+        self.app_data.write_keys_location(&new_keys_dir)?;
+        info!("Keys location updated to {}", new_keys_dir.display());
+
+        Ok(new_keys_dir)
     }
 
     /// Write the sync interval to storage.
@@ -441,6 +591,35 @@ impl AppStorage {
         let key_storage = self.key_storage(pubky)?;
         key_storage.create_snapshot().await
     }
+}
+
+/// Recursively copy a directory tree.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), StorageError> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| StorageError::DirectoryCreation(format!("{}: {}", dst.display(), e)))?;
+
+    for entry in std::fs::read_dir(src).map_err(|e| {
+        StorageError::Internal(format!("Failed to read directory {}: {}", src.display(), e))
+    })? {
+        let entry =
+            entry.map_err(|e| StorageError::Internal(format!("Failed to read entry: {}", e)))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| {
+                StorageError::Internal(format!(
+                    "Failed to copy {} to {}: {}",
+                    src_path.display(),
+                    dst_path.display(),
+                    e
+                ))
+            })?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -726,5 +905,217 @@ mod tests {
                 .exists(),
             "keys/<pubky>/data/pub/test.json should exist"
         );
+    }
+
+    #[tokio::test]
+    async fn test_keys_location_default_written_on_init() {
+        let temp_dir = TempDir::new().unwrap();
+        let _storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+
+        // keys_location config file should be created with default path
+        let config_file = temp_dir
+            .path()
+            .join(CONFIG_DIR_NAME)
+            .join(KEYS_LOCATION_FILENAME);
+        assert!(config_file.exists(), "keys_location config should exist");
+
+        let contents = std::fs::read_to_string(&config_file).unwrap();
+        let expected = temp_dir.path().join(KEYS_DIR_NAME);
+        assert_eq!(contents, expected.to_string_lossy());
+    }
+
+    #[tokio::test]
+    async fn test_keys_location_persisted_survives_restart() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create storage — writes default keys_location
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+        let original_keys_dir = storage.keys_dir();
+
+        // Create new storage from same path — should read stored location
+        let storage2 = AppStorage::new_with_path(temp_dir.path()).unwrap();
+        assert_eq!(storage2.keys_dir(), original_keys_dir);
+    }
+
+    #[tokio::test]
+    async fn test_move_keys_same_filesystem() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        // Write some data
+        let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
+        storage
+            .write(&resource, b"test data".to_vec())
+            .await
+            .unwrap();
+
+        // Move to new location within same temp dir
+        let new_parent = temp_dir.path().join("new_location");
+        let new_keys_dir = storage.move_keys(&new_parent).unwrap();
+
+        // Old location should be gone
+        let old_keys_dir = temp_dir.path().join(KEYS_DIR_NAME);
+        assert!(!old_keys_dir.exists(), "Old keys dir should be removed");
+
+        // New location should have the data
+        assert!(new_keys_dir.exists(), "New keys dir should exist");
+        let data_file = new_keys_dir
+            .join(pubky.z32())
+            .join(DATA_DIR_NAME)
+            .join("pub")
+            .join("test.json");
+        assert!(data_file.exists(), "Data should exist in new location");
+
+        // Config should be updated
+        let stored_location = storage.read_keys_location().unwrap();
+        assert_eq!(stored_location, new_keys_dir);
+    }
+
+    #[tokio::test]
+    async fn test_move_keys_same_location_is_noop() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+
+        // Move to same parent — should be a no-op
+        let result = storage.move_keys(temp_dir.path()).unwrap();
+        assert_eq!(result, temp_dir.path().join(KEYS_DIR_NAME));
+    }
+
+    #[tokio::test]
+    async fn test_move_keys_rejects_existing_destination() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+
+        // Create a destination that already has a keys/ directory
+        let new_parent = temp_dir.path().join("dest");
+        std::fs::create_dir_all(new_parent.join(KEYS_DIR_NAME)).unwrap();
+
+        let result = storage.move_keys(&new_parent);
+        assert!(
+            result.is_err(),
+            "Should reject when destination keys/ exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_move_keys_new_storage_reads_from_new_location() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        // Write data
+        let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
+        storage.write(&resource, b"hello".to_vec()).await.unwrap();
+
+        // Move
+        let new_parent = temp_dir.path().join("moved");
+        let new_keys_dir = storage.move_keys(&new_parent).unwrap();
+
+        // Create fresh storage from same config dir — should use new location
+        let storage2 = AppStorage::new_with_path(temp_dir.path()).unwrap();
+        assert_eq!(storage2.keys_dir(), new_keys_dir);
+
+        // Should be able to list keys from new location
+        let keys = storage2.list_pubky_directories().unwrap();
+        assert_eq!(keys.len(), 1);
+        assert!(keys.contains(&pubky.z32()));
+    }
+
+    #[tokio::test]
+    async fn test_keys_location_fallback_when_stored_path_missing() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create storage so config is written
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+        drop(storage);
+
+        // Overwrite keys_location config to point to a non-existent path
+        let config_file = temp_dir
+            .path()
+            .join(CONFIG_DIR_NAME)
+            .join(KEYS_LOCATION_FILENAME);
+        std::fs::write(&config_file, "/nonexistent/keys").unwrap();
+
+        // Creating new storage should fall back to default and update config
+        let storage2 = AppStorage::new_with_path(temp_dir.path()).unwrap();
+        let expected_default = temp_dir.path().join(KEYS_DIR_NAME);
+        assert_eq!(
+            storage2.keys_dir(),
+            expected_default,
+            "Should fall back to default keys dir"
+        );
+
+        // Config file should have been updated to the default
+        let updated = std::fs::read_to_string(&config_file).unwrap();
+        assert_eq!(updated, expected_default.to_string_lossy());
+    }
+
+    #[test]
+    fn test_keys_location_roundtrip_non_ascii_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let app_data = AppDataStorage::new(temp_dir.path()).unwrap();
+
+        // Path with non-ASCII (but valid UTF-8) characters
+        let path = PathBuf::from("/données/clés/备份");
+        app_data.write_keys_location(&path).unwrap();
+        let read_back = app_data.read_keys_location().unwrap();
+        assert_eq!(read_back, path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_keys_location_roundtrip_non_utf8_path() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let app_data = AppDataStorage::new(temp_dir.path()).unwrap();
+
+        // Path with bytes that are not valid UTF-8
+        let non_utf8 = OsStr::from_bytes(b"/tmp/\xff\xfe/keys");
+        let path = PathBuf::from(non_utf8);
+        app_data.write_keys_location(&path).unwrap();
+        let read_back = app_data.read_keys_location().unwrap();
+        assert_eq!(read_back, path);
+    }
+
+    /// Verify that storage reads work without a BackupManager.
+    ///
+    /// The startup screen calls `get_last_pubky` and `get_keys` to decide
+    /// whether to auto-navigate to the dashboard.  These must return
+    /// instantly from disk — they must NOT depend on BackupManager being
+    /// initialised (which does slow network calls in `resume_stored_keys`).
+    #[tokio::test]
+    async fn test_storage_reads_work_without_manager() {
+        let temp_dir = TempDir::new().unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        // Simulate a previous session: write last_pubky and create a key directory
+        {
+            let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+            storage.write_last_pubky(&pubky).await.unwrap();
+            let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
+            storage.write(&resource, b"data".to_vec()).await.unwrap();
+        }
+        // storage is dropped — no manager, no controllers
+
+        // A fresh AppStorage (cheap, no network) should read everything back
+        let storage2 = AppStorage::new_with_path(temp_dir.path()).unwrap();
+
+        let last = storage2.read_last_pubky().await.unwrap();
+        assert_eq!(
+            last,
+            Some(pubky.clone()),
+            "last_pubky should be readable without a manager"
+        );
+
+        let dirs = storage2.list_pubky_directories().unwrap();
+        assert_eq!(
+            dirs.len(),
+            1,
+            "key directory should be listed without a manager"
+        );
+        assert_eq!(dirs[0], pubky.z32());
     }
 }

@@ -8,7 +8,6 @@ export {
   removeKey,
   deleteKey,
   forceSyncNow,
-  getDataDirPath,
   openDataDir,
   createSnapshot,
 } from "./tauri-commands";

@@ -1,66 +1,120 @@
 mod error;
 
+use arc_swap::ArcSwap;
 use log::{debug, error, info};
 use pubky::PublicKey;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
-use std::{str::FromStr, sync::OnceLock};
+use crate::error::BackupAppError;
+use pubky_backup_core::{
+    is_developer_mode, AppStorage, BackupManager, BackupManagerConfig, KeyState, KeyStatus,
+};
+use std::str::FromStr;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, WindowEvent,
 };
+use tokio::sync::Mutex;
 
-use crate::error::BackupAppError;
-use pubky_backup_core::{
-    is_developer_mode, BackupManager, BackupManagerConfig, KeyState, KeyStatus,
-};
-
-/// Global manager instance
-static MANAGER: OnceLock<BackupManager> = OnceLock::new();
+/// Global manager instance — `ArcSwap` for lock-free reads, swappable for relocation.
+static MANAGER: OnceLock<ArcSwap<BackupManager>> = OnceLock::new();
+/// Serialises manager initialisation and swap operations (relocation).
+static MANAGER_WRITE: OnceLock<Mutex<()>> = OnceLock::new();
+/// Handle to the current event listener task, so we can abort it on relocation.
+static EVENT_LISTENER: OnceLock<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>> =
+    OnceLock::new();
 /// Tauri app handle for tray updates and event emission
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+fn manager_write_mutex() -> &'static Mutex<()> {
+    MANAGER_WRITE.get_or_init(|| Mutex::new(()))
+}
+
+fn event_listener_mutex() -> &'static Mutex<Option<tauri::async_runtime::JoinHandle<()>>> {
+    EVENT_LISTENER.get_or_init(|| Mutex::new(None))
+}
 
 /// Config response for frontend
 #[derive(Clone, Serialize)]
 pub struct AppConfig {
     developer_mode: bool,
     sync_interval_secs: u64,
+    keys_dir: String,
 }
 
-fn get_manager() -> Result<&'static BackupManager, BackupAppError> {
-    MANAGER
-        .get()
-        .ok_or_else(|| BackupAppError::internal("BackupManager not initialized"))
-}
-
-/// Get or create the manager for storage access.
-///
-/// This is used by commands that need to access storage before the main
-/// manager is initialized (e.g., get_last_pubky, get_previous_pubky_keys).
-async fn get_or_create_manager() -> Result<&'static BackupManager, BackupAppError> {
-    if let Some(manager) = MANAGER.get() {
-        return Ok(manager);
-    }
-
-    // Create a new manager and try to set it
-    let config = BackupManagerConfig {
+fn create_config() -> BackupManagerConfig {
+    BackupManagerConfig {
         developer_mode: is_developer_mode(),
         ..Default::default()
-    };
+    }
+}
 
-    let manager = BackupManager::new(config)
+/// Ensure a BackupManager exists inside the global slot.
+///
+/// The write-mutex serialises creation so only one caller builds the
+/// manager; every other caller sees the `OnceLock` already set and
+/// returns immediately.
+async fn ensure_manager() -> Result<(), BackupAppError> {
+    // Fast path — already initialised (lock-free).
+    if MANAGER.get().is_some() {
+        return Ok(());
+    }
+
+    // Slow path — hold the write-mutex while creating.
+    let _guard = manager_write_mutex().lock().await;
+    // Double-check after acquiring lock.
+    if MANAGER.get().is_some() {
+        return Ok(());
+    }
+
+    let manager = BackupManager::new(create_config())
         .await
         .map_err(BackupAppError::internal)?;
 
-    // Try to set it - if another thread beat us, use theirs
-    let _ = MANAGER.set(manager);
+    spawn_event_listener(&manager).await;
+    let _ = MANAGER.set(ArcSwap::from_pointee(manager));
+    Ok(())
+}
 
-    // Now it's definitely set
+/// Get a cheap Arc handle to the current manager.
+fn load_manager() -> Result<Arc<BackupManager>, BackupAppError> {
     MANAGER
         .get()
-        .ok_or_else(|| BackupAppError::internal("Failed to initialize manager"))
+        .map(|slot| slot.load_full())
+        .ok_or_else(|| BackupAppError::internal("BackupManager not initialized"))
+}
+
+async fn spawn_event_listener(manager: &BackupManager) {
+    let mut rx = manager.subscribe();
+    let Some(app_handle) = APP_HANDLE.get().cloned() else {
+        error!("Cannot spawn event listener — APP_HANDLE not set");
+        return;
+    };
+
+    let mut guard = event_listener_mutex().lock().await;
+
+    // Abort the previous listener if one exists.
+    if let Some(prev) = guard.take() {
+        debug!("Aborting previous event listener");
+        prev.abort();
+    }
+
+    debug!("Event listener spawned for BackupManager");
+    let handle = tauri::async_runtime::spawn(async move {
+        while let Ok(update) = rx.recv().await {
+            debug!("Emitting key-update to frontend: {}", update.pubky);
+            if let Err(e) = app_handle.emit("key-update", &update) {
+                error!("Failed to emit key-update event: {}", e);
+            }
+            update_tray_icon_aggregate();
+        }
+        debug!("Event listener channel closed");
+    });
+    *guard = Some(handle);
 }
 
 /// Add a key to start backing up.
@@ -70,13 +124,12 @@ async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
         message: e.to_string(),
     })?;
 
-    // Get or create the manager
-    let manager = get_or_create_manager().await?;
+    ensure_manager().await?;
+    let manager = load_manager()?;
 
     // Check if key is already being backed up
     if manager.get_key_state(&pubky).is_some() {
         debug!("Key already being backed up");
-        // Save as last pubky even if already exists
         manager
             .write_last_pubky(&pubky)
             .await
@@ -84,13 +137,11 @@ async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
         return Ok(pubky.z32());
     }
 
-    // Add the key to start backing up
     manager
         .add_key(pubky.clone())
         .await
         .map_err(BackupAppError::internal)?;
 
-    // Save as last pubky
     manager
         .write_last_pubky(&pubky)
         .await
@@ -103,35 +154,59 @@ async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
 /// Get all key states for all tracked keys
 #[tauri::command]
 async fn get_all_key_states() -> Result<HashMap<String, KeyState>, BackupAppError> {
-    let manager = get_or_create_manager().await?;
-    Ok(manager.get_all_key_states())
+    ensure_manager().await?;
+    Ok(load_manager()?.get_all_key_states())
 }
 
 /// Get application config (one-time fetch)
 #[tauri::command]
 async fn get_config() -> Result<AppConfig, BackupAppError> {
-    let manager = get_or_create_manager().await?;
+    ensure_manager().await?;
+    let m = load_manager()?;
     Ok(AppConfig {
         developer_mode: is_developer_mode(),
-        sync_interval_secs: manager.get_sync_interval(),
+        sync_interval_secs: m.get_sync_interval(),
+        keys_dir: m.keys_dir().to_string_lossy().to_string(),
     })
 }
 
-/// Get list of pubky keys that have data stored
+/// Get list of pubky keys that have data stored.
+///
+/// Reads directly from storage so it returns instantly — never blocks on
+/// manager initialization or network calls.
 #[tauri::command]
 async fn get_keys() -> Result<Vec<String>, BackupAppError> {
-    // Use existing manager if available, otherwise create a temporary one
-    let manager = get_or_create_manager().await?;
-    manager
+    // Use the manager if it's already available (lock-free read).
+    if let Some(slot) = MANAGER.get() {
+        return slot
+            .load()
+            .list_pubky_directories()
+            .map_err(BackupAppError::internal);
+    }
+    // Manager not ready — read directly from storage (cheap, no network).
+    let storage = AppStorage::new().map_err(BackupAppError::internal)?;
+    storage
         .list_pubky_directories()
         .map_err(BackupAppError::internal)
 }
 
-/// Get the last used pubky from storage
+/// Get the last used pubky from storage.
+///
+/// Reads directly from storage so it returns instantly — never blocks on
+/// manager initialization or network calls.
 #[tauri::command]
 async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
-    let manager = get_or_create_manager().await?;
-    match manager.read_last_pubky().await {
+    // Use the manager if it's already available (lock-free read).
+    if let Some(slot) = MANAGER.get() {
+        return match slot.load().read_last_pubky().await {
+            Ok(Some(pubky)) => Ok(Some(pubky.z32())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(BackupAppError::internal(e)),
+        };
+    }
+    // Manager not ready — read directly from storage (cheap, no network).
+    let storage = AppStorage::new().map_err(BackupAppError::internal)?;
+    match storage.read_last_pubky().await {
         Ok(Some(pubky)) => Ok(Some(pubky.z32())),
         Ok(None) => Ok(None),
         Err(e) => Err(BackupAppError::internal(e)),
@@ -144,8 +219,8 @@ async fn set_last_pubky(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
         message: e.to_string(),
     })?;
-    let manager = get_manager()?;
-    manager
+    ensure_manager().await?;
+    load_manager()?
         .write_last_pubky(&pubky)
         .await
         .map_err(BackupAppError::internal)
@@ -157,13 +232,11 @@ async fn remove_key(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
         message: e.to_string(),
     })?;
-    let manager = get_manager()?;
-
-    manager
+    ensure_manager().await?;
+    load_manager()?
         .remove_key(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
-
     debug!("Key removed: {}", pubky);
     Ok(())
 }
@@ -174,13 +247,11 @@ async fn delete_key(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
         message: e.to_string(),
     })?;
-    let manager = get_manager()?;
-
-    manager
+    ensure_manager().await?;
+    load_manager()?
         .delete_key(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
-
     debug!("Key deleted: {}", pubky);
     Ok(())
 }
@@ -191,43 +262,33 @@ async fn force_sync_now(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
         message: e.to_string(),
     })?;
-    let manager = get_manager()?;
-
-    manager
+    ensure_manager().await?;
+    load_manager()?
         .force_sync(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
-
     debug!("Force sync triggered for: {}", pubky);
     Ok(())
 }
 
-/// Get the data directory path as a string
-#[tauri::command]
-async fn get_data_dir_path() -> Result<String, BackupAppError> {
-    let manager = get_manager()?;
-    Ok(manager.data_dir().to_string_lossy().to_string())
-}
-
-/// Open the data directory in the system file manager
+/// Open the keys directory in the system file manager
 #[tauri::command]
 async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppError> {
     use tauri_plugin_opener::OpenerExt;
 
-    let manager = get_manager()?;
-    let backup_dir = manager.data_dir();
-
+    ensure_manager().await?;
+    let keys_dir = load_manager()?.keys_dir().to_path_buf();
     app_handle
         .opener()
-        .open_path(backup_dir.to_string_lossy().to_string(), None::<&str>)
+        .open_path(keys_dir.to_string_lossy().to_string(), None::<&str>)
         .map_err(BackupAppError::internal)
 }
 
 /// Set the sync interval in seconds. Controllers pick up the new value dynamically.
 #[tauri::command]
 async fn set_sync_interval(interval_secs: u64) -> Result<(), BackupAppError> {
-    let manager = get_manager()?;
-    manager
+    ensure_manager().await?;
+    load_manager()?
         .set_sync_interval(interval_secs)
         .await
         .map_err(BackupAppError::internal)
@@ -239,14 +300,48 @@ async fn create_snapshot(pubky_str: &str) -> Result<String, BackupAppError> {
     let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
         message: e.to_string(),
     })?;
-    let manager = get_manager()?;
-
-    let snapshot_path = manager
+    ensure_manager().await?;
+    let path = load_manager()?
         .create_snapshot(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
+    Ok(path.to_string_lossy().to_string())
+}
 
-    Ok(snapshot_path.to_string_lossy().to_string())
+/// Move backup data to a new location.
+///
+/// Shuts down all controllers, moves the keys directory, then recreates the manager.
+#[tauri::command]
+async fn set_backup_location(new_parent: &str) -> Result<String, BackupAppError> {
+    let new_parent = PathBuf::from(new_parent);
+
+    ensure_manager().await?;
+    // Hold the write-mutex so no other caller swaps concurrently.
+    let _guard = manager_write_mutex().lock().await;
+
+    let slot = MANAGER
+        .get()
+        .ok_or_else(|| BackupAppError::internal("BackupManager not initialized"))?;
+
+    // move_keys shuts down controllers, moves files, updates config.
+    // Concurrent readers that loaded an Arc to the old manager keep working
+    // until they drop their reference — their operations will just target
+    // the (now moved) old paths, which is fine since controllers are stopped.
+    let new_keys_dir = slot
+        .load()
+        .move_keys(&new_parent)
+        .await
+        .map_err(BackupAppError::internal)?;
+
+    // Create a fresh manager — reads keys_location from config, resumes controllers
+    let new_manager = BackupManager::new(create_config())
+        .await
+        .map_err(BackupAppError::internal)?;
+    spawn_event_listener(&new_manager).await;
+    slot.store(Arc::new(new_manager));
+
+    info!("Backup location moved to {}", new_keys_dir.display());
+    Ok(new_keys_dir.to_string_lossy().to_string())
 }
 
 /// Compute aggregate status across all keys and update tray icon
@@ -257,16 +352,14 @@ fn update_tray_icon_aggregate() {
     let Some(tray) = app_handle.tray_by_id("main") else {
         return;
     };
-    let Some(manager) = MANAGER.get() else {
+
+    // Lock-free read of manager state
+    let Some(slot) = MANAGER.get() else {
         return;
     };
+    let all_states = slot.load().get_all_key_states();
 
-    let all_states = manager.get_all_key_states();
-
-    // Determine aggregate status:
-    // - "Syncing" if any key is syncing or starting
-    // - "Error" if any key has error (and none syncing)
-    // - "Idle" if all keys are idle
+    // Determine aggregate status
     let mut has_syncing = false;
     let mut has_error = false;
     let mut has_starting = false;
@@ -309,6 +402,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         // After a minimise the close handler loses its scope and fails
         // This is a Tauri bug - https://github.com/tauri-apps/tauri/issues/9504
         .on_window_event(|window, event| {
@@ -322,28 +416,10 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let _ = APP_HANDLE.set(app_handle.clone());
 
-            // Spawn background task to set up global event listener
+            // Spawn background task to initialize the manager early
             tauri::async_runtime::spawn(async move {
-                // Get or create the manager
-                let manager = match get_or_create_manager().await {
-                    Ok(m) => m,
-                    Err(e) => {
-                        error!("Failed to create backup manager: {:?}", e);
-                        return;
-                    }
-                };
-
-                // Subscribe to all key updates
-                let mut rx = manager.subscribe();
-
-                // Listen for updates and emit to frontend
-                while let Ok(update) = rx.recv().await {
-                    // Emit event to frontend
-                    if let Err(e) = app_handle.emit("key-update", &update) {
-                        error!("Failed to emit key-update event: {}", e);
-                    }
-                    // Update tray icon with aggregate status
-                    update_tray_icon_aggregate();
+                if let Err(e) = ensure_manager().await {
+                    error!("Failed to create backup manager: {:?}", e);
                 }
             });
 
@@ -393,10 +469,10 @@ pub fn run() {
             remove_key,
             delete_key,
             force_sync_now,
-            get_data_dir_path,
             open_data_dir,
             create_snapshot,
-            set_sync_interval
+            set_sync_interval,
+            set_backup_location
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

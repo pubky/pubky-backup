@@ -109,6 +109,13 @@ export const useUIStore = create<UIStore>()(
           false,
           UIActionTypes.SET_DEVELOPER_MODE,
         ),
+
+      setNavDisabled: (disabled: boolean) =>
+        set(
+          { navDisabled: disabled },
+          false,
+          UIActionTypes.SET_NAV_DISABLED,
+        ),
     }),
     {
       name: "ui-store",

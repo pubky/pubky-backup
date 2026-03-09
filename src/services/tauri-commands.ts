@@ -14,6 +14,7 @@ import { isBackendError } from "@/types/backend-errors";
 export interface AppConfig {
   developer_mode: boolean;
   sync_interval_secs: number;
+  keys_dir: string;
 }
 
 /**
@@ -128,18 +129,6 @@ export async function forceSyncNow(pubkyStr: string): Promise<void> {
 }
 
 /**
- * Get the data directory path
- * @throws {BackendError} If getting path fails
- */
-export async function getDataDirPath(): Promise<string> {
-  try {
-    return await invoke<string>("get_data_dir_path");
-  } catch (error: unknown) {
-    throw normalizeError(error);
-  }
-}
-
-/**
  * Open the data directory in the system file browser
  * @throws {BackendError} If opening directory fails
  */
@@ -173,6 +162,21 @@ export async function createSnapshot(pubkyStr: string): Promise<string> {
 export async function setSyncInterval(intervalSecs: number): Promise<void> {
   try {
     await invoke("set_sync_interval", { intervalSecs });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
+ * Move backup data to a new location.
+ * Shuts down controllers, moves keys directory, then recreates the manager.
+ * @param newParent - The new parent directory for the keys folder
+ * @returns The new keys directory path
+ * @throws {BackendError} If moving backup location fails
+ */
+export async function setBackupLocation(newParent: string): Promise<string> {
+  try {
+    return await invoke<string>("set_backup_location", { newParent });
   } catch (error: unknown) {
     throw normalizeError(error);
   }

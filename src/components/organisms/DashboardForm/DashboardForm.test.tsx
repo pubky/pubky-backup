@@ -9,7 +9,7 @@ import * as services from "@/services";
 vi.mock("@/services", () => ({
   forceSyncNow: vi.fn(),
   createSnapshot: vi.fn(),
-  getDataDirPath: vi.fn(),
+  getConfig: vi.fn(),
   openDataDir: vi.fn(),
 }));
 
@@ -46,9 +46,11 @@ describe("DashboardForm", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(services.getDataDirPath).mockResolvedValue(
-      "/home/user/.pubky-backup",
-    );
+    vi.mocked(services.getConfig).mockResolvedValue({
+      developer_mode: false,
+      sync_interval_secs: 300,
+      keys_dir: "/home/user/.pubky-backup/keys",
+    });
 
     useUIStore.setState({
       keyStates: { "pk:test-pubky": mockKeyState },

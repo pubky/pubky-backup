@@ -11,12 +11,12 @@
 //! - Handling automatic resumption from stored data
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use parking_lot::RwLock;
 use pubky::{Pubky, PublicKey};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -384,11 +384,27 @@ impl BackupManager {
         Ok(path)
     }
 
-    /// Get the data directory path.
+    /// Get the root data directory path (e.g. `~/.pubky-backup`).
     pub fn data_dir(&self) -> PathBuf {
         self.storage
             .get_backup_data_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
+    }
+
+    /// Get the current keys directory path.
+    pub fn keys_dir(&self) -> &Path {
+        self.storage.keys_dir()
+    }
+
+    /// Move the keys directory to a new parent location.
+    ///
+    /// Shuts down all controllers, moves the keys directory, and updates
+    /// the config. The caller should drop this manager and create a new
+    /// `BackupManager` afterward to resume operations from the new location.
+    pub async fn move_keys(&self, new_parent: &Path) -> Result<PathBuf, OrchestratorError> {
+        self.shutdown().await;
+        let new_keys_dir = self.storage.move_keys(new_parent)?;
+        Ok(new_keys_dir)
     }
 
     /// Write the last used pubky to storage for session persistence.
@@ -491,10 +507,14 @@ impl BackupManager {
         };
 
         // Broadcast initial state to external subscribers
-        let _ = self.update_tx.send(KeyUpdate {
+        let receivers = self.update_tx.send(KeyUpdate {
             pubky: pubky.clone(),
             state: initial_state.clone(),
         });
+        debug!(
+            "Broadcast initial state for {} (receivers: {:?})",
+            pubky, receivers
+        );
 
         let (pubky_client, sync_interval_secs, key_count) = {
             let inner = self.inner.read();
@@ -647,10 +667,14 @@ impl BackupManager {
         };
 
         // Broadcast error state to external subscribers
-        let _ = self.update_tx.send(KeyUpdate {
+        let receivers = self.update_tx.send(KeyUpdate {
             pubky: pubky.clone(),
             state: error_state.clone(),
         });
+        debug!(
+            "Broadcast error state for {} (receivers: {:?})",
+            pubky, receivers
+        );
 
         // Store in keys map (without a running controller task)
         // Create a no-op task handle
@@ -723,10 +747,14 @@ fn spawn_status_listener(
             }
 
             // Broadcast to external subscribers
-            let _ = update_tx.send(KeyUpdate {
+            let receivers = update_tx.send(KeyUpdate {
                 pubky: pubky.clone(),
                 state: new_state,
             });
+            debug!(
+                "Broadcast status update for {} (receivers: {:?})",
+                pubky, receivers
+            );
         }
     });
 }
@@ -828,6 +856,7 @@ fn next_sync_time(interval_secs: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::AppStorage;
     use crate::sync::{DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS};
     use crate::TEST_PUBKY;
     use std::str::FromStr;
@@ -1458,6 +1487,75 @@ mod tests {
             manager.get_sync_interval(),
             900,
             "Should use config.sync_interval_secs when no stored value exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_move_keys_moves_data_and_recreates_manager() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        manager.add_key(pubky.clone()).await.unwrap();
+
+        let original_keys_dir = manager.keys_dir().to_path_buf();
+        assert!(original_keys_dir.exists());
+
+        // Move keys to a new location (shuts down controllers)
+        let new_parent = temp_dir.path().join("moved");
+        let new_keys_dir = manager.move_keys(&new_parent).await.unwrap();
+        drop(manager);
+
+        assert_ne!(original_keys_dir, new_keys_dir);
+        assert!(!original_keys_dir.exists(), "Old keys dir should be gone");
+        assert!(new_keys_dir.exists(), "New keys dir should exist");
+
+        // Create a new manager from the same config dir — should pick up new location
+        let config2 = create_test_config(&temp_dir);
+        let manager2 = BackupManager::new(config2).await.unwrap();
+
+        assert_eq!(manager2.keys_dir(), new_keys_dir);
+        // The key should have been resumed from the new location
+        assert_eq!(manager2.get_keys().len(), 1);
+    }
+
+    /// The startup screen calls `get_last_pubky` and `get_keys` to decide
+    /// whether to skip straight to the dashboard.  These reads must work
+    /// from `AppStorage` alone — without constructing a `BackupManager`
+    /// (which blocks on `resume_stored_keys` → network calls).
+    ///
+    /// This test simulates a full session lifecycle and verifies that a
+    /// fresh `AppStorage` can read back everything the frontend needs.
+    #[tokio::test]
+    async fn test_startup_reads_do_not_need_manager() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        manager.add_key(pubky.clone()).await.unwrap();
+        manager.write_last_pubky(&pubky).await.unwrap();
+
+        // Drop the manager — simulates app restart
+        manager.shutdown().await;
+        drop(manager);
+
+        // Read using raw storage — this is what Tauri commands should fall back to
+        // when the manager hasn't finished initialising yet.
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+
+        let last = storage.read_last_pubky().await.unwrap();
+        assert_eq!(
+            last,
+            Some(pubky.clone()),
+            "last_pubky must be readable without a BackupManager"
+        );
+
+        let dirs = storage.list_pubky_directories().unwrap();
+        assert!(
+            dirs.contains(&pubky.z32()),
+            "key directories must be listable without a BackupManager"
         );
     }
 }

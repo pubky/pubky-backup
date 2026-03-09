@@ -10,7 +10,7 @@ export function DashboardForm() {
     isSyncing,
     dataSize,
     lastSyncTime,
-    dataDirPath,
+    backupLocation,
     keys,
     statusInfo,
   } = Hooks.useDashboardState();
@@ -61,7 +61,7 @@ export function DashboardForm() {
         <Molecules.InfoCard
           icon={<Atoms.FolderIcon size={18} />}
           label="Backup Location"
-          value={dataDirPath ?? "--"}
+          value={backupLocation ?? "--"}
           fullWidth
           action={
             <Atoms.IconButton

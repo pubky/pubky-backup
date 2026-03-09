@@ -537,7 +537,7 @@ mod tests {
         std::fs::create_dir_all(&prefixed_dir).unwrap();
 
         // Create KeysStorage and list keys
-        let keys_storage = crate::storage::KeysStorage::new_with_path(&keys_dir).unwrap();
+        let keys_storage = crate::storage::KeysStorage::new_with_keys_dir(&keys_dir).unwrap();
         let keys = keys_storage.list_keys().unwrap();
 
         // Should return the z32 format, not the prefixed format
