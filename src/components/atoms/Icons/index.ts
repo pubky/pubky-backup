@@ -5,6 +5,7 @@ export {
   CopyIcon,
   RefreshIcon,
   CheckIcon,
+  CheckmarkIcon,
   ExternalLinkIcon,
   DatabaseIcon,
   ClockIcon,
