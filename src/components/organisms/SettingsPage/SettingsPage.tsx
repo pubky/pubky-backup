@@ -3,11 +3,7 @@ import * as Atoms from "@/components/atoms";
 import * as Stores from "@/stores";
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
-import {
-  getConfig,
-  setSyncInterval,
-  setBackupLocation,
-} from "@/services/tauri-commands";
+import { getConfig, setSyncInterval, setBackupLocation } from "@/services";
 import { handleBackendError } from "@/utils/error-handler";
 
 const SYNC_INTERVALS = [
@@ -24,8 +20,11 @@ export function SettingsPage() {
     null,
   );
   const [isMoving, setIsMoving] = useState(false);
+  const [isSavingInterval, setIsSavingInterval] = useState(false);
   const [selectedInterval, setSelectedInterval] = useState<number | null>(null);
   const setNavDisabled = Stores.useUIStore((s) => s.setNavDisabled);
+
+  const isBusy = isMoving || isSavingInterval;
 
   // Load current config from backend on mount
   useEffect(() => {
@@ -42,11 +41,16 @@ export function SettingsPage() {
   const handleIntervalChange = async (secs: number) => {
     const previousInterval = selectedInterval;
     setSelectedInterval(secs);
+    setIsSavingInterval(true);
+    setNavDisabled(true);
     try {
       await setSyncInterval(secs);
     } catch (err) {
       console.error("Failed to set sync interval:", err);
       setSelectedInterval(previousInterval);
+    } finally {
+      setIsSavingInterval(false);
+      setNavDisabled(false);
     }
   };
 
@@ -109,7 +113,7 @@ export function SettingsPage() {
               </span>
               <Atoms.IconButton
                 onClick={handleBrowse}
-                disabled={backupLocation === null}
+                disabled={backupLocation === null || isBusy}
                 className="w-9 h-9 rounded-full bg-surface-light shadow-[0_1px_2px_rgba(5,5,10,0.2)] flex items-center justify-center"
               >
                 <Atoms.FolderIcon size={20} className="text-text-light" />
@@ -122,7 +126,7 @@ export function SettingsPage() {
         <div
           className={cn(
             "flex flex-col gap-4",
-            isMoving && "opacity-30 pointer-events-none",
+            isBusy && "opacity-30 pointer-events-none",
           )}
         >
           <label className="text-xs font-medium tracking-[0.1em] uppercase text-text-secondary text-left">
@@ -136,7 +140,7 @@ export function SettingsPage() {
                 <button
                   key={value}
                   type="button"
-                  disabled={isLoading || isMoving}
+                  disabled={isLoading || isBusy}
                   onClick={() => handleIntervalChange(value)}
                   className={cn(
                     "flex items-center justify-center gap-2 h-10 rounded-full transition-all duration-200",

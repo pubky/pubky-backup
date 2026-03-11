@@ -90,12 +90,23 @@ impl ConfigStorage {
         }
     }
 
-    /// Write the config to disk.
+    /// Write the config to disk atomically.
+    ///
+    /// Writes to a temporary file in the same directory, then renames it
+    /// over the target. This prevents partial reads if the process crashes
+    /// mid-write, and avoids concurrent readers seeing truncated JSON.
     pub fn write_config(&self, config: &AppConfig) -> Result<(), StorageError> {
         let json = serde_json::to_string_pretty(config)
             .map_err(|e| StorageError::Internal(format!("Failed to serialize config: {}", e)))?;
-        std::fs::write(&self.config_path, json)
-            .map_err(|e| StorageError::Internal(format!("Failed to write config.json: {}", e)))?;
+
+        let tmp_path = self.config_path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, &json)
+            .map_err(|e| StorageError::Internal(format!("Failed to write config tmp: {}", e)))?;
+        std::fs::rename(&tmp_path, &self.config_path).map_err(|e| {
+            // Clean up tmp on failure
+            let _ = std::fs::remove_file(&tmp_path);
+            StorageError::Internal(format!("Failed to rename config tmp: {}", e))
+        })?;
         Ok(())
     }
 

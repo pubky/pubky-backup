@@ -10,5 +10,7 @@ export {
   forceSyncNow,
   openDataDir,
   createSnapshot,
+  setSyncInterval,
+  setBackupLocation,
 } from "./tauri-commands";
 export type { AppConfig } from "./tauri-commands";

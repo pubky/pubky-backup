@@ -6,6 +6,7 @@ use pubky::PublicKey;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::error::BackupAppError;
@@ -29,6 +30,10 @@ static EVENT_LISTENER: OnceLock<Mutex<Option<tauri::async_runtime::JoinHandle<()
     OnceLock::new();
 /// Tauri app handle for tray updates and event emission
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+/// True while `set_backup_location` is swapping the manager. Other commands
+/// that call `load_manager()` will get a clear error instead of silently
+/// operating on a stale (shutdown) manager instance.
+static RELOCATING: AtomicBool = AtomicBool::new(false);
 
 fn manager_write_mutex() -> &'static Mutex<()> {
     MANAGER_WRITE.get_or_init(|| Mutex::new(()))
@@ -81,7 +86,15 @@ async fn ensure_manager() -> Result<(), BackupAppError> {
 }
 
 /// Get a cheap Arc handle to the current manager.
+///
+/// Returns an error if the manager is being relocated (backup location move
+/// in progress) to prevent commands from operating on the stale instance.
 fn load_manager() -> Result<Arc<BackupManager>, BackupAppError> {
+    if RELOCATING.load(Ordering::Acquire) {
+        return Err(BackupAppError::internal(
+            "Backup location move in progress, please wait",
+        ));
+    }
     MANAGER
         .get()
         .map(|slot| slot.load_full())
@@ -311,6 +324,8 @@ async fn create_snapshot(pubky_str: &str) -> Result<String, BackupAppError> {
 /// Move backup data to a new location.
 ///
 /// Shuts down all controllers, moves the keys directory, then recreates the manager.
+/// Sets `RELOCATING` flag so concurrent commands fail fast instead of operating
+/// on the stale (shutdown) manager.
 #[tauri::command]
 async fn set_backup_location(new_parent: &str) -> Result<String, BackupAppError> {
     let new_parent = PathBuf::from(new_parent);
@@ -323,23 +338,33 @@ async fn set_backup_location(new_parent: &str) -> Result<String, BackupAppError>
         .get()
         .ok_or_else(|| BackupAppError::internal("BackupManager not initialized"))?;
 
-    // move_keys shuts down controllers, moves files, updates config.
-    // Concurrent readers that loaded an Arc to the old manager keep working
-    // until they drop their reference — their operations will just target
-    // the (now moved) old paths, which is fine since controllers are stopped.
-    let new_keys_dir = slot
-        .load()
-        .move_keys(&new_parent)
-        .await
-        .map_err(BackupAppError::internal)?;
+    // Block concurrent load_manager() calls while we swap.
+    RELOCATING.store(true, Ordering::Release);
 
-    // Create a fresh manager — reads keys_location from config, resumes controllers
-    let new_manager = BackupManager::new(create_config())
-        .await
-        .map_err(BackupAppError::internal)?;
-    spawn_event_listener(&new_manager).await;
-    slot.store(Arc::new(new_manager));
+    let result: Result<PathBuf, BackupAppError> = async {
+        // move_keys shuts down controllers, moves files, updates config.
+        // RELOCATING flag prevents concurrent commands from getting a ref
+        // to this (now stale) manager.
+        let new_keys_dir = slot
+            .load()
+            .move_keys(&new_parent)
+            .await
+            .map_err(BackupAppError::internal)?;
 
+        // Create a fresh manager — reads keys_location from config, resumes controllers
+        let new_manager = BackupManager::new(create_config())
+            .await
+            .map_err(BackupAppError::internal)?;
+        spawn_event_listener(&new_manager).await;
+        slot.store(Arc::new(new_manager));
+
+        Ok(new_keys_dir)
+    }
+    .await;
+
+    RELOCATING.store(false, Ordering::Release);
+
+    let new_keys_dir = result?;
     info!("Backup location moved to {}", new_keys_dir.display());
     Ok(new_keys_dir.to_string_lossy().to_string())
 }

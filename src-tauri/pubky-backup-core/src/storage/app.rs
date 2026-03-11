@@ -372,6 +372,11 @@ impl AppStorage {
     ///
     /// **Must be called with no active controllers** — the caller is
     /// responsible for shutting down the BackupManager first.
+    ///
+    /// **This `AppStorage` instance must not be used after this call.**
+    /// The internal `keys_storage` still points at the old (now moved)
+    /// path. The caller must create a fresh `AppStorage` (typically via
+    /// a new `BackupManager`) to operate from the new location.
     pub fn move_keys(&self, new_parent: &Path) -> Result<PathBuf, StorageError> {
         let old_keys_dir = self.keys_dir();
         let new_keys_dir = new_parent.join(KEYS_DIR_NAME);

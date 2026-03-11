@@ -2,7 +2,6 @@
 export { useAppState } from "./useAppState";
 export { useKeys } from "./useKeys";
 export { useLastPubky } from "./useLastPubky";
-export { useBackupLocation } from "./useBackupLocation";
 export { useKeyUpdates } from "./useKeyUpdates";
 
 // Action hooks

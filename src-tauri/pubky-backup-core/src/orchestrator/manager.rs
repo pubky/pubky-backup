@@ -398,9 +398,16 @@ impl BackupManager {
 
     /// Move the keys directory to a new parent location.
     ///
-    /// Shuts down all controllers, moves the keys directory, and updates
-    /// the config. The caller should drop this manager and create a new
-    /// `BackupManager` afterward to resume operations from the new location.
+    /// **This manager must not be used after this call.** Controllers are
+    /// shut down and internal storage paths become stale. The caller must
+    /// drop this instance and create a fresh [`BackupManager`] via
+    /// [`BackupManager::new`] to resume operations from the new location.
+    ///
+    /// Note: ideally this would take `self` by value to enforce single-use
+    /// semantics at compile time. It takes `&self` because the manager is
+    /// shared via `Arc` at the Tauri layer. The caller is responsible for
+    /// ensuring no concurrent operations occur during the move (e.g. via
+    /// a relocating flag or mutex).
     pub async fn move_keys(&self, new_parent: &Path) -> Result<PathBuf, OrchestratorError> {
         self.shutdown().await;
         let new_keys_dir = self.storage.move_keys(new_parent)?;
