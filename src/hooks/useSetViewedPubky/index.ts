@@ -1,1 +1,0 @@
-export { useSetViewedPubky } from "./useSetViewedPubky";

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useSetViewedPubky } from "./useSetViewedPubky";
+import { useSetLastPubky } from "./useSetLastPubky";
 import { useUIStore } from "@/stores/uiStore";
 import * as services from "@/services";
 
@@ -8,19 +8,19 @@ vi.mock("@/services", () => ({
   setLastPubky: vi.fn(),
 }));
 
-describe("useSetViewedPubky", () => {
+describe("useSetLastPubky", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useUIStore.setState({
-      viewedPubky: null,
+      lastPubky: null,
       keyStates: {},
     });
   });
 
-  it("should return setViewedPubky function and isPending state", () => {
-    const { result } = renderHook(() => useSetViewedPubky());
+  it("should return setLastPubky function and isPending state", () => {
+    const { result } = renderHook(() => useSetLastPubky());
 
-    expect(result.current.setViewedPubky).toBeInstanceOf(Function);
+    expect(result.current.setLastPubky).toBeInstanceOf(Function);
     expect(result.current.isPending).toBe(false);
   });
 
@@ -31,13 +31,13 @@ describe("useSetViewedPubky", () => {
     });
     vi.mocked(services.setLastPubky).mockReturnValue(mockPromise);
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     expect(result.current.isPending).toBe(false);
 
     let setPromise: Promise<void>;
     act(() => {
-      setPromise = result.current.setViewedPubky("new-pubky");
+      setPromise = result.current.setLastPubky("new-pubky");
     });
 
     expect(result.current.isPending).toBe(true);
@@ -50,26 +50,26 @@ describe("useSetViewedPubky", () => {
     expect(result.current.isPending).toBe(false);
   });
 
-  it("should update viewedPubky in store immediately", async () => {
+  it("should update lastPubky in store immediately", async () => {
     vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     await act(async () => {
-      await result.current.setViewedPubky("my-pubky");
+      await result.current.setLastPubky("my-pubky");
     });
 
     const state = useUIStore.getState();
-    expect(state.viewedPubky).toBe("my-pubky");
+    expect(state.lastPubky).toBe("my-pubky");
   });
 
   it("should call setLastPubky service for persistence", async () => {
     vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     await act(async () => {
-      await result.current.setViewedPubky("persist-pubky");
+      await result.current.setLastPubky("persist-pubky");
     });
 
     expect(services.setLastPubky).toHaveBeenCalledWith("persist-pubky");
@@ -81,11 +81,11 @@ describe("useSetViewedPubky", () => {
       new Error("Failed to persist"),
     );
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     await act(async () => {
       try {
-        await result.current.setViewedPubky("bad-pubky");
+        await result.current.setLastPubky("bad-pubky");
       } catch {
         // Expected to throw
       }
@@ -97,11 +97,11 @@ describe("useSetViewedPubky", () => {
   it("should still update store even if persistence fails", async () => {
     vi.mocked(services.setLastPubky).mockRejectedValue(new Error("Failed"));
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     await act(async () => {
       try {
-        await result.current.setViewedPubky("my-pubky");
+        await result.current.setLastPubky("my-pubky");
       } catch {
         // Expected to throw
       }
@@ -109,77 +109,77 @@ describe("useSetViewedPubky", () => {
 
     // Store was updated before the service call
     const state = useUIStore.getState();
-    expect(state.viewedPubky).toBe("my-pubky");
+    expect(state.lastPubky).toBe("my-pubky");
   });
 
   it("should propagate errors from service", async () => {
     const error = new Error("Persistence failed");
     vi.mocked(services.setLastPubky).mockRejectedValue(error);
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     await expect(
       act(async () => {
-        await result.current.setViewedPubky("bad-pubky");
+        await result.current.setLastPubky("bad-pubky");
       }),
     ).rejects.toThrow("Persistence failed");
   });
 
-  it("should update viewedPubky when switching keys", async () => {
+  it("should update lastPubky when switching keys", async () => {
     vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
-    useUIStore.setState({ viewedPubky: "first-pubky" });
+    useUIStore.setState({ lastPubky: "first-pubky" });
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     await act(async () => {
-      await result.current.setViewedPubky("second-pubky");
+      await result.current.setLastPubky("second-pubky");
     });
 
     const state = useUIStore.getState();
-    expect(state.viewedPubky).toBe("second-pubky");
+    expect(state.lastPubky).toBe("second-pubky");
   });
 
   it("should handle multiple rapid calls", async () => {
     vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     await act(async () => {
-      await result.current.setViewedPubky("first");
-      await result.current.setViewedPubky("second");
-      await result.current.setViewedPubky("third");
+      await result.current.setLastPubky("first");
+      await result.current.setLastPubky("second");
+      await result.current.setLastPubky("third");
     });
 
     expect(services.setLastPubky).toHaveBeenCalledTimes(3);
-    expect(useUIStore.getState().viewedPubky).toBe("third");
+    expect(useUIStore.getState().lastPubky).toBe("third");
   });
 
   it("should strip 'pubky' prefix before storing and persisting", async () => {
     vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     await act(async () => {
-      await result.current.setViewedPubky("pubkyabc123def456");
+      await result.current.setLastPubky("pubkyabc123def456");
     });
 
     // Should strip the "pubky" prefix
     const state = useUIStore.getState();
-    expect(state.viewedPubky).toBe("abc123def456");
+    expect(state.lastPubky).toBe("abc123def456");
     expect(services.setLastPubky).toHaveBeenCalledWith("abc123def456");
   });
 
   it("should not modify pubky without prefix", async () => {
     vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
-    const { result } = renderHook(() => useSetViewedPubky());
+    const { result } = renderHook(() => useSetLastPubky());
 
     await act(async () => {
-      await result.current.setViewedPubky("abc123def456");
+      await result.current.setLastPubky("abc123def456");
     });
 
     const state = useUIStore.getState();
-    expect(state.viewedPubky).toBe("abc123def456");
+    expect(state.lastPubky).toBe("abc123def456");
     expect(services.setLastPubky).toHaveBeenCalledWith("abc123def456");
   });
 });

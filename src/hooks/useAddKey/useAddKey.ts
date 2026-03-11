@@ -37,7 +37,7 @@ interface AddKeyParams {
  */
 export function useAddKey() {
   const [isPending, setIsPending] = useState(false);
-  const setViewedPubky = useUIStore((s) => s.setViewedPubky);
+  const setLastPubky = useUIStore((s) => s.setLastPubky);
 
   const addKeyFn = useCallback(
     async ({ pubkyValue }: AddKeyParams): Promise<string> => {
@@ -45,13 +45,13 @@ export function useAddKey() {
       try {
         const normalizedPubky = stripPubkyPrefix(await addKey(pubkyValue));
         // Set the added key as the viewed key
-        setViewedPubky(normalizedPubky);
+        setLastPubky(normalizedPubky);
         return normalizedPubky;
       } finally {
         setIsPending(false);
       }
     },
-    [setViewedPubky],
+    [setLastPubky],
   );
 
   return { addKey: addKeyFn, isPending };

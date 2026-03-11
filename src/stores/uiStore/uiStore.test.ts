@@ -40,7 +40,7 @@ describe("useUIStore", () => {
         message: "",
       },
       keyStates: {},
-      viewedPubky: null,
+      lastPubky: null,
       developerMode: false,
     });
   });
@@ -310,7 +310,7 @@ describe("useUIStore", () => {
     });
 
     it("should not affect other state", () => {
-      useUIStore.getState().setViewedPubky("pk:viewed");
+      useUIStore.getState().setLastPubky("pk:viewed");
       useUIStore.getState().setDeveloperMode(true);
 
       useUIStore.getState().setAllKeyStates({
@@ -318,7 +318,7 @@ describe("useUIStore", () => {
       });
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBe("pk:viewed");
+      expect(state.lastPubky).toBe("pk:viewed");
       expect(state.developerMode).toBe(true);
     });
   });
@@ -352,33 +352,33 @@ describe("useUIStore", () => {
     });
   });
 
-  describe("setViewedPubky", () => {
+  describe("setLastPubky", () => {
     it("should set viewed pubky", () => {
-      useUIStore.getState().setViewedPubky("pk:mykey");
+      useUIStore.getState().setLastPubky("pk:mykey");
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBe("pk:mykey");
+      expect(state.lastPubky).toBe("pk:mykey");
     });
 
     it("should update viewed pubky", () => {
-      useUIStore.getState().setViewedPubky("pk:first");
-      useUIStore.getState().setViewedPubky("pk:second");
+      useUIStore.getState().setLastPubky("pk:first");
+      useUIStore.getState().setLastPubky("pk:second");
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBe("pk:second");
+      expect(state.lastPubky).toBe("pk:second");
     });
 
     it("should clear viewed pubky with null", () => {
-      useUIStore.getState().setViewedPubky("pk:mykey");
-      useUIStore.getState().setViewedPubky(null);
+      useUIStore.getState().setLastPubky("pk:mykey");
+      useUIStore.getState().setLastPubky(null);
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBeNull();
+      expect(state.lastPubky).toBeNull();
     });
 
     it("should not affect key states", () => {
       useUIStore.getState().setKeyState("pk:key1", mockKeyState);
-      useUIStore.getState().setViewedPubky("pk:key1");
+      useUIStore.getState().setLastPubky("pk:key1");
 
       const state = useUIStore.getState();
       expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
@@ -402,13 +402,13 @@ describe("useUIStore", () => {
     });
 
     it("should not affect other state", () => {
-      useUIStore.getState().setViewedPubky("pk:mykey");
+      useUIStore.getState().setLastPubky("pk:mykey");
       useUIStore.getState().setKeyState("pk:key1", mockKeyState);
 
       useUIStore.getState().setDeveloperMode(true);
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBe("pk:mykey");
+      expect(state.lastPubky).toBe("pk:mykey");
       expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
     });
   });
@@ -419,9 +419,9 @@ describe("useUIStore", () => {
       expect(state.keyStates).toEqual({});
     });
 
-    it("should have null viewedPubky by default", () => {
+    it("should have null lastPubky by default", () => {
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBeNull();
+      expect(state.lastPubky).toBeNull();
     });
 
     it("should have developerMode false by default", () => {

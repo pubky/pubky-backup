@@ -44,7 +44,7 @@ export function useDashboardActions(): DashboardActions {
   const { createSnapshotFn, isPending: isCreatingSnapshot } =
     Hooks.useCreateSnapshot();
   const { openDir } = Hooks.useOpenDataDir();
-  const { setViewedPubky } = Hooks.useSetViewedPubky();
+  const { setLastPubky } = Hooks.useSetLastPubky();
 
   // Snapshot message timeout ref
   const snapshotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -134,9 +134,9 @@ export function useDashboardActions(): DashboardActions {
 
   const handleSelectKey = useCallback(
     (selectedPubky: string) => {
-      void setViewedPubky(selectedPubky);
+      void setLastPubky(selectedPubky);
     },
-    [setViewedPubky],
+    [setLastPubky],
   );
 
   return {

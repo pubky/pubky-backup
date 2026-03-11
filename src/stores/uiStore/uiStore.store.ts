@@ -100,8 +100,8 @@ export const useUIStore = create<UIStore>()(
           UIActionTypes.REMOVE_KEY_STATE,
         ),
 
-      setViewedPubky: (pubky: string | null) =>
-        set({ viewedPubky: pubky }, false, UIActionTypes.SET_VIEWED_PUBKY),
+      setLastPubky: (pubky: string | null) =>
+        set({ lastPubky: pubky }, false, UIActionTypes.SET_LAST_PUBKY),
 
       setDeveloperMode: (enabled: boolean) =>
         set(

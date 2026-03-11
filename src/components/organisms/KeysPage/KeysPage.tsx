@@ -63,13 +63,13 @@ export function KeysPage() {
   const [newPubkyValue, setNewPubkyValue] = useState("");
 
   const keys = Hooks.useKeys();
-  const viewedPubky = Stores.useUIStore((s) => s.viewedPubky);
-  const { setViewedPubky } = Hooks.useSetViewedPubky();
+  const lastPubky = Stores.useUIStore((s) => s.lastPubky);
+  const { setLastPubky } = Hooks.useSetLastPubky();
   const { addKey, isPending: isAddingKey } = Hooks.useAddKey();
   const { setPage } = Stores.useUIStore.getState();
 
-  // viewedPubky is already normalized (z32 without prefix) from the backend
-  const currentPubky = viewedPubky;
+  // lastPubky is already normalized (z32 without prefix) from the backend
+  const currentPubky = lastPubky;
 
   const handleRemove = async (pubky: string) => {
     try {
@@ -80,10 +80,10 @@ export function KeysPage() {
         const remainingKeys = keys.filter((k) => k !== pubky);
         const nextKey = remainingKeys[0];
         if (nextKey) {
-          await setViewedPubky(nextKey);
+          await setLastPubky(nextKey);
         } else {
           // No keys left, clear state and return to startup screen
-          Stores.useUIStore.getState().setViewedPubky(null);
+          Stores.useUIStore.getState().setLastPubky(null);
           Stores.useUIStore.getState().setScreen("startup");
         }
       }
@@ -103,7 +103,7 @@ export function KeysPage() {
     }
 
     try {
-      await setViewedPubky(pubky);
+      await setLastPubky(pubky);
       setPage("sync");
     } catch (error: unknown) {
       Logger.error("KeysPage", "Failed to switch key", { error });

@@ -1,0 +1,1 @@
+export { useSetLastPubky } from "./useSetLastPubky";

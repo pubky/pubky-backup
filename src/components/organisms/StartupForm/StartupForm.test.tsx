@@ -34,7 +34,7 @@ describe("StartupForm", () => {
       pubkyInputValue: "",
       hasAutoLoaded: false,
       keyStates: {},
-      viewedPubky: null,
+      lastPubky: null,
     });
   });
 

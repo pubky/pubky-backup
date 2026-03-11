@@ -294,6 +294,8 @@ impl BackupController {
             if sync_now {
                 sync_now = false;
 
+                info!("Syncing key: {}", self.pubky);
+
                 self.send_status(ControllerStatus::Syncing {
                     pubky: self.pubky.clone(),
                     events_processed: 0,
@@ -459,7 +461,7 @@ impl BackupController {
             }
         }
 
-        info!("Processed {} events", events_processed);
+        info!("Processed {} events for key: {}", events_processed, self.pubky);
 
         // Save final cursor
         if events_processed > 0 {

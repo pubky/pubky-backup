@@ -34,7 +34,7 @@ describe("KeysPage", () => {
     vi.clearAllMocks();
     useUIStore.setState({
       keyStates: {},
-      viewedPubky: null,
+      lastPubky: null,
       currentPage: "keys",
     });
   });
@@ -101,7 +101,7 @@ describe("KeysPage", () => {
           "pk:key1": mockKeyState,
           "pk:key2": mockKeyState,
         },
-        viewedPubky: "pk:key1",
+        lastPubky: "pk:key1",
       });
 
       render(<KeysPage />);
@@ -111,7 +111,7 @@ describe("KeysPage", () => {
       expect(removeButtons.length).toBe(2);
     });
 
-    it("should call setViewedPubky when clicking a different key", async () => {
+    it("should call setLastPubky when clicking a different key", async () => {
       vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
       useUIStore.setState({
@@ -119,7 +119,7 @@ describe("KeysPage", () => {
           "pk:key1": mockKeyState,
           "pk:key2": mockKeyState,
         },
-        viewedPubky: "pk:key1",
+        lastPubky: "pk:key1",
       });
 
       render(<KeysPage />);
@@ -140,7 +140,7 @@ describe("KeysPage", () => {
         keyStates: {
           "pk:key1": mockKeyState,
         },
-        viewedPubky: "pk:key1",
+        lastPubky: "pk:key1",
         currentPage: "keys",
       });
 
@@ -193,7 +193,7 @@ describe("KeysPage", () => {
           "pk:key1": mockKeyState,
           "pk:key2": mockKeyState,
         },
-        viewedPubky: "pk:key1",
+        lastPubky: "pk:key1",
       });
 
       render(<KeysPage />);
@@ -215,14 +215,14 @@ describe("KeysPage", () => {
       });
     });
 
-    it("should clear viewedPubky and go to startup screen when deleting the last key", async () => {
+    it("should clear lastPubky and go to startup screen when deleting the last key", async () => {
       vi.mocked(services.deleteKey).mockResolvedValue(undefined);
 
       useUIStore.setState({
         keyStates: {
           "pk:only-key": mockKeyState,
         },
-        viewedPubky: "pk:only-key",
+        lastPubky: "pk:only-key",
         currentScreen: "dashboard",
       });
 
@@ -236,7 +236,7 @@ describe("KeysPage", () => {
       });
 
       await waitFor(() => {
-        expect(useUIStore.getState().viewedPubky).toBeNull();
+        expect(useUIStore.getState().lastPubky).toBeNull();
       });
 
       await waitFor(() => {

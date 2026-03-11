@@ -9,7 +9,7 @@ export { useAddKey } from "./useAddKey";
 export { useForceSync } from "./useForceSync";
 export { useCreateSnapshot } from "./useCreateSnapshot";
 export { useOpenDataDir } from "./useOpenDataDir";
-export { useSetViewedPubky } from "./useSetViewedPubky";
+export { useSetLastPubky } from "./useSetLastPubky";
 
 // Utility hooks
 export { useLastSyncTime } from "./useLastSyncTime";

@@ -12,7 +12,7 @@ describe("useAddKey", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useUIStore.setState({
-      viewedPubky: null,
+      lastPubky: null,
       keyStates: {},
     });
   });
@@ -78,7 +78,7 @@ describe("useAddKey", () => {
     expect(returnedPubky!).toBe("normalized-pubky-123");
   });
 
-  it("should update viewedPubky in store after successful add", async () => {
+  it("should update lastPubky in store after successful add", async () => {
     vi.mocked(services.addKey).mockResolvedValue("normalized-pubky");
 
     const { result } = renderHook(() => useAddKey());
@@ -88,7 +88,7 @@ describe("useAddKey", () => {
     });
 
     const state = useUIStore.getState();
-    expect(state.viewedPubky).toBe("normalized-pubky");
+    expect(state.lastPubky).toBe("normalized-pubky");
   });
 
   it("should set isPending to false on error", async () => {
@@ -122,8 +122,8 @@ describe("useAddKey", () => {
     ).rejects.toThrow("Invalid pubky format");
   });
 
-  it("should not update viewedPubky on error", async () => {
-    useUIStore.setState({ viewedPubky: "existing-pubky" });
+  it("should not update lastPubky on error", async () => {
+    useUIStore.setState({ lastPubky: "existing-pubky" });
     vi.mocked(services.addKey).mockRejectedValue(new Error("Failed"));
 
     const { result } = renderHook(() => useAddKey());
@@ -137,7 +137,7 @@ describe("useAddKey", () => {
     });
 
     const state = useUIStore.getState();
-    expect(state.viewedPubky).toBe("existing-pubky");
+    expect(state.lastPubky).toBe("existing-pubky");
   });
 
   it("should handle sequential calls correctly", async () => {
@@ -152,14 +152,14 @@ describe("useAddKey", () => {
     });
 
     expect(result.current.isPending).toBe(false);
-    expect(useUIStore.getState().viewedPubky).toBe("first-normalized");
+    expect(useUIStore.getState().lastPubky).toBe("first-normalized");
 
     await act(async () => {
       await result.current.addKey({ pubkyValue: "second" });
     });
 
     expect(result.current.isPending).toBe(false);
-    expect(useUIStore.getState().viewedPubky).toBe("second-normalized");
+    expect(useUIStore.getState().lastPubky).toBe("second-normalized");
     expect(services.addKey).toHaveBeenCalledTimes(2);
   });
 });
