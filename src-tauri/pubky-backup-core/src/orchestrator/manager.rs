@@ -450,8 +450,7 @@ impl BackupManager {
     /// Set the sync interval for all controllers.
     ///
     /// Persists the new interval to disk, then notifies all running controllers
-    /// via a shared watch channel. Controllers pick up the new interval on their
-    /// next sleep cycle — no restart required.
+    /// via a shared watch channel.
     pub async fn set_sync_interval(&self, interval_secs: u64) -> Result<(), OrchestratorError> {
         if interval_secs < crate::sync::MIN_SYNC_INTERVAL_SECONDS {
             return Err(OrchestratorError::InvalidConfig(format!(
@@ -474,8 +473,24 @@ impl BackupManager {
         }
 
         // Notify all controllers of the new interval via the shared watch channel.
-        // Controllers will pick up the change on their next sleep cycle.
         let _ = self.sync_interval_tx.send(interval_secs);
+
+        // Force sync all controllers so they immediately wake up and use the new interval,
+        // rather than waiting for the previous (potentially longer) sleep to expire.
+        {
+            let inner = self.inner.read();
+            for (pubky, managed_key) in &inner.keys {
+                if let Err(e) = managed_key
+                    .control_tx
+                    .try_send(ControllerCommand::ForceSync)
+                {
+                    warn!(
+                        "Failed to force sync {} after interval change: {}",
+                        pubky, e
+                    );
+                }
+            }
+        }
 
         info!("Sync interval updated to {}s", interval_secs);
         Ok(())
