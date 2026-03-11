@@ -18,8 +18,7 @@
 //!
 //! ```text
 //! ~/.pubky-backup/
-//! ├── config/
-//! │   └── last_pubky
+//! ├── config.json
 //! ├── logs/
 //! │   └── error.log
 //! └── keys/
@@ -32,10 +31,11 @@
 //!         └── snapshots/
 //! ```
 
+use super::config::AppConfig;
 use super::error::StorageError;
 use super::{
-    CONFIG_DIR_NAME, CURSOR_FILENAME, DATA_DIR_NAME, ERROR_LOG_FILENAME, KEYS_DIR_NAME,
-    LAST_PUBKY_FILENAME, LOGS_DIR_NAME, STATE_DIR_NAME,
+    CONFIG_FILENAME, CURSOR_FILENAME, DATA_DIR_NAME, ERROR_LOG_FILENAME, KEYS_DIR_NAME,
+    LEGACY_LAST_PUBKY_FILENAME, LOGS_DIR_NAME, STATE_DIR_NAME,
 };
 use log::{error, info};
 use pubky::PublicKey;
@@ -111,7 +111,7 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
 
     // Find old-style pubky directories (valid pubky strings in root, excluding new structure dirs)
     let mut old_pubky_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
-    let new_structure_dirs = [CONFIG_DIR_NAME, LOGS_DIR_NAME, KEYS_DIR_NAME];
+    let new_structure_dirs = [LOGS_DIR_NAME, KEYS_DIR_NAME];
 
     for entry in std::fs::read_dir(data_dir)
         .map_err(|e| StorageError::Internal(format!("Failed to read data directory: {}", e)))?
@@ -137,7 +137,7 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
     }
 
     // Check for old app-level files
-    let old_last_pubky = data_dir.join(LAST_PUBKY_FILENAME);
+    let old_last_pubky = data_dir.join(LEGACY_LAST_PUBKY_FILENAME);
     let old_error_log = data_dir.join(ERROR_LOG_FILENAME);
     let keys_dir = data_dir.join(KEYS_DIR_NAME);
 
@@ -154,17 +154,26 @@ pub fn migrate_old_structure(data_dir: &Path) -> Result<(), StorageError> {
     );
 
     if old_last_pubky.exists() {
-        let config_dir = data_dir.join(CONFIG_DIR_NAME);
-        std::fs::create_dir_all(&config_dir).map_err(|e| {
-            StorageError::DirectoryCreation(format!("{}: {}", config_dir.display(), e))
-        })?;
-
-        let new_last_pubky = config_dir.join(LAST_PUBKY_FILENAME);
-        if move_file(&old_last_pubky, &new_last_pubky)? {
-            info!("Migrating last_pubky to config/last_pubky");
-        } else {
-            info!("Skipping last_pubky migration: destination already exists");
+        // Write last_pubky value into config.json at root
+        if let Ok(pubky_str) = std::fs::read_to_string(&old_last_pubky) {
+            let pubky_str = pubky_str.trim().to_string();
+            if !pubky_str.is_empty() {
+                let config_path = data_dir.join(CONFIG_FILENAME);
+                let mut config: AppConfig = std::fs::read_to_string(&config_path)
+                    .ok()
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                    .unwrap_or_default();
+                config.last_pubky = Some(pubky_str);
+                let json = serde_json::to_string_pretty(&config).map_err(|e| {
+                    StorageError::Internal(format!("Failed to serialize config: {}", e))
+                })?;
+                std::fs::write(&config_path, json).map_err(|e| {
+                    StorageError::Internal(format!("Failed to write config.json: {}", e))
+                })?;
+                info!("Migrating last_pubky to config.json");
+            }
         }
+        let _ = std::fs::remove_file(&old_last_pubky);
     }
 
     if old_error_log.exists() {
@@ -316,21 +325,19 @@ mod tests {
         );
 
         // Also add old app-level files
-        std::fs::write(temp_dir.path().join(LAST_PUBKY_FILENAME), pubky_str).unwrap();
+        std::fs::write(temp_dir.path().join(LEGACY_LAST_PUBKY_FILENAME), pubky_str).unwrap();
         std::fs::write(temp_dir.path().join(ERROR_LOG_FILENAME), "global error log").unwrap();
 
         // Run migration
         migrate_old_structure(temp_dir.path()).unwrap();
 
-        // Verify app-level files migrated
-        assert!(
-            temp_dir
-                .path()
-                .join(CONFIG_DIR_NAME)
-                .join(LAST_PUBKY_FILENAME)
-                .exists(),
-            "last_pubky should be in config/"
-        );
+        // Verify last_pubky migrated into config.json at root
+        let config_path = temp_dir.path().join(CONFIG_FILENAME);
+        assert!(config_path.exists(), "config.json should exist");
+        let config: AppConfig =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert_eq!(config.last_pubky.as_deref(), Some(pubky_str));
+
         assert!(
             temp_dir
                 .path()
@@ -340,7 +347,7 @@ mod tests {
             "error.log should be in logs/"
         );
         assert!(
-            !temp_dir.path().join(LAST_PUBKY_FILENAME).exists(),
+            !temp_dir.path().join(LEGACY_LAST_PUBKY_FILENAME).exists(),
             "old last_pubky should be removed"
         );
         assert!(
@@ -483,7 +490,7 @@ mod tests {
         migrate_old_structure(temp_dir.path()).unwrap();
 
         // Nothing should have been created
-        assert!(!temp_dir.path().join(CONFIG_DIR_NAME).exists());
+        assert!(!temp_dir.path().join(CONFIG_FILENAME).exists());
         assert!(!temp_dir.path().join(LOGS_DIR_NAME).exists());
         assert!(!temp_dir.path().join(KEYS_DIR_NAME).exists());
     }

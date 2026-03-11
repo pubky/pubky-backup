@@ -3,28 +3,25 @@
 //! This module provides the main [`AppStorage`] facade and app-level storage components.
 
 use super::common::Storage;
+use super::config::ConfigStorage;
 use super::error::StorageError;
 use super::keys::{KeyStorage, KeysStorage};
 use super::migration::migrate_old_structure;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use pubky::{PubkyResource, PublicKey};
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::path::{Path, PathBuf};
 
 const APP_DATA_DIR_NAME: &str = ".pubky-backup";
 
 // App-level directory names
-pub(crate) const CONFIG_DIR_NAME: &str = "config";
 pub(crate) const LOGS_DIR_NAME: &str = "logs";
 pub(crate) const KEYS_DIR_NAME: &str = "keys";
 
 // App-level file names
-pub(crate) const LAST_PUBKY_FILENAME: &str = "last_pubky";
-pub(crate) const SYNC_INTERVAL_FILENAME: &str = "sync_interval";
-pub(crate) const KEYS_LOCATION_FILENAME: &str = "keys_location";
 pub(crate) const ERROR_LOG_FILENAME: &str = "error.log";
+
+// Legacy config file names (used for migration only)
+pub(crate) const LEGACY_LAST_PUBKY_FILENAME: &str = "last_pubky";
 
 // Per-key directory/file names (re-exported from keys module)
 pub(crate) use super::keys::{CURSOR_FILENAME, DATA_DIR_NAME, STATE_DIR_NAME};
@@ -52,22 +49,18 @@ pub fn get_data_directory() -> Result<PathBuf, StorageError> {
 }
 
 /// Storage for application-level data (config, global logs).
-///
-/// Located at: `~/.pubky-backup/config/` and `~/.pubky-backup/logs/`
 struct AppDataStorage {
-    config_dir: PathBuf,
-    config_storage: Storage,
+    config: ConfigStorage,
     logs_storage: Storage,
 }
 
 impl AppDataStorage {
     fn new(data_dir: &Path) -> Result<Self, StorageError> {
-        let config_dir = data_dir.join(CONFIG_DIR_NAME);
         let logs_dir = data_dir.join(LOGS_DIR_NAME);
+
         Ok(AppDataStorage {
-            config_storage: Storage::new(&config_dir)?,
+            config: ConfigStorage::new(data_dir)?,
             logs_storage: Storage::new(&logs_dir)?,
-            config_dir,
         })
     }
 
@@ -84,110 +77,6 @@ impl AppDataStorage {
             .append(ERROR_LOG_FILENAME, log_entry)
             .await?;
         Ok(())
-    }
-
-    pub async fn write_last_pubky(&self, pubky: &PublicKey) -> Result<(), StorageError> {
-        let pubky_str = pubky.z32();
-        self.config_storage
-            .write(LAST_PUBKY_FILENAME, pubky_str.clone())
-            .await?;
-        debug!("Last pubky value written: {}", pubky_str);
-        Ok(())
-    }
-
-    pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
-        // Check existence via std::fs first to avoid noisy opendal WARN logs for missing files
-        if !self.config_dir.join(LAST_PUBKY_FILENAME).exists() {
-            return Ok(None);
-        }
-        match self.config_storage.read(LAST_PUBKY_FILENAME).await {
-            Ok(data) => {
-                let pubky = PublicKey::from_str(&String::from_utf8(data.to_vec())?)
-                    .map_err(|e| StorageError::Internal(e.to_string()))?;
-                Ok(Some(pubky))
-            }
-            Err(_) => Ok(None),
-        }
-    }
-
-    pub async fn clear_last_pubky(&self) -> Result<(), StorageError> {
-        self.config_storage.delete(LAST_PUBKY_FILENAME).await?;
-        debug!("Last pubky value cleared");
-        Ok(())
-    }
-
-    pub async fn write_sync_interval(&self, interval_secs: u64) -> Result<(), StorageError> {
-        self.config_storage
-            .write(SYNC_INTERVAL_FILENAME, interval_secs.to_string())
-            .await?;
-        debug!("Sync interval written: {}s", interval_secs);
-        Ok(())
-    }
-
-    /// Read keys_location synchronously (needed during construction).
-    pub fn read_keys_location(&self) -> Option<PathBuf> {
-        let path = self.config_dir.join(KEYS_LOCATION_FILENAME);
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                use std::ffi::OsStr;
-                #[cfg(unix)]
-                let os_str = {
-                    use std::os::unix::ffi::OsStrExt;
-                    OsStr::from_bytes(&bytes)
-                };
-                #[cfg(not(unix))]
-                let os_str = OsStr::new(std::str::from_utf8(&bytes).ok()?);
-
-                let path = PathBuf::from(os_str);
-                if path.as_os_str().is_empty() {
-                    None
-                } else {
-                    Some(path)
-                }
-            }
-            Err(_) => None,
-        }
-    }
-
-    /// Write keys_location synchronously (needed during construction).
-    pub fn write_keys_location(&self, keys_dir: &Path) -> Result<(), StorageError> {
-        std::fs::create_dir_all(&self.config_dir).map_err(|e| {
-            StorageError::DirectoryCreation(format!("{}: {}", self.config_dir.display(), e))
-        })?;
-        #[cfg(unix)]
-        let bytes = {
-            use std::os::unix::ffi::OsStrExt;
-            keys_dir.as_os_str().as_bytes().to_vec()
-        };
-        #[cfg(not(unix))]
-        let bytes = keys_dir.to_string_lossy().as_bytes().to_vec();
-
-        std::fs::write(self.config_dir.join(KEYS_LOCATION_FILENAME), bytes)
-            .map_err(|e| StorageError::Internal(format!("Failed to write keys_location: {}", e)))?;
-        debug!("Keys location written: {}", keys_dir.display());
-        Ok(())
-    }
-
-    pub async fn read_sync_interval(&self) -> Result<Option<u64>, StorageError> {
-        match self.config_storage.read(SYNC_INTERVAL_FILENAME).await {
-            Ok(data) => {
-                let value_str = String::from_utf8(data.to_vec())?;
-                match value_str.trim().parse::<u64>() {
-                    Ok(secs) => Ok(Some(secs)),
-                    Err(_) => {
-                        warn!(
-                            "Failed to parse sync interval '{}', using default",
-                            value_str.trim()
-                        );
-                        Ok(None)
-                    }
-                }
-            }
-            Err(e) => {
-                debug!("No sync interval file found: {}", e);
-                Ok(None)
-            }
-        }
     }
 }
 
@@ -214,8 +103,7 @@ impl AppDataStorage {
 ///
 /// ```text
 /// ~/.pubky-backup/
-/// ├── config/                    # App-level configuration
-/// │   └── last_pubky             # Last used pubky
+/// ├── config.json                # App-level configuration
 /// ├── logs/                      # App-level logs
 /// │   └── error.log              # Global error log
 /// └── keys/                      # Per-key data
@@ -269,7 +157,7 @@ impl AppStorage {
         let app_data = AppDataStorage::new(&data_dir)?;
 
         // Resolve keys directory: use stored location if valid, otherwise default
-        let keys_dir = match app_data.read_keys_location() {
+        let keys_dir = match app_data.config.read_keys_location() {
             Some(path) if path.exists() => path,
             other => {
                 if let Some(path) = other {
@@ -279,7 +167,7 @@ impl AppStorage {
                     );
                 }
                 let default = data_dir.join(KEYS_DIR_NAME);
-                app_data.write_keys_location(&default)?;
+                app_data.config.write_keys_location(&default)?;
                 default
             }
         };
@@ -449,7 +337,7 @@ impl AppStorage {
     ///
     /// * `pubky` - The public key to store
     pub async fn write_last_pubky(&self, pubky: &PublicKey) -> Result<(), StorageError> {
-        self.app_data.write_last_pubky(pubky).await
+        self.app_data.config.write_last_pubky(pubky)
     }
 
     /// Read the last used pubky from storage.
@@ -458,22 +346,22 @@ impl AppStorage {
     ///
     /// The last used public key, or `None` if none has been stored
     pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
-        self.app_data.read_last_pubky().await
+        self.app_data.config.read_last_pubky()
     }
 
     /// Clear the last used pubky from storage.
     pub async fn clear_last_pubky(&self) -> Result<(), StorageError> {
-        self.app_data.clear_last_pubky().await
+        self.app_data.config.clear_last_pubky()
     }
 
     /// Read the current keys location from config.
     pub fn read_keys_location(&self) -> Option<PathBuf> {
-        self.app_data.read_keys_location()
+        self.app_data.config.read_keys_location()
     }
 
     /// Write the keys location to config.
     pub fn write_keys_location(&self, keys_dir: &Path) -> Result<(), StorageError> {
-        self.app_data.write_keys_location(keys_dir)
+        self.app_data.config.write_keys_location(keys_dir)
     }
 
     /// Move the keys directory to a new location.
@@ -533,7 +421,7 @@ impl AppStorage {
 
                 // Update config BEFORE deleting old dir — if delete fails, config
                 // already points to the complete new copy.
-                self.app_data.write_keys_location(&new_keys_dir)?;
+                self.app_data.config.write_keys_location(&new_keys_dir)?;
                 info!("Keys location updated to {}", new_keys_dir.display());
 
                 std::fs::remove_dir_all(old_keys_dir).map_err(|e| {
@@ -549,7 +437,7 @@ impl AppStorage {
         }
 
         // Update config to point to new location (same-filesystem rename path)
-        self.app_data.write_keys_location(&new_keys_dir)?;
+        self.app_data.config.write_keys_location(&new_keys_dir)?;
         info!("Keys location updated to {}", new_keys_dir.display());
 
         Ok(new_keys_dir)
@@ -557,14 +445,14 @@ impl AppStorage {
 
     /// Write the sync interval to storage.
     pub async fn write_sync_interval(&self, interval_secs: u64) -> Result<(), StorageError> {
-        self.app_data.write_sync_interval(interval_secs).await
+        self.app_data.config.write_sync_interval(interval_secs)
     }
 
     /// Read the sync interval from storage.
     ///
     /// Returns `None` if no interval has been stored.
-    pub async fn read_sync_interval(&self) -> Result<Option<u64>, StorageError> {
-        self.app_data.read_sync_interval().await
+    pub fn read_sync_interval(&self) -> Option<u64> {
+        self.app_data.config.read_sync_interval()
     }
 
     /// Create a snapshot (zip archive) of the backed-up data for a specific pubky.
@@ -828,41 +716,46 @@ mod tests {
         let (storage, _temp_dir) = create_test_storage();
 
         // Initially should be None
-        let interval = storage.read_sync_interval().await.unwrap();
+        let interval = storage.read_sync_interval();
         assert!(interval.is_none());
 
         // Write an interval
         storage.write_sync_interval(600).await.unwrap();
 
         // Read it back
-        let interval = storage.read_sync_interval().await.unwrap();
+        let interval = storage.read_sync_interval();
         assert_eq!(interval, Some(600));
 
         // Overwrite with a new value
         storage.write_sync_interval(1800).await.unwrap();
-        let interval = storage.read_sync_interval().await.unwrap();
+        let interval = storage.read_sync_interval();
         assert_eq!(interval, Some(1800));
     }
 
     #[tokio::test]
     async fn test_read_sync_interval_with_corrupted_file() {
-        let (storage, temp_dir) = create_test_storage();
+        use super::super::config::CONFIG_FILENAME;
 
-        // Write a non-numeric value directly to the sync_interval file
-        let config_dir = temp_dir.path().join("config");
-        std::fs::create_dir_all(&config_dir).unwrap();
-        std::fs::write(config_dir.join("sync_interval"), "not_a_number").unwrap();
+        let (_storage, temp_dir) = create_test_storage();
+
+        // Write invalid JSON directly to the config.json file
+        std::fs::write(temp_dir.path().join(CONFIG_FILENAME), "not valid json").unwrap();
+
+        // Re-create storage to read the corrupted file
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
 
         // Should return None (graceful fallback), not error
-        let interval = storage.read_sync_interval().await.unwrap();
+        let interval = storage.read_sync_interval();
         assert!(
             interval.is_none(),
-            "Should return None for unparseable sync interval"
+            "Should return None for corrupted config"
         );
     }
 
     #[tokio::test]
     async fn test_storage_directory_structure() {
+        use super::super::config::CONFIG_FILENAME;
+
         let (storage, temp_dir) = create_test_storage();
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
@@ -870,19 +763,16 @@ mod tests {
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
         storage.write(&resource, b"test".to_vec()).await.unwrap();
 
-        // Write last pubky to trigger config directory creation
+        // Write last pubky to trigger config file creation
         storage.write_last_pubky(&pubky).await.unwrap();
 
         // Verify directory structure
         let root = temp_dir.path();
 
-        // App-level directories
-        assert!(root.join(CONFIG_DIR_NAME).exists(), "config/ should exist");
+        // App-level files
         assert!(
-            root.join(CONFIG_DIR_NAME)
-                .join(LAST_PUBKY_FILENAME)
-                .exists(),
-            "config/last_pubky should exist"
+            root.join(CONFIG_FILENAME).exists(),
+            "config.json should exist at root"
         );
         assert!(root.join(LOGS_DIR_NAME).exists(), "logs/ should exist");
 
@@ -909,19 +799,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_keys_location_default_written_on_init() {
+        use super::super::config::{AppConfig, CONFIG_FILENAME};
+
         let temp_dir = TempDir::new().unwrap();
         let _storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
 
-        // keys_location config file should be created with default path
-        let config_file = temp_dir
-            .path()
-            .join(CONFIG_DIR_NAME)
-            .join(KEYS_LOCATION_FILENAME);
-        assert!(config_file.exists(), "keys_location config should exist");
+        // config.json should be created at root with keys_location set to default path
+        let config_file = temp_dir.path().join(CONFIG_FILENAME);
+        assert!(config_file.exists(), "config.json should exist");
 
-        let contents = std::fs::read_to_string(&config_file).unwrap();
+        let config: AppConfig =
+            serde_json::from_str(&std::fs::read_to_string(&config_file).unwrap()).unwrap();
         let expected = temp_dir.path().join(KEYS_DIR_NAME);
-        assert_eq!(contents, expected.to_string_lossy());
+        assert_eq!(
+            config.keys_location.as_deref(),
+            Some(expected.to_string_lossy().as_ref())
+        );
     }
 
     #[tokio::test]
@@ -1024,18 +917,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_keys_location_fallback_when_stored_path_missing() {
+        use super::super::config::{AppConfig, CONFIG_FILENAME};
+
         let temp_dir = TempDir::new().unwrap();
 
         // Create storage so config is written
         let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
         drop(storage);
 
-        // Overwrite keys_location config to point to a non-existent path
-        let config_file = temp_dir
-            .path()
-            .join(CONFIG_DIR_NAME)
-            .join(KEYS_LOCATION_FILENAME);
-        std::fs::write(&config_file, "/nonexistent/keys").unwrap();
+        // Overwrite keys_location in config.json to point to a non-existent path
+        let config_file = temp_dir.path().join(CONFIG_FILENAME);
+        let mut config: AppConfig =
+            serde_json::from_str(&std::fs::read_to_string(&config_file).unwrap()).unwrap();
+        config.keys_location = Some("/nonexistent/keys".to_string());
+        std::fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).unwrap();
 
         // Creating new storage should fall back to default and update config
         let storage2 = AppStorage::new_with_path(temp_dir.path()).unwrap();
@@ -1046,38 +941,32 @@ mod tests {
             "Should fall back to default keys dir"
         );
 
-        // Config file should have been updated to the default
-        let updated = std::fs::read_to_string(&config_file).unwrap();
-        assert_eq!(updated, expected_default.to_string_lossy());
+        // Config should have been updated to the default
+        let updated: AppConfig =
+            serde_json::from_str(&std::fs::read_to_string(&config_file).unwrap()).unwrap();
+        assert_eq!(
+            updated.keys_location.as_deref(),
+            Some(expected_default.to_string_lossy().as_ref())
+        );
     }
 
-    #[test]
-    fn test_keys_location_roundtrip_non_ascii_path() {
-        let temp_dir = TempDir::new().unwrap();
-        let app_data = AppDataStorage::new(temp_dir.path()).unwrap();
+    #[tokio::test]
+    async fn test_clear_last_pubky_preserves_other_fields() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
-        // Path with non-ASCII (but valid UTF-8) characters
-        let path = PathBuf::from("/données/clés/备份");
-        app_data.write_keys_location(&path).unwrap();
-        let read_back = app_data.read_keys_location().unwrap();
-        assert_eq!(read_back, path);
-    }
+        // Set all config values
+        storage.write_last_pubky(&pubky).await.unwrap();
+        storage.write_sync_interval(300).await.unwrap();
 
-    #[cfg(unix)]
-    #[test]
-    fn test_keys_location_roundtrip_non_utf8_path() {
-        use std::ffi::OsStr;
-        use std::os::unix::ffi::OsStrExt;
+        // Clear only last_pubky
+        storage.clear_last_pubky().await.unwrap();
 
-        let temp_dir = TempDir::new().unwrap();
-        let app_data = AppDataStorage::new(temp_dir.path()).unwrap();
-
-        // Path with bytes that are not valid UTF-8
-        let non_utf8 = OsStr::from_bytes(b"/tmp/\xff\xfe/keys");
-        let path = PathBuf::from(non_utf8);
-        app_data.write_keys_location(&path).unwrap();
-        let read_back = app_data.read_keys_location().unwrap();
-        assert_eq!(read_back, path);
+        // last_pubky should be gone, sync_interval should remain
+        let last = storage.read_last_pubky().await.unwrap();
+        assert!(last.is_none());
+        let interval = storage.read_sync_interval();
+        assert_eq!(interval, Some(300));
     }
 
     /// Verify that storage reads work without a BackupManager.

@@ -122,9 +122,9 @@ impl BackupManager {
         };
 
         // Load sync interval: disk > config > default, with validation
-        let sync_interval_secs = match storage.read_sync_interval().await {
-            Ok(Some(secs)) if secs >= crate::sync::MIN_SYNC_INTERVAL_SECONDS => secs,
-            Ok(Some(invalid)) => {
+        let sync_interval_secs = match storage.read_sync_interval() {
+            Some(secs) if secs >= crate::sync::MIN_SYNC_INTERVAL_SECONDS => secs,
+            Some(invalid) => {
                 error!(
                     "Stored sync interval {}s is below minimum {}s, using default {}s",
                     invalid,
@@ -133,7 +133,7 @@ impl BackupManager {
                 );
                 crate::sync::DEFAULT_SYNC_INTERVAL_SECONDS
             }
-            _ => config.sync_interval_secs,
+            None => config.sync_interval_secs,
         };
 
         // Create update broadcast channel for external subscribers
@@ -1312,7 +1312,7 @@ mod tests {
         assert_eq!(manager.get_sync_interval(), 600);
 
         // Verify persisted to disk
-        let stored = manager.storage.read_sync_interval().await.unwrap();
+        let stored = manager.storage.read_sync_interval();
         assert_eq!(stored, Some(600));
     }
 
