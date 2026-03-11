@@ -461,7 +461,10 @@ impl BackupController {
             }
         }
 
-        info!("Processed {} events for key: {}", events_processed, self.pubky);
+        info!(
+            "Processed {} events for key: {}",
+            events_processed, self.pubky
+        );
 
         // Save final cursor
         if events_processed > 0 {

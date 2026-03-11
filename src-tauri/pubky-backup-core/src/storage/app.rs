@@ -6,7 +6,7 @@ use super::common::Storage;
 use super::config::ConfigStorage;
 use super::error::StorageError;
 use super::keys::{KeyStorage, KeysStorage};
-use super::migration::migrate_old_structure;
+use super::migration::remove_legacy_data;
 use log::{error, info, warn};
 use pubky::{PubkyResource, PublicKey};
 use std::path::{Path, PathBuf};
@@ -19,12 +19,6 @@ pub(crate) const KEYS_DIR_NAME: &str = "keys";
 
 // App-level file names
 pub(crate) const ERROR_LOG_FILENAME: &str = "error.log";
-
-// Legacy config file names (used for migration only)
-pub(crate) const LEGACY_LAST_PUBKY_FILENAME: &str = "last_pubky";
-
-// Per-key directory/file names (re-exported from keys module)
-pub(crate) use super::keys::{CURSOR_FILENAME, DATA_DIR_NAME, STATE_DIR_NAME};
 
 /// Get the root data directory for application storage.
 ///
@@ -90,14 +84,11 @@ impl AppDataStorage {
 /// - Storing application metadata (like the last used pubky)
 /// - Creating point-in-time snapshots
 ///
-/// # Automatic Migration
+/// # Legacy Data Cleanup
 ///
-/// When [`AppStorage::new()`] is called, it automatically detects and migrates data
-/// from the old flat storage structure to the new hierarchical structure. This migration:
-/// - Is safe to run multiple times (idempotent)
-/// - Preserves all data integrity
-/// - Logs migration progress for debugging
-/// - Removes old structure only after successful migration
+/// When [`AppStorage::new()`] is called, it detects old storage layouts (identified
+/// by a `config/` subdirectory) and removes all data so the app starts fresh.
+/// All backed-up data is re-fetched from homeservers.
 ///
 /// # Storage Layout
 ///
@@ -151,8 +142,8 @@ impl AppStorage {
     }
 
     fn init(data_dir: PathBuf) -> Result<Self, StorageError> {
-        // Migrate from old structure if needed
-        migrate_old_structure(&data_dir)?;
+        // Remove legacy storage layouts so the app starts fresh
+        remove_legacy_data(&data_dir)?;
 
         let app_data = AppDataStorage::new(&data_dir)?;
 
@@ -517,6 +508,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), StorageError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::storage::keys::{DATA_DIR_NAME, STATE_DIR_NAME};
     use crate::TEST_PUBKY;
 
     use super::*;

@@ -3,7 +3,7 @@
 //! Manages `config.json` at the root of the data directory (`~/.pubky-backup/config.json`).
 
 use super::error::StorageError;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use pubky::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -37,46 +37,7 @@ pub(crate) struct ConfigStorage {
 impl ConfigStorage {
     pub fn new(data_dir: &Path) -> Result<Self, StorageError> {
         let config_path = data_dir.join(CONFIG_FILENAME);
-
-        let storage = ConfigStorage { config_path };
-
-        // Migrate from old config/ subdirectory layout if needed
-        storage.migrate_config_dir(data_dir)?;
-
-        Ok(storage)
-    }
-
-    /// Migrate config.json from old `config/` subdirectory to root.
-    ///
-    /// The committed storage layout placed config at `~/.pubky-backup/config/config.json`.
-    /// We now store it at `~/.pubky-backup/config.json` directly.
-    fn migrate_config_dir(&self, data_dir: &Path) -> Result<(), StorageError> {
-        let old_config_dir = data_dir.join("config");
-        let old_config_file = old_config_dir.join(CONFIG_FILENAME);
-
-        if !old_config_file.exists() {
-            return Ok(());
-        }
-
-        info!("Migrating config.json from config/ subdirectory to root");
-
-        // If root config.json doesn't exist yet, move the old one
-        if !self.config_path.exists() {
-            std::fs::rename(&old_config_file, &self.config_path).or_else(|_| {
-                // Cross-filesystem fallback
-                std::fs::copy(&old_config_file, &self.config_path)
-                    .map(|_| ())
-                    .map_err(|e| {
-                        StorageError::Internal(format!("Failed to copy config.json to root: {}", e))
-                    })
-            })?;
-        }
-
-        // Clean up old config file and directory
-        let _ = std::fs::remove_file(&old_config_file);
-        let _ = std::fs::remove_dir(&old_config_dir); // only removes if empty
-
-        Ok(())
+        Ok(ConfigStorage { config_path })
     }
 
     /// Read the config from disk. Returns default if file doesn't exist or is invalid.
@@ -232,49 +193,5 @@ mod tests {
         storage.write_keys_location(&path).unwrap();
         let read_back = storage.read_keys_location().unwrap();
         assert_eq!(read_back, path);
-    }
-
-    #[test]
-    fn test_migrate_from_config_subdir() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create old config/config.json
-        let old_config_dir = temp_dir.path().join("config");
-        std::fs::create_dir_all(&old_config_dir).unwrap();
-        let json = r#"{"last_pubky": "test_key", "sync_interval": 600}"#;
-        std::fs::write(old_config_dir.join(CONFIG_FILENAME), json).unwrap();
-
-        // Creating ConfigStorage should migrate
-        let storage = ConfigStorage::new(temp_dir.path()).unwrap();
-
-        // Config should be readable from root
-        let config = storage.read_config();
-        assert_eq!(config.last_pubky.as_deref(), Some("test_key"));
-        assert_eq!(config.sync_interval, Some(600));
-
-        // Old config dir should be cleaned up
-        assert!(!old_config_dir.join(CONFIG_FILENAME).exists());
-        assert!(!old_config_dir.exists());
-    }
-
-    #[test]
-    fn test_migrate_config_subdir_preserves_root_if_exists() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create root config.json (newer)
-        let root_json = r#"{"sync_interval": 900}"#;
-        std::fs::write(temp_dir.path().join(CONFIG_FILENAME), root_json).unwrap();
-
-        // Create old config/config.json (older, should be ignored)
-        let old_config_dir = temp_dir.path().join("config");
-        std::fs::create_dir_all(&old_config_dir).unwrap();
-        let old_json = r#"{"sync_interval": 300}"#;
-        std::fs::write(old_config_dir.join(CONFIG_FILENAME), old_json).unwrap();
-
-        let storage = ConfigStorage::new(temp_dir.path()).unwrap();
-
-        // Root config should be preserved (not overwritten)
-        let config = storage.read_config();
-        assert_eq!(config.sync_interval, Some(900));
     }
 }

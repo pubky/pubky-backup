@@ -8,7 +8,7 @@
 //! - [`AppStorage`] - Main storage facade providing unified access to all storage operations
 //! - [`KeyStorage`] - Storage for a single pubky's backup data and state
 //! - [`KeysStorage`] - Manager for multiple key storage instances
-//! - [`migration`] - Automatic migration from old storage structures
+//! - [`migration`] - Legacy data detection and cleanup
 //!
 //! # Storage Layout
 //!
@@ -30,11 +30,11 @@
 //!             └── <timestamp>.zip
 //! ```
 //!
-//! # Automatic Migration
+//! # Legacy Data Cleanup
 //!
-//! When [`AppStorage::new()`] is called, it automatically detects and migrates data
-//! from the old flat storage structure to the new hierarchical structure. See the
-//! [`migration`] module for details.
+//! When [`AppStorage::new()`] is called, it detects old storage layouts and removes
+//! them so the app starts fresh. All data is re-fetched from homeservers.
+//! See the [`migration`] module for details.
 
 mod app;
 mod common;
@@ -46,10 +46,3 @@ mod migration;
 pub use app::{get_data_directory, AppStorage};
 pub use error::StorageError;
 pub use keys::{KeyStorage, KeysStorage};
-
-// Re-export constants used by migration tests
-pub(crate) use app::{
-    CURSOR_FILENAME, DATA_DIR_NAME, ERROR_LOG_FILENAME, KEYS_DIR_NAME, LEGACY_LAST_PUBKY_FILENAME,
-    LOGS_DIR_NAME, STATE_DIR_NAME,
-};
-pub(crate) use config::CONFIG_FILENAME;
