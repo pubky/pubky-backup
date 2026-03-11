@@ -111,11 +111,7 @@ export const useUIStore = create<UIStore>()(
         ),
 
       setNavDisabled: (disabled: boolean) =>
-        set(
-          { navDisabled: disabled },
-          false,
-          UIActionTypes.SET_NAV_DISABLED,
-        ),
+        set({ navDisabled: disabled }, false, UIActionTypes.SET_NAV_DISABLED),
     }),
     {
       name: "ui-store",

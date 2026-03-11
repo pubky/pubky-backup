@@ -30,9 +30,7 @@ function NavButton({
       title={title}
       className={cn(
         "flex items-center justify-center w-7 h-7 rounded-md border-none transition-colors duration-200",
-        disabled
-          ? "cursor-not-allowed opacity-30"
-          : "cursor-pointer",
+        disabled ? "cursor-not-allowed opacity-30" : "cursor-pointer",
         isActive
           ? "bg-surface-light text-white"
           : "bg-transparent text-text-secondary hover:text-white hover:bg-surface-light/50",

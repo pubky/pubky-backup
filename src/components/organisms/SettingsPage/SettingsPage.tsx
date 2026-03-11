@@ -119,7 +119,12 @@ export function SettingsPage() {
         </div>
 
         {/* Sync Interval */}
-        <div className={cn("flex flex-col gap-4", isMoving && "opacity-30 pointer-events-none")}>
+        <div
+          className={cn(
+            "flex flex-col gap-4",
+            isMoving && "opacity-30 pointer-events-none",
+          )}
+        >
           <label className="text-xs font-medium tracking-[0.1em] uppercase text-text-secondary text-left">
             Sync Interval
           </label>
@@ -167,7 +172,6 @@ export function SettingsPage() {
           </div>
         </div>
       </div>
-
     </div>
   );
 }
