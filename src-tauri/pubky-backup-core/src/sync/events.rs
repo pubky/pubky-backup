@@ -9,7 +9,7 @@ use pubky::{Event, EventCursor, Pubky, PublicKey};
 use std::pin::Pin;
 
 /// Batch size for event stream processing and cursor save frequency.
-pub(super) const EVENT_BATCH_SIZE: u16 = 100;
+pub(super) const EVENT_BATCH_SIZE: u16 = 50;
 
 /// Create an event stream for a given pubky.
 ///

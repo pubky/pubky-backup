@@ -77,9 +77,9 @@ export function KeysPage() {
     setIsDeleting(true);
     setNavDisabled(true);
     try {
-      await Services.deleteKey(pubky);
+      await Services.removeKey(pubky);
 
-      // If we deleted the currently viewed key, select another one or go to startup screen
+      // If we removed the currently viewed key, select another one or go to startup screen
       if (pubky === currentPubky) {
         const remainingKeys = keys.filter((k) => k !== pubky);
         const nextKey = remainingKeys[0];

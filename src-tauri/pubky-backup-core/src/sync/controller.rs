@@ -305,6 +305,23 @@ impl BackupController {
         let mut sync_now = true;
 
         loop {
+            // Check for pending commands before each operation.
+            if let Some(command) = self.try_recv_command() {
+                match command {
+                    ControllerCommand::Cancel => {
+                        info!("Backup controller task cancelled");
+                        self.send_status(ControllerStatus::Ended {
+                            pubky: self.pubky.clone(),
+                        });
+                        break;
+                    }
+                    ControllerCommand::ForceSync => {
+                        info!("Force sync triggered");
+                        sync_now = true;
+                    }
+                }
+            }
+
             if sync_now {
                 sync_now = false;
 
@@ -317,7 +334,7 @@ impl BackupController {
 
                 match self.perform_sync_batch().await {
                     Ok(ControlFlow::Continue(events_processed)) => {
-                        // More events available, send status and keep syncing immediately
+                        // More events available, send status and loop back.
                         self.send_status(ControllerStatus::Syncing {
                             pubky: self.pubky.clone(),
                             events_processed,
@@ -347,7 +364,7 @@ impl BackupController {
                 }
             }
 
-            // Wait for next sync interval, control command, or interval change
+            // Idle phase: wait for next sync interval, control command, or interval change
             let sleep = time::sleep(self.sync_interval());
             tokio::pin!(sleep);
 
@@ -388,6 +405,11 @@ impl BackupController {
                 }
             }
         }
+    }
+
+    /// Non-blocking check for a pending command on the control channel.
+    fn try_recv_command(&mut self) -> Option<ControllerCommand> {
+        self.control_rx.as_mut().and_then(|rx| rx.try_recv().ok())
     }
 
     fn send_status(&self, status: ControllerStatus) {

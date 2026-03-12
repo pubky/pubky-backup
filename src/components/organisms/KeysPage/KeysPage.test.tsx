@@ -15,7 +15,7 @@ import * as services from "@/services";
 vi.mock("@/services", () => ({
   addKey: vi.fn(),
   setLastPubky: vi.fn(),
-  deleteKey: vi.fn(),
+  removeKey: vi.fn(),
 }));
 
 describe("KeysPage", () => {
@@ -157,8 +157,8 @@ describe("KeysPage", () => {
   });
 
   describe("remove functionality", () => {
-    it("should call deleteKey and remove from state when remove button is clicked", async () => {
-      vi.mocked(services.deleteKey).mockResolvedValue(undefined);
+    it("should call removeKey and remove from state when remove button is clicked", async () => {
+      vi.mocked(services.removeKey).mockResolvedValue(undefined);
 
       useUIStore.setState({
         keyStates: {
@@ -172,7 +172,7 @@ describe("KeysPage", () => {
       fireEvent.click(removeButton);
 
       await waitFor(() => {
-        expect(services.deleteKey).toHaveBeenCalledWith(
+        expect(services.removeKey).toHaveBeenCalledWith(
           "pk:test-pubky-to-remove",
         );
       });
@@ -184,8 +184,8 @@ describe("KeysPage", () => {
       });
     });
 
-    it("should select another key when deleting the currently viewed key", async () => {
-      vi.mocked(services.deleteKey).mockResolvedValue(undefined);
+    it("should select another key when removing the currently viewed key", async () => {
+      vi.mocked(services.removeKey).mockResolvedValue(undefined);
       vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
       useUIStore.setState({
@@ -206,7 +206,7 @@ describe("KeysPage", () => {
       }
 
       await waitFor(() => {
-        expect(services.deleteKey).toHaveBeenCalledWith("pk:key1");
+        expect(services.removeKey).toHaveBeenCalledWith("pk:key1");
       });
 
       // Should switch to the other key
@@ -215,8 +215,8 @@ describe("KeysPage", () => {
       });
     });
 
-    it("should clear lastPubky and go to startup screen when deleting the last key", async () => {
-      vi.mocked(services.deleteKey).mockResolvedValue(undefined);
+    it("should clear lastPubky and go to startup screen when removing the last key", async () => {
+      vi.mocked(services.removeKey).mockResolvedValue(undefined);
 
       useUIStore.setState({
         keyStates: {
@@ -232,7 +232,7 @@ describe("KeysPage", () => {
       fireEvent.click(removeButton);
 
       await waitFor(() => {
-        expect(services.deleteKey).toHaveBeenCalledWith("pk:only-key");
+        expect(services.removeKey).toHaveBeenCalledWith("pk:only-key");
       });
 
       await waitFor(() => {

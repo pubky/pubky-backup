@@ -208,6 +208,12 @@ impl BackupManager {
             discovery::verify_pubky_has_data(&pubky, self.config.validation_timeout_secs).await?;
         }
 
+        // Clear inactive marker if re-adding a previously removed key
+        let key_storage = self.storage.key_storage(&pubky)?;
+        key_storage.clear_inactive().await.map_err(|e| {
+            OrchestratorError::Internal(format!("Failed to clear inactive marker: {}", e))
+        })?;
+
         self.start_controller(pubky.clone()).await?;
 
         info!("Added key for backup: {}", pubky);
@@ -257,18 +263,25 @@ impl BackupManager {
         }
     }
 
-    /// Stop syncing a key but preserve backed-up data on disk.
+    /// Stop syncing a key and mark it inactive. Backed-up data is preserved on disk
+    /// but the key will not be resumed on next launch.
     ///
-    /// The key will be automatically resumed on the next `BackupManager::new()` call
-    /// since data still exists. Use `delete_key()` for permanent removal.
+    /// Use `delete_key()` to also remove all backed-up data.
     ///
     /// # Errors
     ///
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn remove_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
         self.stop_controller(pubky)?;
+
+        // Mark the key as inactive so it won't be resumed on next launch
+        let key_storage = self.storage.key_storage(pubky)?;
+        key_storage.mark_inactive().await.map_err(|e| {
+            OrchestratorError::Internal(format!("Failed to mark key inactive: {}", e))
+        })?;
+
         self.clear_last_pubky_if_empty().await;
-        info!("Stopped backup for key: {}", pubky);
+        info!("Stopped and deactivated backup for key: {}", pubky);
         Ok(())
     }
 
@@ -290,8 +303,7 @@ impl BackupManager {
         }
 
         // Delete the data directory for this key
-        let data_dir = self.storage.get_backup_data_dir()?;
-        let key_dir = data_dir.join("keys").join(pubky.z32());
+        let key_dir = self.storage.keys_dir().join(pubky.z32());
 
         if key_dir.exists() {
             std::fs::remove_dir_all(&key_dir).map_err(|e| {
@@ -774,25 +786,23 @@ fn spawn_status_listener(
                 Ok(status) => {
                     let pubky = status.pubky().clone();
 
-                    // Get current state values to preserve across transitions
+                    // Skip updates for keys that have been removed
                     let ctx = {
                         let inner_read = inner.read();
-                        let (ds, ls, ns) = inner_read
-                            .keys
-                            .get(&pubky)
-                            .map(|k| (k.state.data_size, k.state.last_sync, k.state.next_sync))
-                            .unwrap_or((0, None, None));
+                        let Some(managed) = inner_read.keys.get(&pubky) else {
+                            debug!("Ignoring status update for removed key {}", pubky);
+                            continue;
+                        };
                         StatusContext {
-                            data_size: ds,
-                            last_sync: ls,
-                            next_sync: ns,
+                            data_size: managed.state.data_size,
+                            last_sync: managed.state.last_sync,
+                            next_sync: managed.state.next_sync,
                             sync_interval_secs: inner_read.sync_interval_secs,
                         }
                     };
 
                     let new_state = handle_controller_status(&pubky, &storage, &status, &ctx).await;
 
-                    // Update internal state
                     {
                         let mut inner_write = inner.write();
                         if let Some(managed_key) = inner_write.keys.get_mut(&pubky) {
@@ -800,7 +810,6 @@ fn spawn_status_listener(
                         }
                     }
 
-                    // Broadcast to external subscribers
                     let receivers = update_tx.send(KeyUpdate {
                         pubky: pubky.clone(),
                         state: new_state,
@@ -1033,6 +1042,66 @@ mod tests {
             // Key should be automatically resumed from stored data
             let keys = manager.get_keys();
             assert_eq!(keys.len(), 1, "Key should be auto-resumed from stored data");
+            assert!(keys.contains(&pubky));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_manager_removed_key_not_resumed() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        // Add a key, then remove it (marks inactive)
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+            manager.add_key(pubky.clone()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            manager.remove_key(&pubky).await.unwrap();
+            manager.shutdown().await;
+        }
+
+        // New manager should NOT resume the inactive key
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+            let keys = manager.get_keys();
+            assert!(keys.is_empty(), "Inactive key should not be resumed");
+
+            // Data directory should still exist on disk
+            let key_dir = temp_dir.path().join("keys").join(pubky.z32());
+            assert!(key_dir.exists(), "Data should be preserved after remove");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_manager_readd_removed_key() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        // Add, remove, then re-add the same key
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+
+            manager.add_key(pubky.clone()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            manager.remove_key(&pubky).await.unwrap();
+
+            // Re-add should succeed and clear the inactive marker
+            manager.add_key(pubky.clone()).await.unwrap();
+            assert_eq!(manager.get_keys().len(), 1);
+            manager.shutdown().await;
+        }
+
+        // New manager should resume the re-added key
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+            let keys = manager.get_keys();
+            assert_eq!(keys.len(), 1, "Re-added key should be resumed");
             assert!(keys.contains(&pubky));
         }
     }
