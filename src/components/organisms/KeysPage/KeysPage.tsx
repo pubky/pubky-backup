@@ -61,9 +61,11 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
 export function KeysPage() {
   const [showAddInput, setShowAddInput] = useState(false);
   const [newPubkyValue, setNewPubkyValue] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const keys = Hooks.useKeys();
   const lastPubky = Stores.useUIStore((s) => s.lastPubky);
+  const setNavDisabled = Stores.useUIStore((s) => s.setNavDisabled);
   const { setLastPubky } = Hooks.useSetLastPubky();
   const { addKey, isPending: isAddingKey } = Hooks.useAddKey();
   const { setPage } = Stores.useUIStore.getState();
@@ -72,6 +74,8 @@ export function KeysPage() {
   const currentPubky = lastPubky;
 
   const handleRemove = async (pubky: string) => {
+    setIsDeleting(true);
+    setNavDisabled(true);
     try {
       await Services.deleteKey(pubky);
 
@@ -93,6 +97,9 @@ export function KeysPage() {
     } catch (error: unknown) {
       Logger.error("KeysPage", "Failed to delete pubky", { error });
       Utils.handleBackendError(error);
+    } finally {
+      setIsDeleting(false);
+      setNavDisabled(false);
     }
   };
 
@@ -147,61 +154,76 @@ export function KeysPage() {
       </div>
 
       {/* Keys list */}
-      <div className="flex flex-col gap-2">
-        <span className="text-xs font-medium text-text-secondary uppercase tracking-widest">
-          Your pubkys ({keys.length})
-        </span>
-        <div className="flex flex-col gap-2">
-          {keys.map((pubky) => (
-            <KeyItem
-              key={pubky}
-              pubky={pubky}
-              isSelected={pubky === currentPubky}
-              onSelect={() => handleSelect(pubky)}
-              onRemove={() => handleRemove(pubky)}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Add pubky section */}
-      {showAddInput ? (
-        <div className="flex flex-col gap-2">
-          <Molecules.PubkyInput
-            value={newPubkyValue}
-            onChange={setNewPubkyValue}
-            placeholder="Enter pubky to add..."
-          />
-          <div className="flex gap-2">
-            <Atoms.Button
-              variant="secondary"
-              onClick={handleCancelAdd}
-              className="flex-1"
-              disabled={isAddingKey}
-            >
-              <span className="text-white text-sm font-medium">Cancel</span>
-            </Atoms.Button>
-            <Atoms.Button
-              onClick={() => void handleSubmitNewPubky()}
-              className="flex-1"
-              disabled={!newPubkyValue.trim() || isAddingKey}
-            >
-              <span className="text-sm font-bold text-pubky-purple">
-                {isAddingKey ? "Adding..." : "Add"}
-              </span>
-            </Atoms.Button>
+      {isDeleting ? (
+        <div className="flex items-center bg-[#303034] rounded-lg px-6 py-[18px] gap-6">
+          <span className="text-sm font-bold leading-normal text-white">
+            Deleting key data...
+          </span>
+          <div className="flex-1 h-2 rounded-full bg-black/80 overflow-hidden">
+            <div className="h-full rounded-full bg-pubky-purple animate-progress-indeterminate" />
           </div>
         </div>
       ) : (
-        <Atoms.Button
-          variant="secondary"
-          onClick={handleAddPubky}
-          className="w-full"
-        >
-          <span className="text-text-light text-sm font-bold">
-            Add another pubky
-          </span>
-        </Atoms.Button>
+        <>
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-medium text-text-secondary uppercase tracking-widest">
+              Your pubkys ({keys.length})
+            </span>
+            <div className="flex flex-col gap-2">
+              {keys.map((pubky) => (
+                <KeyItem
+                  key={pubky}
+                  pubky={pubky}
+                  isSelected={pubky === currentPubky}
+                  onSelect={() => handleSelect(pubky)}
+                  onRemove={() => handleRemove(pubky)}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Add pubky section */}
+          {showAddInput ? (
+            <div className="flex flex-col gap-2">
+              <Molecules.PubkyInput
+                value={newPubkyValue}
+                onChange={setNewPubkyValue}
+                placeholder="Enter pubky to add..."
+              />
+              <div className="flex gap-2">
+                <Atoms.Button
+                  variant="secondary"
+                  onClick={handleCancelAdd}
+                  className="flex-1"
+                  disabled={isAddingKey}
+                >
+                  <span className="text-white text-sm font-medium">
+                    Cancel
+                  </span>
+                </Atoms.Button>
+                <Atoms.Button
+                  onClick={() => void handleSubmitNewPubky()}
+                  className="flex-1"
+                  disabled={!newPubkyValue.trim() || isAddingKey}
+                >
+                  <span className="text-sm font-bold text-pubky-purple">
+                    {isAddingKey ? "Adding..." : "Add"}
+                  </span>
+                </Atoms.Button>
+              </div>
+            </div>
+          ) : (
+            <Atoms.Button
+              variant="secondary"
+              onClick={handleAddPubky}
+              className="w-full"
+            >
+              <span className="text-text-light text-sm font-bold">
+                Add another pubky
+              </span>
+            </Atoms.Button>
+          )}
+        </>
       )}
     </div>
   );

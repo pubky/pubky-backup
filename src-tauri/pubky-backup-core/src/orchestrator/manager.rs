@@ -42,7 +42,7 @@ struct ManagedKey {
     /// Current state of the key
     state: KeyState,
     /// Handle to the controller task
-    _task_handle: JoinHandle<()>,
+    task_handle: JoinHandle<()>,
 }
 
 struct ManagerInner {
@@ -218,8 +218,13 @@ impl BackupManager {
 
     /// Stop a controller without any UI side effects.
     ///
-    /// Removes from HashMap and sends Cancel. Pure internal, no side effects.
-    fn stop_controller(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
+    /// Removes from HashMap and sends Cancel. Returns the task JoinHandle so the
+    /// caller can await graceful shutdown. If the cancel message can't be delivered
+    /// (channel full), the task is aborted as a fallback.
+    fn stop_controller(
+        &self,
+        pubky: &PublicKey,
+    ) -> Result<JoinHandle<()>, OrchestratorError> {
         let managed_key = {
             let mut inner = self.inner.write();
             inner
@@ -228,8 +233,33 @@ impl BackupManager {
                 .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?
         };
 
-        let _ = managed_key.control_tx.try_send(ControllerCommand::Cancel);
-        Ok(())
+        if managed_key
+            .control_tx
+            .try_send(ControllerCommand::Cancel)
+            .is_err()
+        {
+            warn!(
+                "Failed to send Cancel to controller for {}, aborting task",
+                pubky
+            );
+            managed_key.task_handle.abort();
+        }
+
+        Ok(managed_key.task_handle)
+    }
+
+    /// Clear last_pubky from storage when no keys remain, so the app
+    /// doesn't auto-load a removed key on next launch.
+    async fn clear_last_pubky_if_empty(&self) {
+        let no_keys_left = {
+            let inner = self.inner.read();
+            inner.keys.is_empty()
+        };
+        if no_keys_left {
+            if let Err(e) = self.storage.clear_last_pubky().await {
+                warn!("Failed to clear last pubky: {}", e);
+            }
+        }
     }
 
     /// Stop syncing a key but preserve backed-up data on disk.
@@ -242,30 +272,27 @@ impl BackupManager {
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn remove_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
         self.stop_controller(pubky)?;
-
-        // Clear last_pubky when no keys remain so the app doesn't auto-load a removed key
-        let no_keys_left = {
-            let inner = self.inner.read();
-            inner.keys.is_empty()
-        };
-        if no_keys_left {
-            if let Err(e) = self.storage.clear_last_pubky().await {
-                warn!("Failed to clear last pubky: {}", e);
-            }
-        }
-
+        self.clear_last_pubky_if_empty().await;
         info!("Stopped backup for key: {}", pubky);
         Ok(())
     }
 
     /// Remove a key AND delete all backed-up data from disk.
     ///
+    /// Awaits the controller task to ensure all in-flight IO completes
+    /// before deleting files from disk.
+    ///
     /// # Errors
     ///
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn delete_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        // First remove the key
-        self.remove_key(pubky).await?;
+        let handle = self.stop_controller(pubky)?;
+        self.clear_last_pubky_if_empty().await;
+
+        // Await the controller to ensure all in-flight IO completes before deleting files
+        if let Err(e) = handle.await {
+            warn!("Controller task for {} finished with error: {}", pubky, e);
+        }
 
         // Delete the data directory for this key
         let data_dir = self.storage.get_backup_data_dir()?;
@@ -435,13 +462,21 @@ impl BackupManager {
         Ok(self.storage.list_pubky_directories()?)
     }
 
-    /// Gracefully shutdown all backups.
+    /// Gracefully shutdown all backups, awaiting controller tasks.
     pub async fn shutdown(&self) {
         let keys: Vec<PublicKey> = self.get_keys();
 
+        let mut handles = Vec::new();
         for pubky in keys {
-            if let Err(e) = self.stop_controller(&pubky) {
-                warn!("Error shutting down key {}: {}", pubky, e);
+            match self.stop_controller(&pubky) {
+                Ok(handle) => handles.push(handle),
+                Err(e) => warn!("Error shutting down key {}: {}", pubky, e),
+            }
+        }
+
+        for result in futures_util::future::join_all(handles).await {
+            if let Err(e) = result {
+                warn!("Controller task finished with error during shutdown: {}", e);
             }
         }
 
@@ -579,7 +614,7 @@ impl BackupManager {
                 ManagedKey {
                     control_tx,
                     state: initial_state,
-                    _task_handle: task_handle,
+                    task_handle,
                 },
             );
         }
@@ -709,7 +744,7 @@ impl BackupManager {
                 ManagedKey {
                     control_tx,
                     state: error_state,
-                    _task_handle: task_handle,
+                    task_handle,
                 },
             );
         }
@@ -728,55 +763,67 @@ fn spawn_status_listener(
     mut status_rx: broadcast::Receiver<ControllerStatus>,
 ) {
     tokio::spawn(async move {
-        while let Ok(status) = status_rx.recv().await {
-            // Extract the pubky from the status
-            let pubky = match &status {
-                ControllerStatus::Starting { pubky } => pubky.clone(),
-                ControllerStatus::Syncing { pubky, .. } => pubky.clone(),
-                ControllerStatus::Idle { pubky } => pubky.clone(),
-                ControllerStatus::Ended { pubky } => pubky.clone(),
-                ControllerStatus::Error { pubky, .. } => pubky.clone(),
-            };
+        loop {
+            match status_rx.recv().await {
+                Ok(status) => {
+                    // Extract the pubky from the status
+                    let pubky = match &status {
+                        ControllerStatus::Starting { pubky } => pubky.clone(),
+                        ControllerStatus::Syncing { pubky, .. } => pubky.clone(),
+                        ControllerStatus::Idle { pubky } => pubky.clone(),
+                        ControllerStatus::Ended { pubky } => pubky.clone(),
+                        ControllerStatus::Error { pubky, .. } => pubky.clone(),
+                    };
 
-            // Get current state values to preserve across transitions
-            let (current_data_size, current_last_sync, current_next_sync, sync_interval_secs) = {
-                let inner_read = inner.read();
-                let (ds, ls, ns) = inner_read
-                    .keys
-                    .get(&pubky)
-                    .map(|k| (k.state.data_size, k.state.last_sync, k.state.next_sync))
-                    .unwrap_or((0, None, None));
-                (ds, ls, ns, inner_read.sync_interval_secs)
-            };
+                    // Get current state values to preserve across transitions
+                    let (current_data_size, current_last_sync, current_next_sync, sync_interval_secs) = {
+                        let inner_read = inner.read();
+                        let (ds, ls, ns) = inner_read
+                            .keys
+                            .get(&pubky)
+                            .map(|k| (k.state.data_size, k.state.last_sync, k.state.next_sync))
+                            .unwrap_or((0, None, None));
+                        (ds, ls, ns, inner_read.sync_interval_secs)
+                    };
 
-            let new_state = handle_controller_status(
-                &pubky,
-                &storage,
-                &status,
-                current_data_size,
-                current_last_sync,
-                current_next_sync,
-                sync_interval_secs,
-            )
-            .await;
+                    let new_state = handle_controller_status(
+                        &pubky,
+                        &storage,
+                        &status,
+                        current_data_size,
+                        current_last_sync,
+                        current_next_sync,
+                        sync_interval_secs,
+                    )
+                    .await;
 
-            // Update internal state
-            {
-                let mut inner_write = inner.write();
-                if let Some(managed_key) = inner_write.keys.get_mut(&pubky) {
-                    managed_key.state = new_state.clone();
+                    // Update internal state
+                    {
+                        let mut inner_write = inner.write();
+                        if let Some(managed_key) = inner_write.keys.get_mut(&pubky) {
+                            managed_key.state = new_state.clone();
+                        }
+                    }
+
+                    // Broadcast to external subscribers
+                    let receivers = update_tx.send(KeyUpdate {
+                        pubky: pubky.clone(),
+                        state: new_state,
+                    });
+                    debug!(
+                        "Broadcast status update for {} (receivers: {:?})",
+                        pubky, receivers
+                    );
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Status listener lagged, skipped {} messages", n);
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    debug!("Status listener channel closed");
+                    break;
                 }
             }
-
-            // Broadcast to external subscribers
-            let receivers = update_tx.send(KeyUpdate {
-                pubky: pubky.clone(),
-                state: new_state,
-            });
-            debug!(
-                "Broadcast status update for {} (receivers: {:?})",
-                pubky, receivers
-            );
         }
     });
 }
