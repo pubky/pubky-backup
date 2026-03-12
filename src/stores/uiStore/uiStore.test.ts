@@ -287,26 +287,40 @@ describe("useUIStore", () => {
   });
 
   describe("setAllKeyStates", () => {
-    it("should replace all key states", () => {
-      useUIStore.getState().setKeyState("pk:existing", mockKeyState);
+    it("should set backend states and preserve existing real-time updates", () => {
+      // Simulate a real-time update that arrived before the REST response
+      useUIStore.getState().setKeyState("pk:existing", mockSyncingKeyState);
 
+      // Backend returns stale data for pk:existing plus a new key
+      useUIStore.getState().setAllKeyStates({
+        "pk:existing": mockKeyState,
+        "pk:new1": mockKeyState,
+      });
+
+      const state = useUIStore.getState();
+      // Real-time update wins over stale backend data
+      expect(state.keyStates["pk:existing"]).toEqual(mockSyncingKeyState);
+      // New key from backend is added
+      expect(state.keyStates["pk:new1"]).toEqual(mockKeyState);
+    });
+
+    it("should set all states when store is empty", () => {
       useUIStore.getState().setAllKeyStates({
         "pk:new1": mockKeyState,
         "pk:new2": mockSyncingKeyState,
       });
 
       const state = useUIStore.getState();
-      expect(state.keyStates["pk:existing"]).toBeUndefined();
       expect(state.keyStates["pk:new1"]).toEqual(mockKeyState);
       expect(state.keyStates["pk:new2"]).toEqual(mockSyncingKeyState);
     });
 
-    it("should handle empty object", () => {
+    it("should preserve existing keys when called with empty object", () => {
       useUIStore.getState().setKeyState("pk:key1", mockKeyState);
       useUIStore.getState().setAllKeyStates({});
 
       const state = useUIStore.getState();
-      expect(state.keyStates).toEqual({});
+      expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
     });
 
     it("should not affect other state", () => {

@@ -1,7 +1,7 @@
 mod error;
 
 use arc_swap::ArcSwap;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use pubky::PublicKey;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -118,14 +118,25 @@ async fn spawn_event_listener(manager: &BackupManager) {
 
     debug!("Event listener spawned for BackupManager");
     let handle = tauri::async_runtime::spawn(async move {
-        while let Ok(update) = rx.recv().await {
-            debug!("Emitting key-update to frontend: {}", update.pubky);
-            if let Err(e) = app_handle.emit("key-update", &update) {
-                error!("Failed to emit key-update event: {}", e);
+        loop {
+            match rx.recv().await {
+                Ok(update) => {
+                    debug!("Emitting key-update to frontend: {}", update.pubky);
+                    if let Err(e) = app_handle.emit("key-update", &update) {
+                        error!("Failed to emit key-update event: {}", e);
+                    }
+                    update_tray_icon_aggregate();
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Event listener lagged, skipped {} messages", n);
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    debug!("Event listener channel closed");
+                    break;
+                }
             }
-            update_tray_icon_aggregate();
         }
-        debug!("Event listener channel closed");
     });
     *guard = Some(handle);
 }

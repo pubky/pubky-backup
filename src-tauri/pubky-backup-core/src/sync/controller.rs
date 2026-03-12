@@ -85,7 +85,7 @@ pub enum ControllerStatus {
         /// The public key this status is for
         pubky: PublicKey,
     },
-    /// Controller encountered a critical error and stopped
+    /// Controller encountered an error (will retry on next sync interval)
     Error {
         /// The public key this status is for
         pubky: PublicKey,
@@ -140,7 +140,7 @@ pub enum ControllerStatus {
 ///                 },
 ///                 ControllerStatus::Idle { pubky } => println!("{}: Idle", pubky),
 ///                 ControllerStatus::Ended { pubky } => println!("{}: Ended", pubky),
-///                 ControllerStatus::Error { pubky, message } => {
+///                 ControllerStatus::Error { pubky, message, .. } => {
 ///                     println!("{}: Error: {}", pubky, message)
 ///                 },
 ///             }
@@ -226,7 +226,6 @@ impl BackupController {
     ///
     /// This method consumes `self` and runs until:
     /// - A `Cancel` message is received via the control channel
-    /// - A critical error occurs during syncing
     /// - The control channel is closed
     ///
     /// The controller will:
@@ -236,6 +235,8 @@ impl BackupController {
     /// 4. Delete resources that have been removed
     /// 5. Wait for the next sync interval
     /// 6. Emit status updates via the status channel
+    ///
+    /// On errors, the controller logs the error and retries on the next sync interval.
     ///
     /// During the starting phase, the controller responds to commands:
     /// - `Cancel`: Stops immediately
@@ -313,9 +314,13 @@ impl BackupController {
                     }
                     Ok(ControlFlow::Break(())) => {
                         // Sync complete for this cycle, send Idle
+                        self.send_status(ControllerStatus::Idle {
+                            pubky: self.pubky.clone(),
+                        });
                     }
                     Err(e) => {
-                        let error_msg = format!("Critical sync batch failure: {}", e);
+                        let error_msg = format!("Sync error: {}", e);
+                        error!("{}: {}", self.pubky, error_msg);
                         let _ = self
                             .storage
                             .write_error(&self.pubky, "sync", &error_msg)
@@ -324,13 +329,9 @@ impl BackupController {
                             pubky: self.pubky.clone(),
                             message: error_msg,
                         });
-                        return;
+                        // Wait for next sync interval, then retry
                     }
                 }
-
-                self.send_status(ControllerStatus::Idle {
-                    pubky: self.pubky.clone(),
-                });
             }
 
             // Wait for next sync interval, control command, or interval change
