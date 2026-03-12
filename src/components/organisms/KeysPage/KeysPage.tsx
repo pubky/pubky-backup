@@ -197,9 +197,7 @@ export function KeysPage() {
                   className="flex-1"
                   disabled={isAddingKey}
                 >
-                  <span className="text-white text-sm font-medium">
-                    Cancel
-                  </span>
+                  <span className="text-white text-sm font-medium">Cancel</span>
                 </Atoms.Button>
                 <Atoms.Button
                   onClick={() => void handleSubmitNewPubky()}

@@ -203,12 +203,10 @@ impl BackupManager {
             }
         }
 
-        discovery::validate_pubky(
-            &pubky,
-            self.config.validation_timeout_secs,
-            self.config.developer_mode,
-        )
-        .await?;
+        if !self.config.developer_mode {
+            discovery::discover_homeserver(&pubky, self.config.validation_timeout_secs).await?;
+            discovery::verify_pubky_has_data(&pubky, self.config.validation_timeout_secs).await?;
+        }
 
         self.start_controller(pubky.clone()).await?;
 
@@ -655,14 +653,25 @@ impl BackupManager {
                 }
             };
 
-            match discovery::validate_pubky(
-                &pubky,
-                self.config.validation_timeout_secs,
-                self.config.developer_mode,
-            )
-            .await
-            {
-                Ok(_) => {
+            let validation_result = if self.config.developer_mode {
+                Ok(())
+            } else {
+                match discovery::discover_homeserver(&pubky, self.config.validation_timeout_secs)
+                    .await
+                {
+                    Ok(_) => {
+                        discovery::verify_pubky_has_data(
+                            &pubky,
+                            self.config.validation_timeout_secs,
+                        )
+                        .await
+                    }
+                    Err(e) => Err(e),
+                }
+            };
+
+            match validation_result {
+                Ok(()) => {
                     if let Err(e) = self.start_controller(pubky.clone()).await {
                         let error_msg = format!("Failed to resume key {}: {}", pubky, e);
                         error!("{}", error_msg);
