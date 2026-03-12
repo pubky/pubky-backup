@@ -94,6 +94,19 @@ pub enum ControllerStatus {
     },
 }
 
+impl ControllerStatus {
+    /// Get the public key associated with this status.
+    pub fn pubky(&self) -> &PublicKey {
+        match self {
+            Self::Starting { pubky }
+            | Self::Syncing { pubky, .. }
+            | Self::Idle { pubky }
+            | Self::Ended { pubky }
+            | Self::Error { pubky, .. } => pubky,
+        }
+    }
+}
+
 /// Main backup controller which manages the backup process for a Pubky user.
 ///
 /// The controller continuously syncs data from a Pubky homeserver to local storage,
@@ -467,12 +480,9 @@ impl BackupController {
             events_processed, self.pubky
         );
 
-        // Save final cursor
         if events_processed > 0 {
+            // Save final cursor
             self.save_cursor_if_present(last_cursor).await?;
-        }
-
-        if events_processed > 0 {
             Ok(ControlFlow::Continue(events_processed))
         } else {
             Ok(ControlFlow::Break(()))

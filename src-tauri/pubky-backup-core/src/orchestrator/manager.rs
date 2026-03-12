@@ -221,10 +221,7 @@ impl BackupManager {
     /// Removes from HashMap and sends Cancel. Returns the task JoinHandle so the
     /// caller can await graceful shutdown. If the cancel message can't be delivered
     /// (channel full), the task is aborted as a fallback.
-    fn stop_controller(
-        &self,
-        pubky: &PublicKey,
-    ) -> Result<JoinHandle<()>, OrchestratorError> {
+    fn stop_controller(&self, pubky: &PublicKey) -> Result<JoinHandle<()>, OrchestratorError> {
         let managed_key = {
             let mut inner = self.inner.write();
             inner
@@ -766,36 +763,25 @@ fn spawn_status_listener(
         loop {
             match status_rx.recv().await {
                 Ok(status) => {
-                    // Extract the pubky from the status
-                    let pubky = match &status {
-                        ControllerStatus::Starting { pubky } => pubky.clone(),
-                        ControllerStatus::Syncing { pubky, .. } => pubky.clone(),
-                        ControllerStatus::Idle { pubky } => pubky.clone(),
-                        ControllerStatus::Ended { pubky } => pubky.clone(),
-                        ControllerStatus::Error { pubky, .. } => pubky.clone(),
-                    };
+                    let pubky = status.pubky().clone();
 
                     // Get current state values to preserve across transitions
-                    let (current_data_size, current_last_sync, current_next_sync, sync_interval_secs) = {
+                    let ctx = {
                         let inner_read = inner.read();
                         let (ds, ls, ns) = inner_read
                             .keys
                             .get(&pubky)
                             .map(|k| (k.state.data_size, k.state.last_sync, k.state.next_sync))
                             .unwrap_or((0, None, None));
-                        (ds, ls, ns, inner_read.sync_interval_secs)
+                        StatusContext {
+                            data_size: ds,
+                            last_sync: ls,
+                            next_sync: ns,
+                            sync_interval_secs: inner_read.sync_interval_secs,
+                        }
                     };
 
-                    let new_state = handle_controller_status(
-                        &pubky,
-                        &storage,
-                        &status,
-                        current_data_size,
-                        current_last_sync,
-                        current_next_sync,
-                        sync_interval_secs,
-                    )
-                    .await;
+                    let new_state = handle_controller_status(&pubky, &storage, &status, &ctx).await;
 
                     // Update internal state
                     {
@@ -828,33 +814,31 @@ fn spawn_status_listener(
     });
 }
 
+/// Snapshot of a key's current state values, passed to [`handle_controller_status`]
+/// to preserve values across status transitions.
+struct StatusContext {
+    data_size: u64,
+    last_sync: Option<u64>,
+    next_sync: Option<u64>,
+    sync_interval_secs: u64,
+}
+
 /// Transform a [`ControllerStatus`] into a [`KeyState`] for external consumers.
 ///
 /// This is the bridge between the internal sync layer status and the
 /// public orchestrator state.
-///
-/// # Arguments
-/// * `pubky` - The public key being backed up
-/// * `storage` - Storage for calculating data size
-/// * `status` - The status from the backup controller
-/// * `current_data_size` - The current data size to preserve
-/// * `current_last_sync` - The current last_sync timestamp to preserve
-/// * `current_next_sync` - The current next_sync timestamp to preserve
 async fn handle_controller_status(
     pubky: &PublicKey,
     storage: &Arc<AppStorage>,
     status: &ControllerStatus,
-    current_data_size: u64,
-    current_last_sync: Option<u64>,
-    current_next_sync: Option<u64>,
-    sync_interval_secs: u64,
+    ctx: &StatusContext,
 ) -> KeyState {
     match status {
         ControllerStatus::Starting { .. } => KeyState {
             status: KeyStatus::Starting,
-            data_size: current_data_size,
-            last_sync: current_last_sync,
-            next_sync: current_next_sync,
+            data_size: ctx.data_size,
+            last_sync: ctx.last_sync,
+            next_sync: ctx.next_sync,
             ..Default::default()
         },
         ControllerStatus::Syncing {
@@ -864,7 +848,7 @@ async fn handle_controller_status(
             let data_size = if *events_processed > 0 {
                 storage.calculate_pubky_size(pubky).await
             } else {
-                current_data_size
+                ctx.data_size
             };
 
             KeyState {
@@ -872,8 +856,8 @@ async fn handle_controller_status(
                     events_processed: *events_processed,
                 },
                 data_size,
-                last_sync: current_last_sync,
-                next_sync: current_next_sync,
+                last_sync: ctx.last_sync,
+                next_sync: ctx.next_sync,
                 ..Default::default()
             }
         }
@@ -883,22 +867,22 @@ async fn handle_controller_status(
                 status: KeyStatus::Idle,
                 data_size,
                 last_sync: Some(current_unix_timestamp()),
-                next_sync: Some(next_sync_time(sync_interval_secs)),
+                next_sync: Some(next_sync_time(ctx.sync_interval_secs)),
                 ..Default::default()
             }
         }
         ControllerStatus::Ended { .. } => KeyState {
             status: KeyStatus::Stopped,
-            data_size: current_data_size,
-            last_sync: current_last_sync,
-            next_sync: current_next_sync,
+            data_size: ctx.data_size,
+            last_sync: ctx.last_sync,
+            next_sync: ctx.next_sync,
             ..Default::default()
         },
         ControllerStatus::Error { message, .. } => KeyState {
             status: KeyStatus::Error,
-            data_size: current_data_size,
-            last_sync: current_last_sync,
-            next_sync: current_next_sync,
+            data_size: ctx.data_size,
+            last_sync: ctx.last_sync,
+            next_sync: ctx.next_sync,
             error: Some(KeyError {
                 code: KeyErrorCode::Internal,
                 message: message.clone(),
@@ -1312,10 +1296,12 @@ mod tests {
             &pubky,
             &storage,
             &error_status,
-            1000,
-            None,
-            None,
-            DEFAULT_SYNC_INTERVAL_SECONDS,
+            &StatusContext {
+                data_size: 1000,
+                last_sync: None,
+                next_sync: None,
+                sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+            },
         )
         .await;
 
@@ -1351,10 +1337,12 @@ mod tests {
             &pubky,
             &storage,
             &starting_status,
-            1234,
-            None,
-            None,
-            DEFAULT_SYNC_INTERVAL_SECONDS,
+            &StatusContext {
+                data_size: 1234,
+                last_sync: None,
+                next_sync: None,
+                sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+            },
         )
         .await;
 

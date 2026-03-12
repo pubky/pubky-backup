@@ -11,9 +11,9 @@ use std::sync::{Arc, OnceLock};
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_developer_mode, AppStorage, BackupManager, BackupManagerConfig, KeyState, KeyStatus,
+    is_developer_mode, parse_pubky, AppStorage, BackupManager, BackupManagerConfig, KeyState,
+    KeyStatus,
 };
-use std::str::FromStr;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
@@ -101,6 +101,19 @@ fn load_manager() -> Result<Arc<BackupManager>, BackupAppError> {
         .ok_or_else(|| BackupAppError::internal("BackupManager not initialized"))
 }
 
+/// Ensure the manager exists and return a handle to it.
+///
+/// Combines the common `ensure_manager().await?; load_manager()?` pattern.
+async fn get_manager() -> Result<Arc<BackupManager>, BackupAppError> {
+    ensure_manager().await?;
+    load_manager()
+}
+
+/// Parse a pubky z32 string, mapping errors to [`BackupAppError::InvalidPubkyFormat`].
+fn parse_pubky_for_command(pubky_str: &str) -> Result<PublicKey, BackupAppError> {
+    parse_pubky(pubky_str).map_err(|msg| BackupAppError::InvalidPubkyFormat { message: msg })
+}
+
 async fn spawn_event_listener(manager: &BackupManager) {
     let mut rx = manager.subscribe();
     let Some(app_handle) = APP_HANDLE.get().cloned() else {
@@ -144,12 +157,8 @@ async fn spawn_event_listener(manager: &BackupManager) {
 /// Add a key to start backing up.
 #[tauri::command]
 async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
-    let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
-        message: e.to_string(),
-    })?;
-
-    ensure_manager().await?;
-    let manager = load_manager()?;
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    let manager = get_manager().await?;
 
     // Check if key is already being backed up
     if manager.get_key_state(&pubky).is_some() {
@@ -178,15 +187,13 @@ async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
 /// Get all key states for all tracked keys
 #[tauri::command]
 async fn get_all_key_states() -> Result<HashMap<String, KeyState>, BackupAppError> {
-    ensure_manager().await?;
-    Ok(load_manager()?.get_all_key_states())
+    Ok(get_manager().await?.get_all_key_states())
 }
 
 /// Get application config (one-time fetch)
 #[tauri::command]
 async fn get_config() -> Result<AppConfig, BackupAppError> {
-    ensure_manager().await?;
-    let m = load_manager()?;
+    let m = get_manager().await?;
     Ok(AppConfig {
         developer_mode: is_developer_mode(),
         sync_interval_secs: m.get_sync_interval(),
@@ -240,11 +247,9 @@ async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
 /// Set the last used pubky (for restoring on next app launch)
 #[tauri::command]
 async fn set_last_pubky(pubky_str: &str) -> Result<(), BackupAppError> {
-    let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
-        message: e.to_string(),
-    })?;
-    ensure_manager().await?;
-    load_manager()?
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager()
+        .await?
         .write_last_pubky(&pubky)
         .await
         .map_err(BackupAppError::internal)
@@ -253,11 +258,9 @@ async fn set_last_pubky(pubky_str: &str) -> Result<(), BackupAppError> {
 /// Remove a key from the backup manager, stopping its backup controller.
 #[tauri::command]
 async fn remove_key(pubky_str: &str) -> Result<(), BackupAppError> {
-    let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
-        message: e.to_string(),
-    })?;
-    ensure_manager().await?;
-    load_manager()?
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager()
+        .await?
         .remove_key(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
@@ -268,11 +271,9 @@ async fn remove_key(pubky_str: &str) -> Result<(), BackupAppError> {
 /// Delete a key from the backup manager and remove all backed-up data.
 #[tauri::command]
 async fn delete_key(pubky_str: &str) -> Result<(), BackupAppError> {
-    let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
-        message: e.to_string(),
-    })?;
-    ensure_manager().await?;
-    load_manager()?
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager()
+        .await?
         .delete_key(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
@@ -283,11 +284,9 @@ async fn delete_key(pubky_str: &str) -> Result<(), BackupAppError> {
 /// Send backup controller task ForceSync message.
 #[tauri::command]
 async fn force_sync_now(pubky_str: &str) -> Result<(), BackupAppError> {
-    let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
-        message: e.to_string(),
-    })?;
-    ensure_manager().await?;
-    load_manager()?
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager()
+        .await?
         .force_sync(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
@@ -300,8 +299,7 @@ async fn force_sync_now(pubky_str: &str) -> Result<(), BackupAppError> {
 async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppError> {
     use tauri_plugin_opener::OpenerExt;
 
-    ensure_manager().await?;
-    let keys_dir = load_manager()?.keys_dir().to_path_buf();
+    let keys_dir = get_manager().await?.keys_dir().to_path_buf();
     app_handle
         .opener()
         .open_path(keys_dir.to_string_lossy().to_string(), None::<&str>)
@@ -311,8 +309,8 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppErro
 /// Set the sync interval in seconds. Controllers pick up the new value dynamically.
 #[tauri::command]
 async fn set_sync_interval(interval_secs: u64) -> Result<(), BackupAppError> {
-    ensure_manager().await?;
-    load_manager()?
+    get_manager()
+        .await?
         .set_sync_interval(interval_secs)
         .await
         .map_err(BackupAppError::internal)
@@ -321,11 +319,9 @@ async fn set_sync_interval(interval_secs: u64) -> Result<(), BackupAppError> {
 /// Create a snapshot (zip archive) of the specified pubky's backed-up data
 #[tauri::command]
 async fn create_snapshot(pubky_str: &str) -> Result<String, BackupAppError> {
-    let pubky = PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
-        message: e.to_string(),
-    })?;
-    ensure_manager().await?;
-    let path = load_manager()?
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    let path = get_manager()
+        .await?
         .create_snapshot(&pubky)
         .await
         .map_err(BackupAppError::internal)?;
@@ -341,7 +337,7 @@ async fn create_snapshot(pubky_str: &str) -> Result<String, BackupAppError> {
 async fn set_backup_location(new_parent: &str) -> Result<String, BackupAppError> {
     let new_parent = PathBuf::from(new_parent);
 
-    ensure_manager().await?;
+    get_manager().await?;
     // Hold the write-mutex so no other caller swaps concurrently.
     let _guard = manager_write_mutex().lock().await;
 
