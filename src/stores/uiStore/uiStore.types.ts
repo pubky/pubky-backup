@@ -60,6 +60,7 @@ export interface UIState {
   keyStates: Record<string, KeyState>;
   viewedPubky: string | null;
   developerMode: boolean;
+  navDisabled: boolean;
 }
 
 export interface UIActions {
@@ -77,6 +78,7 @@ export interface UIActions {
   removeKeyState: (pubky: string) => void;
   setViewedPubky: (pubky: string | null) => void;
   setDeveloperMode: (enabled: boolean) => void;
+  setNavDisabled: (disabled: boolean) => void;
 }
 
 export type UIStore = UIState & UIActions;
@@ -96,6 +98,7 @@ export const uiInitialState: UIState = {
   keyStates: {},
   viewedPubky: null,
   developerMode: false,
+  navDisabled: false,
 };
 
 export enum UIActionTypes {
@@ -112,4 +115,5 @@ export enum UIActionTypes {
   REMOVE_KEY_STATE = "REMOVE_KEY_STATE",
   SET_VIEWED_PUBKY = "SET_VIEWED_PUBKY",
   SET_DEVELOPER_MODE = "SET_DEVELOPER_MODE",
+  SET_NAV_DISABLED = "SET_NAV_DISABLED",
 }

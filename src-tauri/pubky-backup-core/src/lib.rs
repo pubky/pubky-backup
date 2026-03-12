@@ -49,7 +49,7 @@
 //! use pubky::{Pubky, PublicKey};
 //! use std::sync::Arc;
 //! use std::str::FromStr;
-//! use tokio::sync::{broadcast, mpsc};
+//! use tokio::sync::{broadcast, mpsc, watch};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -59,6 +59,7 @@
 //!
 //!     let (_control_tx, control_rx) = mpsc::channel::<ControllerCommand>(5);
 //!     let (status_tx, _status_rx) = broadcast::channel::<ControllerStatus>(5);
+//!     let (_interval_tx, interval_rx) = watch::channel(30u64);
 //!
 //!     let controller = BackupController::new(
 //!         pubky,
@@ -66,6 +67,7 @@
 //!         pubky_client,
 //!         Some(control_rx),
 //!         Some(status_tx),
+//!         interval_rx,
 //!     );
 //!
 //!     tokio::spawn(controller.run());
@@ -96,7 +98,8 @@ pub use storage::{get_data_directory, AppStorage, StorageError};
 
 // Re-export main types from sync module
 pub use sync::{
-    BackupController, ControllerCommand, ControllerStatus, SyncError, SYNC_INTERVAL_SECONDS,
+    BackupController, ControllerCommand, ControllerStatus, SyncError,
+    DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS,
 };
 
 // Re-export utility functions

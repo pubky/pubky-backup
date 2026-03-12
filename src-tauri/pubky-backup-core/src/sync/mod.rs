@@ -33,6 +33,7 @@ mod events;
 mod fetcher;
 
 pub use controller::{
-    BackupController, ControllerCommand, ControllerStatus, SYNC_INTERVAL_SECONDS,
+    BackupController, ControllerCommand, ControllerStatus, DEFAULT_SYNC_INTERVAL_SECONDS,
+    MIN_SYNC_INTERVAL_SECONDS,
 };
 pub use error::SyncError;

@@ -8,8 +8,9 @@ export {
   removeKey,
   deleteKey,
   forceSyncNow,
-  getDataDirPath,
   openDataDir,
   createSnapshot,
+  setSyncInterval,
+  setBackupLocation,
 } from "./tauri-commands";
 export type { AppConfig } from "./tauri-commands";

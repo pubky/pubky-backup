@@ -15,6 +15,8 @@ pub struct BackupManagerConfig {
     pub validation_timeout_secs: u64,
     /// Enable developer mode (default: false)
     pub developer_mode: bool,
+    /// Sync interval in seconds (default: 30)
+    pub sync_interval_secs: u64,
 }
 
 impl Default for BackupManagerConfig {
@@ -23,6 +25,7 @@ impl Default for BackupManagerConfig {
             data_dir: None,
             validation_timeout_secs: 30,
             developer_mode: false,
+            sync_interval_secs: crate::sync::DEFAULT_SYNC_INTERVAL_SECONDS,
         }
     }
 }

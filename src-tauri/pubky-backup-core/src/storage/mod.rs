@@ -14,8 +14,7 @@
 //!
 //! ```text
 //! ~/.pubky-backup/
-//! ├── config/                    # App-level configuration
-//! │   └── last_pubky             # Last used pubky
+//! ├── config.json                # App-level configuration
 //! ├── logs/                      # App-level logs
 //! │   └── error.log              # Global error log
 //! └── keys/                      # Per-key data
@@ -39,6 +38,7 @@
 
 mod app;
 mod common;
+pub(crate) mod config;
 pub mod error;
 mod keys;
 mod migration;
@@ -49,6 +49,7 @@ pub use keys::{KeyStorage, KeysStorage};
 
 // Re-export constants used by migration tests
 pub(crate) use app::{
-    CONFIG_DIR_NAME, CURSOR_FILENAME, DATA_DIR_NAME, ERROR_LOG_FILENAME, KEYS_DIR_NAME,
-    LAST_PUBKY_FILENAME, LOGS_DIR_NAME, STATE_DIR_NAME,
+    CURSOR_FILENAME, DATA_DIR_NAME, ERROR_LOG_FILENAME, KEYS_DIR_NAME, LEGACY_LAST_PUBKY_FILENAME,
+    LOGS_DIR_NAME, STATE_DIR_NAME,
 };
+pub(crate) use config::CONFIG_FILENAME;

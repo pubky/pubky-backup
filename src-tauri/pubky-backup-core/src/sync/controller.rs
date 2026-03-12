@@ -32,11 +32,14 @@ use pubky::{Event, EventType, Pubky, PublicKey};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::time;
 
+/// Minimum allowed sync interval in seconds.
+pub const MIN_SYNC_INTERVAL_SECONDS: u64 = 10;
+
 /// Default sync interval in seconds between backup batches.
-pub const SYNC_INTERVAL_SECONDS: u64 = 30;
+pub const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 30;
 
 /// Messages that can be sent to control the backup controller.
 ///
@@ -104,33 +107,27 @@ pub enum ControllerStatus {
 /// use std::sync::Arc;
 /// use std::str::FromStr;
 /// use std::time::Duration;
-/// use tokio::sync::{broadcast, mpsc};
+/// use tokio::sync::{broadcast, mpsc, watch};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     // Initialize storage
 ///     let storage = Arc::new(AppStorage::new()?);
-///
-///     // Initialize Pubky client
 ///     let pubky_client = Arc::new(Pubky::new()?);
-///
-///     // Parse the pubky to backup
 ///     let pubky = PublicKey::from_str("your_pubky_here")?;
 ///
-///     // Create channels for control (mpsc) and status (broadcast)
 ///     let (control_tx, control_rx) = mpsc::channel(5);
 ///     let (status_tx, mut status_rx) = broadcast::channel(5);
+///     let (_interval_tx, interval_rx) = watch::channel(30u64);
 ///
-///     // Create and spawn the backup controller with a staggered start delay
 ///     let controller = BackupController::new(
 ///         pubky.clone(),
 ///         storage,
 ///         pubky_client,
 ///         Some(control_rx),
 ///         Some(status_tx),
+///         interval_rx,
 ///     ).with_initial_delay(Duration::from_secs(5));
 ///
-///     // Spawn the controller in a background task
 ///     tokio::spawn(controller.run());
 ///
 ///     // Listen for status updates
@@ -150,7 +147,6 @@ pub enum ControllerStatus {
 ///         }
 ///     });
 ///
-///     // Send control messages as needed
 ///     control_tx.send(ControllerCommand::ForceSync).await?;
 ///
 ///     Ok(())
@@ -164,6 +160,8 @@ pub struct BackupController {
     status_tx: Option<broadcast::Sender<ControllerStatus>>,
     /// Initial delay before starting the first sync (for staggering multiple controllers)
     initial_delay: Duration,
+    /// Shared sync interval receiver - reads current interval dynamically
+    sync_interval_rx: watch::Receiver<u64>,
 }
 
 impl BackupController {
@@ -176,6 +174,7 @@ impl BackupController {
     /// * `pubky_client` - Pubky SDK client for connecting to the homeserver
     /// * `control_rx` - Optional receiver for control messages (Cancel, ForceSync)
     /// * `status_tx` - Optional sender for status updates (shared across all controllers)
+    /// * `sync_interval_rx` - Watch receiver for dynamically reading the current sync interval (seconds)
     ///
     /// # Returns
     ///
@@ -191,6 +190,7 @@ impl BackupController {
         pubky_client: Arc<Pubky>,
         control_rx: Option<tokio::sync::mpsc::Receiver<ControllerCommand>>,
         status_tx: Option<broadcast::Sender<ControllerStatus>>,
+        sync_interval_rx: watch::Receiver<u64>,
     ) -> Self {
         Self {
             pubky,
@@ -199,6 +199,7 @@ impl BackupController {
             control_rx,
             status_tx,
             initial_delay: Duration::ZERO,
+            sync_interval_rx,
         }
     }
 
@@ -216,6 +217,11 @@ impl BackupController {
         self
     }
 
+    /// Reads the current sync interval from the shared watch channel.
+    fn sync_interval(&self) -> Duration {
+        Duration::from_secs(*self.sync_interval_rx.borrow())
+    }
+
     /// Runs the backup controller loop.
     ///
     /// This method consumes `self` and runs until:
@@ -228,7 +234,7 @@ impl BackupController {
     /// 2. Poll for new events from the pubky's homeserver
     /// 3. Download and store new/updated resources
     /// 4. Delete resources that have been removed
-    /// 5. Wait for the next sync interval (30 seconds)
+    /// 5. Wait for the next sync interval
     /// 6. Emit status updates via the status channel
     ///
     /// During the starting phase, the controller responds to commands:
@@ -281,49 +287,60 @@ impl BackupController {
             }
         }
 
-        // Main sync loop
-        let mut interval = time::interval(Duration::from_secs(SYNC_INTERVAL_SECONDS));
+        // Main sync loop - sync immediately on first iteration, then wait
+        let mut sync_now = true;
 
         loop {
-            tokio::select! {
-                _ = interval.tick() => {
+            if sync_now {
+                sync_now = false;
 
-                    self.send_status(ControllerStatus::Syncing {
-                        pubky: self.pubky.clone(),
-                        events_processed: 0,
-                    });
+                self.send_status(ControllerStatus::Syncing {
+                    pubky: self.pubky.clone(),
+                    events_processed: 0,
+                });
 
-                    match self.perform_sync_batch().await {
-                        Ok(ControlFlow::Continue(events_processed)) => {
-                            // More events available, send status and keep syncing immediately
-                            self.send_status(ControllerStatus::Syncing {
-                                pubky: self.pubky.clone(),
-                                events_processed,
-                            });
-                            interval = time::interval_at(
-                                time::Instant::now(),
-                                Duration::from_secs(SYNC_INTERVAL_SECONDS)
-                            );
-                            // Continue syncing without sending Idle
-                            continue;
-                        }
-                        Ok(ControlFlow::Break(())) => {
-                            // Sync complete for this cycle, send Idle
-                        }
-                        Err(e) => {
-                            let error_msg = format!("Critical sync batch failure: {}", e);
-                            let _ = self.storage.write_error(&self.pubky, "sync", &error_msg).await;
-                            self.send_status(ControllerStatus::Error {
-                                pubky: self.pubky.clone(),
-                                message: error_msg,
-                            });
-                            return;
-                        }
+                match self.perform_sync_batch().await {
+                    Ok(ControlFlow::Continue(events_processed)) => {
+                        // More events available, send status and keep syncing immediately
+                        self.send_status(ControllerStatus::Syncing {
+                            pubky: self.pubky.clone(),
+                            events_processed,
+                        });
+                        sync_now = true;
+                        continue;
                     }
+                    Ok(ControlFlow::Break(())) => {
+                        // Sync complete for this cycle, send Idle
+                    }
+                    Err(e) => {
+                        let error_msg = format!("Critical sync batch failure: {}", e);
+                        let _ = self
+                            .storage
+                            .write_error(&self.pubky, "sync", &error_msg)
+                            .await;
+                        self.send_status(ControllerStatus::Error {
+                            pubky: self.pubky.clone(),
+                            message: error_msg,
+                        });
+                        return;
+                    }
+                }
 
-                    self.send_status(ControllerStatus::Idle {
-                        pubky: self.pubky.clone(),
-                    });
+                self.send_status(ControllerStatus::Idle {
+                    pubky: self.pubky.clone(),
+                });
+            }
+
+            // Wait for next sync interval, control command, or interval change
+            let sleep = time::sleep(self.sync_interval());
+            tokio::pin!(sleep);
+
+            tokio::select! {
+                _ = &mut sleep => {
+                    sync_now = true;
+                }
+                _ = self.sync_interval_rx.changed() => {
+                    // Interval changed - just loop back and sleep with the new value
                 }
                 msg = async {
                     if let Some(ref mut rx) = self.control_rx {
@@ -338,16 +355,11 @@ impl BackupController {
                             self.send_status(ControllerStatus::Ended {
                                 pubky: self.pubky.clone(),
                             });
-                            // Break out of loop ending task
                             break;
                         }
                         Some(ControllerCommand::ForceSync) => {
                             info!("Force sync triggered");
-                            // Reset interval to trigger immediately
-                            interval = time::interval_at(
-                                time::Instant::now(),
-                                Duration::from_secs(SYNC_INTERVAL_SECONDS)
-                            );
+                            sync_now = true;
                         }
                         None => {
                             warn!("Backup controller control channel closed");
@@ -512,6 +524,10 @@ mod tests {
         std::env::set_var("PUBKY_DEVELOPER_MODE", "1");
     }
 
+    fn create_test_interval_rx() -> (watch::Sender<u64>, watch::Receiver<u64>) {
+        watch::channel(DEFAULT_SYNC_INTERVAL_SECONDS)
+    }
+
     // Test helper to create a storage instance with a temporary directory
     fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
@@ -540,6 +556,7 @@ mod tests {
             pubky_client,
             Some(control_rx),
             Some(status_tx),
+            create_test_interval_rx().1,
         );
 
         // Spawn the controller
@@ -593,6 +610,7 @@ mod tests {
             pubky_client,
             Some(control_rx),
             Some(status_tx),
+            create_test_interval_rx().1,
         );
 
         tokio::spawn(controller.run());
@@ -629,8 +647,14 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
-        let controller =
-            BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            pubky_client,
+            None,
+            None,
+            create_test_interval_rx().1,
+        );
 
         // First batch should return Continue (more events available)
         let stream = events::test_helpers::create_test_event_stream(None);
@@ -648,8 +672,14 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
-        let controller =
-            BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            pubky_client,
+            None,
+            None,
+            create_test_interval_rx().1,
+        );
 
         // Process multiple batches until completion
         let mut iterations = 0;
@@ -700,8 +730,14 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
-        let controller =
-            BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            pubky_client,
+            None,
+            None,
+            create_test_interval_rx().1,
+        );
 
         // First create a resource
         let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
@@ -736,8 +772,14 @@ mod tests {
             PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
         let pubky_client = create_test_pubky_client();
 
-        let controller =
-            BackupController::new(pubky1.clone(), storage.clone(), pubky_client, None, None);
+        let controller = BackupController::new(
+            pubky1.clone(),
+            storage.clone(),
+            pubky_client,
+            None,
+            None,
+            create_test_interval_rx().1,
+        );
 
         // Create event for a different pubky
         let resource = PubkyResource::new(pubky2.clone(), "/pub/test.json").unwrap();
@@ -762,8 +804,14 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let pubky_client = create_test_pubky_client();
 
-        let controller =
-            BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            pubky_client,
+            None,
+            None,
+            create_test_interval_rx().1,
+        );
 
         // Create a stream that yields 3 events then fails
         let failing_stream = events::test_helpers::create_failing_test_event_stream(3);
@@ -803,8 +851,14 @@ mod tests {
         let pubky_client = create_test_pubky_client();
 
         // Create controller without any channels
-        let controller =
-            BackupController::new(pubky.clone(), storage.clone(), pubky_client, None, None);
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            pubky_client,
+            None,
+            None,
+            create_test_interval_rx().1,
+        );
 
         // Spawn and let it run briefly - it should process events without panicking
         let handle = tokio::spawn(async move {
@@ -833,6 +887,7 @@ mod tests {
             pubky_client,
             Some(control_rx),
             Some(status_tx),
+            create_test_interval_rx().1,
         );
 
         let handle = tokio::spawn(controller.run());
@@ -896,6 +951,7 @@ mod tests {
             pubky_client,
             Some(control_rx),
             Some(status_tx),
+            create_test_interval_rx().1,
         );
 
         tokio::spawn(controller.run());
@@ -936,6 +992,7 @@ mod tests {
             pubky_client,
             Some(control_rx),
             Some(status_tx),
+            create_test_interval_rx().1,
         )
         .with_initial_delay(Duration::from_secs(60)); // Long delay
 
@@ -988,6 +1045,7 @@ mod tests {
             pubky_client,
             Some(control_rx),
             Some(status_tx),
+            create_test_interval_rx().1,
         )
         .with_initial_delay(Duration::from_secs(60)); // Long delay
 
@@ -1035,6 +1093,7 @@ mod tests {
             pubky_client,
             Some(control_rx),
             Some(status_tx),
+            create_test_interval_rx().1,
         );
 
         tokio::spawn(controller.run());

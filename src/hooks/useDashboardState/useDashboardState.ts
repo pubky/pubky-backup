@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import * as Stores from "@/stores";
 import * as Hooks from "@/hooks";
+import { getConfig } from "@/services";
 
 /**
  * Status information for the dashboard display
@@ -22,7 +23,7 @@ export interface DashboardState {
   dataSize: number;
   lastSyncTime: number | null;
   countdownText: string;
-  dataDirPath: string | null;
+  backupLocation: string | null;
   keys: string[];
   statusInfo: StatusInfo;
 }
@@ -53,8 +54,14 @@ export function useDashboardState(): DashboardState {
   );
 
   const appState = Hooks.useAppState();
-  const { dataDirPath } = Hooks.useDataDirPath();
   const keys = Hooks.useKeys();
+
+  const [backupLocation, setBackupLocation] = useState<string | null>(null);
+  useEffect(() => {
+    getConfig()
+      .then((config) => setBackupLocation(config.keys_dir))
+      .catch(() => {});
+  }, []);
 
   const pubky = appState.pubky;
   const isSyncing = appState.is_syncing;
@@ -101,7 +108,7 @@ export function useDashboardState(): DashboardState {
     dataSize,
     lastSyncTime,
     countdownText,
-    dataDirPath,
+    backupLocation,
     keys,
     statusInfo,
   };

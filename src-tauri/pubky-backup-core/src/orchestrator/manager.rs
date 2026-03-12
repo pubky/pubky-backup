@@ -11,15 +11,15 @@
 //! - Handling automatic resumption from stored data
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use parking_lot::RwLock;
 use pubky::{Pubky, PublicKey};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::discovery;
@@ -27,7 +27,7 @@ use super::error::OrchestratorError;
 use super::session;
 use super::types::*;
 use crate::storage::AppStorage;
-use crate::sync::{BackupController, ControllerCommand, ControllerStatus, SYNC_INTERVAL_SECONDS};
+use crate::sync::{BackupController, ControllerCommand, ControllerStatus};
 
 /// Maximum number of keys that can be backed up simultaneously.
 ///
@@ -50,6 +50,8 @@ struct ManagerInner {
     keys: HashMap<PublicKey, ManagedKey>,
     /// Shared pubky client for SDK calls
     pubky_client: Arc<Pubky>,
+    /// Current sync interval in seconds
+    sync_interval_secs: u64,
 }
 
 /// A thread-safe backup manager for multiple pubky keys.
@@ -90,6 +92,8 @@ pub struct BackupManager {
     update_tx: broadcast::Sender<KeyUpdate>,
     /// Shared status channel sender - all controllers send to this channel
     status_tx: broadcast::Sender<ControllerStatus>,
+    /// Shared sync interval - controllers read this dynamically
+    sync_interval_tx: watch::Sender<u64>,
 }
 
 impl BackupManager {
@@ -117,15 +121,34 @@ impl BackupManager {
             Arc::new(Pubky::new().map_err(|e| OrchestratorError::Internal(e.to_string()))?)
         };
 
+        // Load sync interval: disk > config > default, with validation
+        let sync_interval_secs = match storage.read_sync_interval() {
+            Some(secs) if secs >= crate::sync::MIN_SYNC_INTERVAL_SECONDS => secs,
+            Some(invalid) => {
+                error!(
+                    "Stored sync interval {}s is below minimum {}s, using default {}s",
+                    invalid,
+                    crate::sync::MIN_SYNC_INTERVAL_SECONDS,
+                    crate::sync::DEFAULT_SYNC_INTERVAL_SECONDS
+                );
+                crate::sync::DEFAULT_SYNC_INTERVAL_SECONDS
+            }
+            None => config.sync_interval_secs,
+        };
+
         // Create update broadcast channel for external subscribers
         let (update_tx, _) = broadcast::channel(100);
 
         // Create shared status channel - all controllers send to this channel
         let (status_tx, status_rx) = broadcast::channel(100);
 
+        // Create shared sync interval watch channel
+        let (sync_interval_tx, _) = watch::channel(sync_interval_secs);
+
         let inner = Arc::new(RwLock::new(ManagerInner {
             keys: HashMap::new(),
             pubky_client,
+            sync_interval_secs,
         }));
 
         let manager = BackupManager {
@@ -134,6 +157,7 @@ impl BackupManager {
             config,
             update_tx: update_tx.clone(),
             status_tx,
+            sync_interval_tx,
         };
 
         // Spawn the centralized status listener task
@@ -192,6 +216,22 @@ impl BackupManager {
         Ok(())
     }
 
+    /// Stop a controller without any UI side effects.
+    ///
+    /// Removes from HashMap and sends Cancel. Pure internal, no side effects.
+    fn stop_controller(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
+        let managed_key = {
+            let mut inner = self.inner.write();
+            inner
+                .keys
+                .remove(pubky)
+                .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?
+        };
+
+        let _ = managed_key.control_tx.try_send(ControllerCommand::Cancel);
+        Ok(())
+    }
+
     /// Stop syncing a key but preserve backed-up data on disk.
     ///
     /// The key will be automatically resumed on the next `BackupManager::new()` call
@@ -201,19 +241,13 @@ impl BackupManager {
     ///
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn remove_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        let (managed_key, no_keys_left) = {
-            let mut inner = self.inner.write();
-            let managed_key = inner
-                .keys
-                .remove(pubky)
-                .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?;
-            (managed_key, inner.keys.is_empty())
-        };
-
-        // Send cancel message to stop the controller (mpsc send is async but we use try_send)
-        let _ = managed_key.control_tx.try_send(ControllerCommand::Cancel);
+        self.stop_controller(pubky)?;
 
         // Clear last_pubky when no keys remain so the app doesn't auto-load a removed key
+        let no_keys_left = {
+            let inner = self.inner.read();
+            inner.keys.is_empty()
+        };
         if no_keys_left {
             if let Err(e) = self.storage.clear_last_pubky().await {
                 warn!("Failed to clear last pubky: {}", e);
@@ -350,11 +384,34 @@ impl BackupManager {
         Ok(path)
     }
 
-    /// Get the data directory path.
+    /// Get the root data directory path (e.g. `~/.pubky-backup`).
     pub fn data_dir(&self) -> PathBuf {
         self.storage
             .get_backup_data_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
+    }
+
+    /// Get the current keys directory path.
+    pub fn keys_dir(&self) -> &Path {
+        self.storage.keys_dir()
+    }
+
+    /// Move the keys directory to a new parent location.
+    ///
+    /// **This manager must not be used after this call.** Controllers are
+    /// shut down and internal storage paths become stale. The caller must
+    /// drop this instance and create a fresh [`BackupManager`] via
+    /// [`BackupManager::new`] to resume operations from the new location.
+    ///
+    /// Note: ideally this would take `self` by value to enforce single-use
+    /// semantics at compile time. It takes `&self` because the manager is
+    /// shared via `Arc` at the Tauri layer. The caller is responsible for
+    /// ensuring no concurrent operations occur during the move (e.g. via
+    /// a relocating flag or mutex).
+    pub async fn move_keys(&self, new_parent: &Path) -> Result<PathBuf, OrchestratorError> {
+        self.shutdown().await;
+        let new_keys_dir = self.storage.move_keys(new_parent)?;
+        Ok(new_keys_dir)
     }
 
     /// Write the last used pubky to storage for session persistence.
@@ -383,12 +440,67 @@ impl BackupManager {
         let keys: Vec<PublicKey> = self.get_keys();
 
         for pubky in keys {
-            if let Err(e) = self.remove_key(&pubky).await {
+            if let Err(e) = self.stop_controller(&pubky) {
                 warn!("Error shutting down key {}: {}", pubky, e);
             }
         }
 
         info!("BackupManager shutdown complete");
+    }
+
+    /// Get the current sync interval in seconds.
+    pub fn get_sync_interval(&self) -> u64 {
+        let inner = self.inner.read();
+        inner.sync_interval_secs
+    }
+
+    /// Set the sync interval for all controllers.
+    ///
+    /// Persists the new interval to disk, then notifies all running controllers
+    /// via a shared watch channel.
+    pub async fn set_sync_interval(&self, interval_secs: u64) -> Result<(), OrchestratorError> {
+        if interval_secs < crate::sync::MIN_SYNC_INTERVAL_SECONDS {
+            return Err(OrchestratorError::InvalidConfig(format!(
+                "Sync interval must be at least {}s, got {}s",
+                crate::sync::MIN_SYNC_INTERVAL_SECONDS,
+                interval_secs
+            )));
+        }
+
+        // Persist to disk first so a crash can't leave inconsistent state
+        self.storage
+            .write_sync_interval(interval_secs)
+            .await
+            .map_err(OrchestratorError::Storage)?;
+
+        // Update inner state
+        {
+            let mut inner = self.inner.write();
+            inner.sync_interval_secs = interval_secs;
+        }
+
+        // Notify all controllers of the new interval via the shared watch channel.
+        let _ = self.sync_interval_tx.send(interval_secs);
+
+        // Force sync all controllers so they immediately wake up and use the new interval,
+        // rather than waiting for the previous (potentially longer) sleep to expire.
+        {
+            let inner = self.inner.read();
+            for (pubky, managed_key) in &inner.keys {
+                if let Err(e) = managed_key
+                    .control_tx
+                    .try_send(ControllerCommand::ForceSync)
+                {
+                    warn!(
+                        "Failed to force sync {} after interval change: {}",
+                        pubky, e
+                    );
+                }
+            }
+        }
+
+        info!("Sync interval updated to {}s", interval_secs);
+        Ok(())
     }
 
     // --- Internal methods ---
@@ -406,7 +518,10 @@ impl BackupManager {
             status: KeyStatus::Starting,
             data_size: initial_size,
             last_sync: None,
-            next_sync: Some(next_sync_time()),
+            next_sync: Some(next_sync_time({
+                let inner = self.inner.read();
+                inner.sync_interval_secs
+            })),
             error: None,
             total_files: None,
             files_synced: None,
@@ -414,37 +529,40 @@ impl BackupManager {
         };
 
         // Broadcast initial state to external subscribers
-        let _ = self.update_tx.send(KeyUpdate {
+        let receivers = self.update_tx.send(KeyUpdate {
             pubky: pubky.clone(),
             state: initial_state.clone(),
         });
+        debug!(
+            "Broadcast initial state for {} (receivers: {:?})",
+            pubky, receivers
+        );
 
-        // Get pubky client
-        let pubky_client = {
+        let (pubky_client, sync_interval_secs, key_count) = {
             let inner = self.inner.read();
-            inner.pubky_client.clone()
+            (
+                inner.pubky_client.clone(),
+                inner.sync_interval_secs,
+                inner.keys.len(),
+            )
         };
 
-        // Generate random initial delay (0 to SYNC_INTERVAL_SECONDS) to stagger syncs
+        // Generate random initial delay (0 to sync_interval_secs) to stagger syncs
         // Skip staggering in developer mode or if this is the first key
-        let key_count = {
-            let inner = self.inner.read();
-            inner.keys.len()
-        };
         let initial_delay = if self.config.developer_mode || key_count == 0 {
             std::time::Duration::ZERO
         } else {
-            std::time::Duration::from_secs(rand::random::<u64>() % SYNC_INTERVAL_SECONDS)
+            std::time::Duration::from_secs(rand::random::<u64>() % sync_interval_secs)
         };
 
-        // Create the controller with the shared status channel and initial delay
-        // All controllers send to the same status_tx, identified by pubky in each message
+        // Create the controller with the shared status channel, initial delay, and sync interval
         let controller = BackupController::new(
             pubky.clone(),
             self.storage.clone(),
             pubky_client,
             Some(control_rx),
             Some(self.status_tx.clone()),
+            self.sync_interval_tx.subscribe(),
         )
         .with_initial_delay(initial_delay);
 
@@ -571,10 +689,14 @@ impl BackupManager {
         };
 
         // Broadcast error state to external subscribers
-        let _ = self.update_tx.send(KeyUpdate {
+        let receivers = self.update_tx.send(KeyUpdate {
             pubky: pubky.clone(),
             state: error_state.clone(),
         });
+        debug!(
+            "Broadcast error state for {} (receivers: {:?})",
+            pubky, receivers
+        );
 
         // Store in keys map (without a running controller task)
         // Create a no-op task handle
@@ -617,13 +739,14 @@ fn spawn_status_listener(
             };
 
             // Get current state values to preserve across transitions
-            let (current_data_size, current_last_sync, current_next_sync) = {
+            let (current_data_size, current_last_sync, current_next_sync, sync_interval_secs) = {
                 let inner_read = inner.read();
-                inner_read
+                let (ds, ls, ns) = inner_read
                     .keys
                     .get(&pubky)
                     .map(|k| (k.state.data_size, k.state.last_sync, k.state.next_sync))
-                    .unwrap_or((0, None, None))
+                    .unwrap_or((0, None, None));
+                (ds, ls, ns, inner_read.sync_interval_secs)
             };
 
             let new_state = handle_controller_status(
@@ -633,6 +756,7 @@ fn spawn_status_listener(
                 current_data_size,
                 current_last_sync,
                 current_next_sync,
+                sync_interval_secs,
             )
             .await;
 
@@ -645,10 +769,14 @@ fn spawn_status_listener(
             }
 
             // Broadcast to external subscribers
-            let _ = update_tx.send(KeyUpdate {
+            let receivers = update_tx.send(KeyUpdate {
                 pubky: pubky.clone(),
                 state: new_state,
             });
+            debug!(
+                "Broadcast status update for {} (receivers: {:?})",
+                pubky, receivers
+            );
         }
     });
 }
@@ -672,6 +800,7 @@ async fn handle_controller_status(
     current_data_size: u64,
     current_last_sync: Option<u64>,
     current_next_sync: Option<u64>,
+    sync_interval_secs: u64,
 ) -> KeyState {
     match status {
         ControllerStatus::Starting { .. } => KeyState {
@@ -707,7 +836,7 @@ async fn handle_controller_status(
                 status: KeyStatus::Idle,
                 data_size,
                 last_sync: Some(current_unix_timestamp()),
-                next_sync: Some(next_sync_time()),
+                next_sync: Some(next_sync_time(sync_interval_secs)),
                 ..Default::default()
             }
         }
@@ -742,13 +871,15 @@ fn current_unix_timestamp() -> u64 {
 }
 
 /// Calculate next sync time
-fn next_sync_time() -> u64 {
-    current_unix_timestamp() + SYNC_INTERVAL_SECONDS
+fn next_sync_time(interval_secs: u64) -> u64 {
+    current_unix_timestamp() + interval_secs
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::AppStorage;
+    use crate::sync::{DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS};
     use crate::TEST_PUBKY;
     use std::str::FromStr;
     use tempfile::TempDir;
@@ -764,6 +895,7 @@ mod tests {
             data_dir: Some(temp_dir.path().to_path_buf()),
             validation_timeout_secs: 30,
             developer_mode: true,
+            sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
         }
     }
 
@@ -1129,8 +1261,16 @@ mod tests {
             message: "Test error message".to_string(),
         };
 
-        let state =
-            handle_controller_status(&pubky, &storage, &error_status, 1000, None, None).await;
+        let state = handle_controller_status(
+            &pubky,
+            &storage,
+            &error_status,
+            1000,
+            None,
+            None,
+            DEFAULT_SYNC_INTERVAL_SECONDS,
+        )
+        .await;
 
         // Verify error state mapping
         assert!(
@@ -1160,8 +1300,16 @@ mod tests {
             pubky: pubky.clone(),
         };
 
-        let state =
-            handle_controller_status(&pubky, &storage, &starting_status, 1234, None, None).await;
+        let state = handle_controller_status(
+            &pubky,
+            &storage,
+            &starting_status,
+            1234,
+            None,
+            None,
+            DEFAULT_SYNC_INTERVAL_SECONDS,
+        )
+        .await;
 
         // Verify starting state mapping
         assert!(
@@ -1170,6 +1318,112 @@ mod tests {
         );
         assert_eq!(state.data_size, 1234, "Should preserve current data size");
         assert!(state.error.is_none(), "Should not have error");
+    }
+
+    #[tokio::test]
+    async fn test_set_sync_interval_updates_and_persists() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        // Default interval
+        assert_eq!(manager.get_sync_interval(), DEFAULT_SYNC_INTERVAL_SECONDS);
+
+        // Set new interval
+        manager.set_sync_interval(600).await.unwrap();
+        assert_eq!(manager.get_sync_interval(), 600);
+
+        // Verify persisted to disk
+        let stored = manager.storage.read_sync_interval();
+        assert_eq!(stored, Some(600));
+    }
+
+    #[tokio::test]
+    async fn test_set_sync_interval_rejects_zero() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        let result = manager.set_sync_interval(0).await;
+        assert!(result.is_err(), "Should reject zero interval");
+
+        // Interval should be unchanged
+        assert_eq!(manager.get_sync_interval(), DEFAULT_SYNC_INTERVAL_SECONDS);
+    }
+
+    #[tokio::test]
+    async fn test_set_sync_interval_rejects_too_small() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        let result = manager.set_sync_interval(9).await;
+        assert!(
+            result.is_err(),
+            "Should reject interval below minimum (10s)"
+        );
+
+        // Interval should be unchanged
+        assert_eq!(manager.get_sync_interval(), DEFAULT_SYNC_INTERVAL_SECONDS);
+    }
+
+    #[tokio::test]
+    async fn test_set_sync_interval_accepts_exact_minimum() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        // Exact minimum (10s) should be accepted
+        manager
+            .set_sync_interval(MIN_SYNC_INTERVAL_SECONDS)
+            .await
+            .unwrap();
+        assert_eq!(manager.get_sync_interval(), MIN_SYNC_INTERVAL_SECONDS);
+    }
+
+    #[tokio::test]
+    async fn test_set_sync_interval_no_controllers() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        // No keys added — should succeed as a no-op for controller restarts
+        manager.set_sync_interval(600).await.unwrap();
+        assert_eq!(manager.get_sync_interval(), 600);
+    }
+
+    #[tokio::test]
+    async fn test_set_sync_interval_keeps_controllers_running() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        manager.add_key(pubky.clone()).await.unwrap();
+
+        // Change interval — controller should keep running (no restart)
+        manager.set_sync_interval(600).await.unwrap();
+
+        // Key should still be managed
+        assert!(manager.get_key_state(&pubky).is_some());
+        assert_eq!(manager.get_keys().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_persisted_sync_interval_loaded_on_startup() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // First: create a manager and set a custom interval
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+            manager.set_sync_interval(900).await.unwrap();
+        }
+
+        // Second: create a new manager from the same data dir — should load 900
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+        assert_eq!(manager.get_sync_interval(), 900);
     }
 
     #[tokio::test]
@@ -1182,6 +1436,7 @@ mod tests {
             data_dir: Some(temp_dir.path().to_path_buf()),
             validation_timeout_secs: 30,
             developer_mode: true, // Use dev mode to avoid real network calls
+            sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
         };
         let manager = BackupManager::new(config).await.unwrap();
 
@@ -1212,5 +1467,117 @@ mod tests {
             elapsed
         );
         assert_eq!(update.pubky, pubky);
+    }
+
+    #[tokio::test]
+    async fn test_stored_interval_below_minimum_falls_back_to_default() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Manually write an invalid (too small) interval to disk
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+            // Write a value below the minimum directly to storage
+            manager.storage.write_sync_interval(5).await.unwrap();
+        }
+
+        // Create a new manager — should reject stored value and use default
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+        assert_eq!(
+            manager.get_sync_interval(),
+            DEFAULT_SYNC_INTERVAL_SECONDS,
+            "Should fall back to default when stored value is below minimum"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_config_sync_interval_used_when_no_stored_value() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a config with a non-default interval and no stored value on disk
+        enable_developer_mode();
+        let config = BackupManagerConfig {
+            data_dir: Some(temp_dir.path().to_path_buf()),
+            validation_timeout_secs: 30,
+            developer_mode: true,
+            sync_interval_secs: 900,
+        };
+        let manager = BackupManager::new(config).await.unwrap();
+
+        assert_eq!(
+            manager.get_sync_interval(),
+            900,
+            "Should use config.sync_interval_secs when no stored value exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_move_keys_moves_data_and_recreates_manager() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        manager.add_key(pubky.clone()).await.unwrap();
+
+        let original_keys_dir = manager.keys_dir().to_path_buf();
+        assert!(original_keys_dir.exists());
+
+        // Move keys to a new location (shuts down controllers)
+        let new_parent = temp_dir.path().join("moved");
+        let new_keys_dir = manager.move_keys(&new_parent).await.unwrap();
+        drop(manager);
+
+        assert_ne!(original_keys_dir, new_keys_dir);
+        assert!(!original_keys_dir.exists(), "Old keys dir should be gone");
+        assert!(new_keys_dir.exists(), "New keys dir should exist");
+
+        // Create a new manager from the same config dir — should pick up new location
+        let config2 = create_test_config(&temp_dir);
+        let manager2 = BackupManager::new(config2).await.unwrap();
+
+        assert_eq!(manager2.keys_dir(), new_keys_dir);
+        // The key should have been resumed from the new location
+        assert_eq!(manager2.get_keys().len(), 1);
+    }
+
+    /// The startup screen calls `get_last_pubky` and `get_keys` to decide
+    /// whether to skip straight to the dashboard.  These reads must work
+    /// from `AppStorage` alone — without constructing a `BackupManager`
+    /// (which blocks on `resume_stored_keys` → network calls).
+    ///
+    /// This test simulates a full session lifecycle and verifies that a
+    /// fresh `AppStorage` can read back everything the frontend needs.
+    #[tokio::test]
+    async fn test_startup_reads_do_not_need_manager() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config(&temp_dir);
+        let manager = BackupManager::new(config).await.unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        manager.add_key(pubky.clone()).await.unwrap();
+        manager.write_last_pubky(&pubky).await.unwrap();
+
+        // Drop the manager — simulates app restart
+        manager.shutdown().await;
+        drop(manager);
+
+        // Read using raw storage — this is what Tauri commands should fall back to
+        // when the manager hasn't finished initialising yet.
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+
+        let last = storage.read_last_pubky().await.unwrap();
+        assert_eq!(
+            last,
+            Some(pubky.clone()),
+            "last_pubky must be readable without a BackupManager"
+        );
+
+        let dirs = storage.list_pubky_directories().unwrap();
+        assert!(
+            dirs.contains(&pubky.z32()),
+            "key directories must be listable without a BackupManager"
+        );
     }
 }

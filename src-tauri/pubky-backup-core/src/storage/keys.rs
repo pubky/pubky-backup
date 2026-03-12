@@ -23,8 +23,6 @@ pub(crate) const DATA_DIR_NAME: &str = "data";
 const SNAPSHOTS_DIR_NAME: &str = "snapshots";
 pub(crate) const CURSOR_FILENAME: &str = "cursor";
 pub(crate) const ERROR_LOG_FILENAME: &str = "error.log";
-pub(crate) const KEYS_DIR_NAME: &str = "keys";
-
 /// Storage for a single Pubky key's backup data.
 ///
 /// Located at: `~/.pubky-backup/keys/<pubky>/`
@@ -302,22 +300,18 @@ pub struct KeysStorage {
 }
 
 impl KeysStorage {
-    pub(crate) fn new(data_dir: &Path) -> Result<Self, StorageError> {
-        let keys_dir = data_dir.join(KEYS_DIR_NAME);
-        // Ensure the keys directory exists
-        std::fs::create_dir_all(&keys_dir).map_err(|e| {
+    pub fn new_with_keys_dir(keys_dir: &Path) -> Result<Self, StorageError> {
+        std::fs::create_dir_all(keys_dir).map_err(|e| {
             StorageError::DirectoryCreation(format!("{}: {}", keys_dir.display(), e))
         })?;
-        Ok(KeysStorage { keys_dir })
-    }
-
-    /// Create a KeysStorage with a specific keys directory path.
-    /// Used for testing.
-    #[cfg(test)]
-    pub fn new_with_path(keys_dir: &Path) -> Result<Self, StorageError> {
         Ok(KeysStorage {
             keys_dir: keys_dir.to_path_buf(),
         })
+    }
+
+    /// Get the keys directory path.
+    pub fn keys_dir(&self) -> &Path {
+        &self.keys_dir
     }
 
     /// Get storage for a specific key.
@@ -474,7 +468,7 @@ mod tests {
     #[tokio::test]
     async fn test_keys_storage_list_keys() {
         let temp_dir = TempDir::new().unwrap();
-        let keys_storage = KeysStorage::new(temp_dir.path()).unwrap();
+        let keys_storage = KeysStorage::new_with_keys_dir(temp_dir.path()).unwrap();
 
         // Initially should be empty
         let keys = keys_storage.list_keys().unwrap();
