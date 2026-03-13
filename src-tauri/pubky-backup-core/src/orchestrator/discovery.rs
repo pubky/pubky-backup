@@ -1,58 +1,13 @@
 //! Homeserver discovery and pubky validation.
 //!
-//! This module handles the discovery of homeservers for pubky keys and validates
-//! that a pubky has data available for backup.
+//! This module provides two independent operations:
 //!
-//! # Responsibilities
-//!
-//! - Homeserver discovery
-//! - Validation that a pubky has backup-able data
-//! - Timeout handling for network operations
+//! - [`discover_homeserver`] - Resolves a pubky's homeserver via PKDNS
+//! - [`verify_pubky_has_data`] - Checks that a pubky has backup-able data at `/pub/`
 
-use log::debug;
 use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
 
 use super::error::OrchestratorError;
-
-/// Validate a pubky by discovering its homeserver and checking for data.
-///
-/// In developer mode, validation is skipped and the pubky itself is returned
-/// as the "homeserver" placeholder.
-///
-/// # Arguments
-///
-/// * `pubky` - The public key to validate
-/// * `timeout_secs` - Timeout for network operations
-/// * `developer_mode` - Whether to skip validation (for testing)
-///
-/// # Returns
-///
-/// The homeserver's public key if validation succeeds.
-///
-/// # Errors
-///
-/// Returns `OrchestratorError::ValidationFailed` if:
-/// - Homeserver discovery times out or fails
-/// - No data is found for the pubky
-pub async fn validate_pubky(
-    pubky: &PublicKey,
-    timeout_secs: u64,
-    developer_mode: bool,
-) -> Result<PublicKey, OrchestratorError> {
-    // In developer mode, skip validation
-    if developer_mode {
-        debug!("Developer mode: skipping validation for {}", pubky);
-        return Ok(pubky.clone()); // Return pubky as homeserver in dev mode
-    }
-
-    // Discover homeserver
-    let homeserver = discover_homeserver(pubky, timeout_secs).await?;
-
-    // Check that the pubky has data
-    verify_pubky_has_data(pubky, timeout_secs).await?;
-
-    Ok(homeserver)
-}
 
 /// Discover the homeserver for a pubky using PKDNS.
 ///
@@ -68,7 +23,7 @@ pub async fn validate_pubky(
 /// # Errors
 ///
 /// Returns `OrchestratorError::HomeserverNotFound` if discovery times out or fails.
-async fn discover_homeserver(
+pub async fn discover_homeserver(
     pubky: &PublicKey,
     timeout_secs: u64,
 ) -> Result<PublicKey, OrchestratorError> {
@@ -104,7 +59,7 @@ async fn discover_homeserver(
 /// Returns `OrchestratorError::ValidationFailed` if:
 /// - The check times out
 /// - No data is found at the pubky's `/pub/` path
-async fn verify_pubky_has_data(
+pub async fn verify_pubky_has_data(
     pubky: &PublicKey,
     timeout_secs: u64,
 ) -> Result<(), OrchestratorError> {
@@ -129,16 +84,14 @@ async fn verify_pubky_has_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TEST_PUBKY;
     use std::str::FromStr;
 
     #[tokio::test]
-    async fn test_validate_pubky_developer_mode_skips_validation() {
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-
-        // In developer mode, should return the pubky itself as "homeserver"
-        let result = validate_pubky(&pubky, 30, true).await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), pubky);
+    async fn test_discover_homeserver_timeout() {
+        // A valid z-base-32 key that has no homeserver registered
+        let pubky =
+            PublicKey::from_str("yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy").unwrap();
+        let result = discover_homeserver(&pubky, 3).await;
+        assert!(result.is_err());
     }
 }

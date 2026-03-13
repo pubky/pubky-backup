@@ -9,7 +9,7 @@ describe("useAppState", () => {
     // Reset the Zustand store before each test
     useUIStore.setState({
       keyStates: {},
-      viewedPubky: null,
+      lastPubky: null,
       developerMode: false,
     });
   });
@@ -37,7 +37,7 @@ describe("useAppState", () => {
 
     act(() => {
       useUIStore.setState({
-        viewedPubky: "pk:test123",
+        lastPubky: "pk:test123",
         keyStates: { "pk:test123": mockKeyState },
         developerMode: false,
       });
@@ -66,7 +66,7 @@ describe("useAppState", () => {
 
     act(() => {
       useUIStore.setState({
-        viewedPubky: "pk:test123",
+        lastPubky: "pk:test123",
         keyStates: { "pk:test123": mockKeyState },
         developerMode: false,
       });
@@ -96,7 +96,7 @@ describe("useAppState", () => {
 
     act(() => {
       useUIStore.setState({
-        viewedPubky: "pk:test123",
+        lastPubky: "pk:test123",
         keyStates: { "pk:test123": mockKeyState },
         developerMode: false,
       });
@@ -108,11 +108,11 @@ describe("useAppState", () => {
     expect(result.current.backup_running).toBe(false);
   });
 
-  it("should return is_syncing true when viewedPubky set but keyState not yet received", () => {
+  it("should return is_syncing true when lastPubky set but keyState not yet received", () => {
     // This happens when a key is just added but the key-update event hasn't arrived yet
     act(() => {
       useUIStore.setState({
-        viewedPubky: "pk:newkey",
+        lastPubky: "pk:newkey",
         keyStates: {}, // No state for this key yet
         developerMode: false,
       });
@@ -140,7 +140,7 @@ describe("useAppState", () => {
 
     act(() => {
       useUIStore.setState({
-        viewedPubky: "pk:test123",
+        lastPubky: "pk:test123",
         keyStates: { "pk:test123": mockKeyState },
         developerMode: false,
       });
@@ -155,7 +155,7 @@ describe("useAppState", () => {
   it("should reflect developer_mode from store", () => {
     act(() => {
       useUIStore.setState({
-        viewedPubky: null,
+        lastPubky: null,
         keyStates: {},
         developerMode: true,
       });
@@ -183,7 +183,7 @@ describe("useAppState", () => {
 
     act(() => {
       useUIStore.setState({
-        viewedPubky: pubky,
+        lastPubky: pubky,
         keyStates: { [pubky]: idleState },
         developerMode: false,
       });
@@ -233,7 +233,7 @@ describe("useAppState", () => {
 
     act(() => {
       useUIStore.setState({
-        viewedPubky: pubky,
+        lastPubky: pubky,
         keyStates: { [pubky]: startingState },
         developerMode: false,
       });

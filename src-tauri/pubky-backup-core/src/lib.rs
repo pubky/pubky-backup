@@ -103,7 +103,7 @@ pub use sync::{
 };
 
 // Re-export utility functions
-pub use utils::retry_with_backoff;
+pub use utils::{parse_pubky, retry_with_backoff};
 
 // Re-export SDK types used in our public API
 pub use pubky::{Event, EventType};

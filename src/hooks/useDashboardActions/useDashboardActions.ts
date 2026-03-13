@@ -38,13 +38,14 @@ export interface DashboardActions {
  * ```
  */
 export function useDashboardActions(): DashboardActions {
-  const { showToast, setStatusMessageMode } = Stores.useUIStore.getState();
+  const { showToast, showErrorToast, setStatusMessageMode } =
+    Stores.useUIStore.getState();
 
   const { forceSync, isPending: isForceSyncing } = Hooks.useForceSync();
   const { createSnapshotFn, isPending: isCreatingSnapshot } =
     Hooks.useCreateSnapshot();
   const { openDir } = Hooks.useOpenDataDir();
-  const { setViewedPubky } = Hooks.useSetViewedPubky();
+  const { setLastPubky } = Hooks.useSetLastPubky();
 
   // Snapshot message timeout ref
   const snapshotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -88,7 +89,7 @@ export function useDashboardActions(): DashboardActions {
           Logger.error("DashboardActions", "Failed to copy pubky", {
             error: err,
           });
-          alert("Failed to copy to clipboard");
+          showErrorToast("Failed to copy to clipboard");
         });
     },
     [showToast],
@@ -134,9 +135,9 @@ export function useDashboardActions(): DashboardActions {
 
   const handleSelectKey = useCallback(
     (selectedPubky: string) => {
-      void setViewedPubky(selectedPubky);
+      void setLastPubky(selectedPubky);
     },
-    [setViewedPubky],
+    [setLastPubky],
   );
 
   return {

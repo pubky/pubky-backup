@@ -13,7 +13,7 @@ import { stripPubkyPrefix } from "@/utils/pubky";
  * Sets up event listener first, then fetches initial state to avoid race conditions.
  */
 function useBootstrap() {
-  const { setAllKeyStates, setDeveloperMode, setViewedPubky } =
+  const { setAllKeyStates, setDeveloperMode, setLastPubky } =
     Stores.useUIStore.getState();
 
   // Set up event listener for key updates (must be first to avoid race)
@@ -34,7 +34,7 @@ function useBootstrap() {
         // Restore last viewed pubky (normalize to strip any "pubky" prefix)
         const lastPubky = await getLastPubky();
         if (lastPubky !== null) {
-          setViewedPubky(stripPubkyPrefix(lastPubky));
+          setLastPubky(stripPubkyPrefix(lastPubky));
         }
       } catch (error) {
         Logger.error("App", "Failed to bootstrap", { error });
@@ -42,7 +42,7 @@ function useBootstrap() {
     };
 
     void bootstrap();
-  }, [setAllKeyStates, setDeveloperMode, setViewedPubky]);
+  }, [setAllKeyStates, setDeveloperMode, setLastPubky]);
 }
 
 function DashboardPageContent() {

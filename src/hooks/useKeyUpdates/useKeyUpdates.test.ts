@@ -36,7 +36,7 @@ describe("useKeyUpdates", () => {
     eventCallback = null;
     useUIStore.setState({
       keyStates: {},
-      viewedPubky: null,
+      lastPubky: null,
     });
   });
 

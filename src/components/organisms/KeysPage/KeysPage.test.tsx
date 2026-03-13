@@ -15,7 +15,7 @@ import * as services from "@/services";
 vi.mock("@/services", () => ({
   addKey: vi.fn(),
   setLastPubky: vi.fn(),
-  deleteKey: vi.fn(),
+  removeKey: vi.fn(),
 }));
 
 describe("KeysPage", () => {
@@ -34,7 +34,7 @@ describe("KeysPage", () => {
     vi.clearAllMocks();
     useUIStore.setState({
       keyStates: {},
-      viewedPubky: null,
+      lastPubky: null,
       currentPage: "keys",
     });
   });
@@ -101,7 +101,7 @@ describe("KeysPage", () => {
           "pk:key1": mockKeyState,
           "pk:key2": mockKeyState,
         },
-        viewedPubky: "pk:key1",
+        lastPubky: "pk:key1",
       });
 
       render(<KeysPage />);
@@ -111,7 +111,7 @@ describe("KeysPage", () => {
       expect(removeButtons.length).toBe(2);
     });
 
-    it("should call setViewedPubky when clicking a different key", async () => {
+    it("should call setLastPubky when clicking a different key", async () => {
       vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
       useUIStore.setState({
@@ -119,7 +119,7 @@ describe("KeysPage", () => {
           "pk:key1": mockKeyState,
           "pk:key2": mockKeyState,
         },
-        viewedPubky: "pk:key1",
+        lastPubky: "pk:key1",
       });
 
       render(<KeysPage />);
@@ -140,7 +140,7 @@ describe("KeysPage", () => {
         keyStates: {
           "pk:key1": mockKeyState,
         },
-        viewedPubky: "pk:key1",
+        lastPubky: "pk:key1",
         currentPage: "keys",
       });
 
@@ -157,8 +157,8 @@ describe("KeysPage", () => {
   });
 
   describe("remove functionality", () => {
-    it("should call deleteKey and remove from state when remove button is clicked", async () => {
-      vi.mocked(services.deleteKey).mockResolvedValue(undefined);
+    it("should call removeKey and remove from state when remove button is clicked", async () => {
+      vi.mocked(services.removeKey).mockResolvedValue(undefined);
 
       useUIStore.setState({
         keyStates: {
@@ -172,7 +172,7 @@ describe("KeysPage", () => {
       fireEvent.click(removeButton);
 
       await waitFor(() => {
-        expect(services.deleteKey).toHaveBeenCalledWith(
+        expect(services.removeKey).toHaveBeenCalledWith(
           "pk:test-pubky-to-remove",
         );
       });
@@ -184,8 +184,8 @@ describe("KeysPage", () => {
       });
     });
 
-    it("should select another key when deleting the currently viewed key", async () => {
-      vi.mocked(services.deleteKey).mockResolvedValue(undefined);
+    it("should select another key when removing the currently viewed key", async () => {
+      vi.mocked(services.removeKey).mockResolvedValue(undefined);
       vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
 
       useUIStore.setState({
@@ -193,7 +193,7 @@ describe("KeysPage", () => {
           "pk:key1": mockKeyState,
           "pk:key2": mockKeyState,
         },
-        viewedPubky: "pk:key1",
+        lastPubky: "pk:key1",
       });
 
       render(<KeysPage />);
@@ -206,7 +206,7 @@ describe("KeysPage", () => {
       }
 
       await waitFor(() => {
-        expect(services.deleteKey).toHaveBeenCalledWith("pk:key1");
+        expect(services.removeKey).toHaveBeenCalledWith("pk:key1");
       });
 
       // Should switch to the other key
@@ -215,14 +215,14 @@ describe("KeysPage", () => {
       });
     });
 
-    it("should clear viewedPubky and go to startup screen when deleting the last key", async () => {
-      vi.mocked(services.deleteKey).mockResolvedValue(undefined);
+    it("should clear lastPubky and go to startup screen when removing the last key", async () => {
+      vi.mocked(services.removeKey).mockResolvedValue(undefined);
 
       useUIStore.setState({
         keyStates: {
           "pk:only-key": mockKeyState,
         },
-        viewedPubky: "pk:only-key",
+        lastPubky: "pk:only-key",
         currentScreen: "dashboard",
       });
 
@@ -232,11 +232,11 @@ describe("KeysPage", () => {
       fireEvent.click(removeButton);
 
       await waitFor(() => {
-        expect(services.deleteKey).toHaveBeenCalledWith("pk:only-key");
+        expect(services.removeKey).toHaveBeenCalledWith("pk:only-key");
       });
 
       await waitFor(() => {
-        expect(useUIStore.getState().viewedPubky).toBeNull();
+        expect(useUIStore.getState().lastPubky).toBeNull();
       });
 
       await waitFor(() => {

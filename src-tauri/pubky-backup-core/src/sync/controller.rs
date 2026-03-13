@@ -85,13 +85,26 @@ pub enum ControllerStatus {
         /// The public key this status is for
         pubky: PublicKey,
     },
-    /// Controller encountered a critical error and stopped
+    /// Controller encountered an error (will retry on next sync interval)
     Error {
         /// The public key this status is for
         pubky: PublicKey,
         /// Human-readable error message
         message: String,
     },
+}
+
+impl ControllerStatus {
+    /// Get the public key associated with this status.
+    pub fn pubky(&self) -> &PublicKey {
+        match self {
+            Self::Starting { pubky }
+            | Self::Syncing { pubky, .. }
+            | Self::Idle { pubky }
+            | Self::Ended { pubky }
+            | Self::Error { pubky, .. } => pubky,
+        }
+    }
 }
 
 /// Main backup controller which manages the backup process for a Pubky user.
@@ -140,7 +153,7 @@ pub enum ControllerStatus {
 ///                 },
 ///                 ControllerStatus::Idle { pubky } => println!("{}: Idle", pubky),
 ///                 ControllerStatus::Ended { pubky } => println!("{}: Ended", pubky),
-///                 ControllerStatus::Error { pubky, message } => {
+///                 ControllerStatus::Error { pubky, message, .. } => {
 ///                     println!("{}: Error: {}", pubky, message)
 ///                 },
 ///             }
@@ -226,7 +239,6 @@ impl BackupController {
     ///
     /// This method consumes `self` and runs until:
     /// - A `Cancel` message is received via the control channel
-    /// - A critical error occurs during syncing
     /// - The control channel is closed
     ///
     /// The controller will:
@@ -236,6 +248,8 @@ impl BackupController {
     /// 4. Delete resources that have been removed
     /// 5. Wait for the next sync interval
     /// 6. Emit status updates via the status channel
+    ///
+    /// On errors, the controller logs the error and retries on the next sync interval.
     ///
     /// During the starting phase, the controller responds to commands:
     /// - `Cancel`: Stops immediately
@@ -291,8 +305,27 @@ impl BackupController {
         let mut sync_now = true;
 
         loop {
+            // Check for pending commands before each operation.
+            if let Some(command) = self.try_recv_command() {
+                match command {
+                    ControllerCommand::Cancel => {
+                        info!("Backup controller task cancelled");
+                        self.send_status(ControllerStatus::Ended {
+                            pubky: self.pubky.clone(),
+                        });
+                        break;
+                    }
+                    ControllerCommand::ForceSync => {
+                        info!("Force sync triggered");
+                        sync_now = true;
+                    }
+                }
+            }
+
             if sync_now {
                 sync_now = false;
+
+                info!("Syncing key: {}", self.pubky);
 
                 self.send_status(ControllerStatus::Syncing {
                     pubky: self.pubky.clone(),
@@ -301,7 +334,7 @@ impl BackupController {
 
                 match self.perform_sync_batch().await {
                     Ok(ControlFlow::Continue(events_processed)) => {
-                        // More events available, send status and keep syncing immediately
+                        // More events available, send status and loop back.
                         self.send_status(ControllerStatus::Syncing {
                             pubky: self.pubky.clone(),
                             events_processed,
@@ -311,9 +344,13 @@ impl BackupController {
                     }
                     Ok(ControlFlow::Break(())) => {
                         // Sync complete for this cycle, send Idle
+                        self.send_status(ControllerStatus::Idle {
+                            pubky: self.pubky.clone(),
+                        });
                     }
                     Err(e) => {
-                        let error_msg = format!("Critical sync batch failure: {}", e);
+                        let error_msg = format!("Sync error: {}", e);
+                        error!("{}: {}", self.pubky, error_msg);
                         let _ = self
                             .storage
                             .write_error(&self.pubky, "sync", &error_msg)
@@ -322,16 +359,12 @@ impl BackupController {
                             pubky: self.pubky.clone(),
                             message: error_msg,
                         });
-                        return;
+                        // Wait for next sync interval, then retry
                     }
                 }
-
-                self.send_status(ControllerStatus::Idle {
-                    pubky: self.pubky.clone(),
-                });
             }
 
-            // Wait for next sync interval, control command, or interval change
+            // Idle phase: wait for next sync interval, control command, or interval change
             let sleep = time::sleep(self.sync_interval());
             tokio::pin!(sleep);
 
@@ -372,6 +405,11 @@ impl BackupController {
                 }
             }
         }
+    }
+
+    /// Non-blocking check for a pending command on the control channel.
+    fn try_recv_command(&mut self) -> Option<ControllerCommand> {
+        self.control_rx.as_mut().and_then(|rx| rx.try_recv().ok())
     }
 
     fn send_status(&self, status: ControllerStatus) {
@@ -459,14 +497,14 @@ impl BackupController {
             }
         }
 
-        info!("Processed {} events", events_processed);
+        info!(
+            "Processed {} events for key: {}",
+            events_processed, self.pubky
+        );
 
-        // Save final cursor
         if events_processed > 0 {
+            // Save final cursor
             self.save_cursor_if_present(last_cursor).await?;
-        }
-
-        if events_processed > 0 {
             Ok(ControlFlow::Continue(events_processed))
         } else {
             Ok(ControlFlow::Break(()))

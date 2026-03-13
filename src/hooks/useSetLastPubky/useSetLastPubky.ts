@@ -4,35 +4,35 @@ import { setLastPubky } from "@/services";
 import { stripPubkyPrefix } from "@/utils/pubky";
 
 /**
- * useSetViewedPubky
+ * useSetLastPubky
  *
  * Hook for switching which pubky is currently being viewed in the UI.
  * Updates the Zustand store immediately and persists to backend for next launch.
  *
- * @returns Object with setViewedPubky function and isPending state
+ * @returns Object with setLastPubky function and isPending state
  *
  * @example
  * ```tsx
- * const { setViewedPubky, isPending } = useSetViewedPubky();
+ * const { setLastPubky, isPending } = useSetLastPubky();
  *
  * const handleSelect = async (pubky: string) => {
- *   await setViewedPubky(pubky);
+ *   await setLastPubky(pubky);
  *   // Navigate to sync page
  * };
  * ```
  */
-export function useSetViewedPubky() {
-  const setViewedPubkyStore = useUIStore((s) => s.setViewedPubky);
+export function useSetLastPubky() {
+  const setLastPubkyStore = useUIStore((s) => s.setLastPubky);
   const [isPending, setIsPending] = useState(false);
 
-  const setViewedPubky = useCallback(
+  const setLastPubkyFn = useCallback(
     async (pubky: string) => {
       // Normalize to strip any "pubky" prefix
       const normalized = stripPubkyPrefix(pubky);
       setIsPending(true);
       try {
         // Update Zustand store immediately
-        setViewedPubkyStore(normalized);
+        setLastPubkyStore(normalized);
 
         // Persist to backend for next app launch
         await setLastPubky(normalized);
@@ -40,8 +40,8 @@ export function useSetViewedPubky() {
         setIsPending(false);
       }
     },
-    [setViewedPubkyStore],
+    [setLastPubkyStore],
   );
 
-  return { setViewedPubky, isPending };
+  return { setLastPubky: setLastPubkyFn, isPending };
 }

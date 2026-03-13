@@ -54,7 +54,7 @@ describe("DashboardForm", () => {
 
     useUIStore.setState({
       keyStates: { "pk:test-pubky": mockKeyState },
-      viewedPubky: "pk:test-pubky",
+      lastPubky: "pk:test-pubky",
       statusMessageMode: "sync",
       developerMode: false,
     });
@@ -119,7 +119,7 @@ describe("DashboardForm", () => {
     it("should show syncing badge when syncing", async () => {
       useUIStore.setState({
         keyStates: { "pk:test-pubky": syncingKeyState },
-        viewedPubky: "pk:test-pubky",
+        lastPubky: "pk:test-pubky",
       });
 
       render(<DashboardForm />);
@@ -133,7 +133,7 @@ describe("DashboardForm", () => {
     it("should disable action buttons when syncing", async () => {
       useUIStore.setState({
         keyStates: { "pk:test-pubky": syncingKeyState },
-        viewedPubky: "pk:test-pubky",
+        lastPubky: "pk:test-pubky",
       });
 
       render(<DashboardForm />);
@@ -283,10 +283,10 @@ describe("DashboardForm", () => {
   });
 
   describe("null pubky handling", () => {
-    it("should handle null viewedPubky gracefully", async () => {
+    it("should handle null lastPubky gracefully", async () => {
       useUIStore.setState({
         keyStates: {},
-        viewedPubky: null,
+        lastPubky: null,
       });
 
       render(<DashboardForm />);

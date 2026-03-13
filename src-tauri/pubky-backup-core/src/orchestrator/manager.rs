@@ -42,7 +42,7 @@ struct ManagedKey {
     /// Current state of the key
     state: KeyState,
     /// Handle to the controller task
-    _task_handle: JoinHandle<()>,
+    task_handle: JoinHandle<()>,
 }
 
 struct ManagerInner {
@@ -203,12 +203,16 @@ impl BackupManager {
             }
         }
 
-        discovery::validate_pubky(
-            &pubky,
-            self.config.validation_timeout_secs,
-            self.config.developer_mode,
-        )
-        .await?;
+        if !self.config.developer_mode {
+            discovery::discover_homeserver(&pubky, self.config.validation_timeout_secs).await?;
+            discovery::verify_pubky_has_data(&pubky, self.config.validation_timeout_secs).await?;
+        }
+
+        // Clear inactive marker if re-adding a previously removed key
+        let key_storage = self.storage.key_storage(&pubky)?;
+        key_storage.clear_inactive().await.map_err(|e| {
+            OrchestratorError::Internal(format!("Failed to clear inactive marker: {}", e))
+        })?;
 
         self.start_controller(pubky.clone()).await?;
 
@@ -218,8 +222,10 @@ impl BackupManager {
 
     /// Stop a controller without any UI side effects.
     ///
-    /// Removes from HashMap and sends Cancel. Pure internal, no side effects.
-    fn stop_controller(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
+    /// Removes from HashMap and sends Cancel. Returns the task JoinHandle so the
+    /// caller can await graceful shutdown. If the cancel message can't be delivered
+    /// (channel full), the task is aborted as a fallback.
+    fn stop_controller(&self, pubky: &PublicKey) -> Result<JoinHandle<()>, OrchestratorError> {
         let managed_key = {
             let mut inner = self.inner.write();
             inner
@@ -228,22 +234,24 @@ impl BackupManager {
                 .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?
         };
 
-        let _ = managed_key.control_tx.try_send(ControllerCommand::Cancel);
-        Ok(())
+        if managed_key
+            .control_tx
+            .try_send(ControllerCommand::Cancel)
+            .is_err()
+        {
+            warn!(
+                "Failed to send Cancel to controller for {}, aborting task",
+                pubky
+            );
+            managed_key.task_handle.abort();
+        }
+
+        Ok(managed_key.task_handle)
     }
 
-    /// Stop syncing a key but preserve backed-up data on disk.
-    ///
-    /// The key will be automatically resumed on the next `BackupManager::new()` call
-    /// since data still exists. Use `delete_key()` for permanent removal.
-    ///
-    /// # Errors
-    ///
-    /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
-    pub async fn remove_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        self.stop_controller(pubky)?;
-
-        // Clear last_pubky when no keys remain so the app doesn't auto-load a removed key
+    /// Clear last_pubky from storage when no keys remain, so the app
+    /// doesn't auto-load a removed key on next launch.
+    async fn clear_last_pubky_if_empty(&self) {
         let no_keys_left = {
             let inner = self.inner.read();
             inner.keys.is_empty()
@@ -253,23 +261,49 @@ impl BackupManager {
                 warn!("Failed to clear last pubky: {}", e);
             }
         }
+    }
 
-        info!("Stopped backup for key: {}", pubky);
+    /// Stop syncing a key and mark it inactive. Backed-up data is preserved on disk
+    /// but the key will not be resumed on next launch.
+    ///
+    /// Use `delete_key()` to also remove all backed-up data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
+    pub async fn remove_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
+        self.stop_controller(pubky)?;
+
+        // Mark the key as inactive so it won't be resumed on next launch
+        let key_storage = self.storage.key_storage(pubky)?;
+        key_storage.mark_inactive().await.map_err(|e| {
+            OrchestratorError::Internal(format!("Failed to mark key inactive: {}", e))
+        })?;
+
+        self.clear_last_pubky_if_empty().await;
+        info!("Stopped and deactivated backup for key: {}", pubky);
         Ok(())
     }
 
     /// Remove a key AND delete all backed-up data from disk.
     ///
+    /// Awaits the controller task to ensure all in-flight IO completes
+    /// before deleting files from disk.
+    ///
     /// # Errors
     ///
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn delete_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        // First remove the key
-        self.remove_key(pubky).await?;
+        let handle = self.stop_controller(pubky)?;
+        self.clear_last_pubky_if_empty().await;
+
+        // Await the controller to ensure all in-flight IO completes before deleting files
+        if let Err(e) = handle.await {
+            warn!("Controller task for {} finished with error: {}", pubky, e);
+        }
 
         // Delete the data directory for this key
-        let data_dir = self.storage.get_backup_data_dir()?;
-        let key_dir = data_dir.join("keys").join(pubky.z32());
+        let key_dir = self.storage.keys_dir().join(pubky.z32());
 
         if key_dir.exists() {
             std::fs::remove_dir_all(&key_dir).map_err(|e| {
@@ -435,13 +469,21 @@ impl BackupManager {
         Ok(self.storage.list_pubky_directories()?)
     }
 
-    /// Gracefully shutdown all backups.
+    /// Gracefully shutdown all backups, awaiting controller tasks.
     pub async fn shutdown(&self) {
         let keys: Vec<PublicKey> = self.get_keys();
 
+        let mut handles = Vec::new();
         for pubky in keys {
-            if let Err(e) = self.stop_controller(&pubky) {
-                warn!("Error shutting down key {}: {}", pubky, e);
+            match self.stop_controller(&pubky) {
+                Ok(handle) => handles.push(handle),
+                Err(e) => warn!("Error shutting down key {}: {}", pubky, e),
+            }
+        }
+
+        for result in futures_util::future::join_all(handles).await {
+            if let Err(e) = result {
+                warn!("Controller task finished with error during shutdown: {}", e);
             }
         }
 
@@ -579,7 +621,7 @@ impl BackupManager {
                 ManagedKey {
                     control_tx,
                     state: initial_state,
-                    _task_handle: task_handle,
+                    task_handle,
                 },
             );
         }
@@ -623,14 +665,25 @@ impl BackupManager {
                 }
             };
 
-            match discovery::validate_pubky(
-                &pubky,
-                self.config.validation_timeout_secs,
-                self.config.developer_mode,
-            )
-            .await
-            {
-                Ok(_) => {
+            let validation_result = if self.config.developer_mode {
+                Ok(())
+            } else {
+                match discovery::discover_homeserver(&pubky, self.config.validation_timeout_secs)
+                    .await
+                {
+                    Ok(_) => {
+                        discovery::verify_pubky_has_data(
+                            &pubky,
+                            self.config.validation_timeout_secs,
+                        )
+                        .await
+                    }
+                    Err(e) => Err(e),
+                }
+            };
+
+            match validation_result {
+                Ok(()) => {
                     if let Err(e) = self.start_controller(pubky.clone()).await {
                         let error_msg = format!("Failed to resume key {}: {}", pubky, e);
                         error!("{}", error_msg);
@@ -709,7 +762,7 @@ impl BackupManager {
                 ManagedKey {
                     control_tx,
                     state: error_state,
-                    _task_handle: task_handle,
+                    task_handle,
                 },
             );
         }
@@ -728,86 +781,82 @@ fn spawn_status_listener(
     mut status_rx: broadcast::Receiver<ControllerStatus>,
 ) {
     tokio::spawn(async move {
-        while let Ok(status) = status_rx.recv().await {
-            // Extract the pubky from the status
-            let pubky = match &status {
-                ControllerStatus::Starting { pubky } => pubky.clone(),
-                ControllerStatus::Syncing { pubky, .. } => pubky.clone(),
-                ControllerStatus::Idle { pubky } => pubky.clone(),
-                ControllerStatus::Ended { pubky } => pubky.clone(),
-                ControllerStatus::Error { pubky, .. } => pubky.clone(),
-            };
+        loop {
+            match status_rx.recv().await {
+                Ok(status) => {
+                    let pubky = status.pubky().clone();
 
-            // Get current state values to preserve across transitions
-            let (current_data_size, current_last_sync, current_next_sync, sync_interval_secs) = {
-                let inner_read = inner.read();
-                let (ds, ls, ns) = inner_read
-                    .keys
-                    .get(&pubky)
-                    .map(|k| (k.state.data_size, k.state.last_sync, k.state.next_sync))
-                    .unwrap_or((0, None, None));
-                (ds, ls, ns, inner_read.sync_interval_secs)
-            };
+                    // Skip updates for keys that have been removed
+                    let ctx = {
+                        let inner_read = inner.read();
+                        let Some(managed) = inner_read.keys.get(&pubky) else {
+                            debug!("Ignoring status update for removed key {}", pubky);
+                            continue;
+                        };
+                        StatusContext {
+                            data_size: managed.state.data_size,
+                            last_sync: managed.state.last_sync,
+                            next_sync: managed.state.next_sync,
+                            sync_interval_secs: inner_read.sync_interval_secs,
+                        }
+                    };
 
-            let new_state = handle_controller_status(
-                &pubky,
-                &storage,
-                &status,
-                current_data_size,
-                current_last_sync,
-                current_next_sync,
-                sync_interval_secs,
-            )
-            .await;
+                    let new_state = handle_controller_status(&pubky, &storage, &status, &ctx).await;
 
-            // Update internal state
-            {
-                let mut inner_write = inner.write();
-                if let Some(managed_key) = inner_write.keys.get_mut(&pubky) {
-                    managed_key.state = new_state.clone();
+                    {
+                        let mut inner_write = inner.write();
+                        if let Some(managed_key) = inner_write.keys.get_mut(&pubky) {
+                            managed_key.state = new_state.clone();
+                        }
+                    }
+
+                    let receivers = update_tx.send(KeyUpdate {
+                        pubky: pubky.clone(),
+                        state: new_state,
+                    });
+                    debug!(
+                        "Broadcast status update for {} (receivers: {:?})",
+                        pubky, receivers
+                    );
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Status listener lagged, skipped {} messages", n);
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    debug!("Status listener channel closed");
+                    break;
                 }
             }
-
-            // Broadcast to external subscribers
-            let receivers = update_tx.send(KeyUpdate {
-                pubky: pubky.clone(),
-                state: new_state,
-            });
-            debug!(
-                "Broadcast status update for {} (receivers: {:?})",
-                pubky, receivers
-            );
         }
     });
+}
+
+/// Snapshot of a key's current state values, passed to [`handle_controller_status`]
+/// to preserve values across status transitions.
+struct StatusContext {
+    data_size: u64,
+    last_sync: Option<u64>,
+    next_sync: Option<u64>,
+    sync_interval_secs: u64,
 }
 
 /// Transform a [`ControllerStatus`] into a [`KeyState`] for external consumers.
 ///
 /// This is the bridge between the internal sync layer status and the
 /// public orchestrator state.
-///
-/// # Arguments
-/// * `pubky` - The public key being backed up
-/// * `storage` - Storage for calculating data size
-/// * `status` - The status from the backup controller
-/// * `current_data_size` - The current data size to preserve
-/// * `current_last_sync` - The current last_sync timestamp to preserve
-/// * `current_next_sync` - The current next_sync timestamp to preserve
 async fn handle_controller_status(
     pubky: &PublicKey,
     storage: &Arc<AppStorage>,
     status: &ControllerStatus,
-    current_data_size: u64,
-    current_last_sync: Option<u64>,
-    current_next_sync: Option<u64>,
-    sync_interval_secs: u64,
+    ctx: &StatusContext,
 ) -> KeyState {
     match status {
         ControllerStatus::Starting { .. } => KeyState {
             status: KeyStatus::Starting,
-            data_size: current_data_size,
-            last_sync: current_last_sync,
-            next_sync: current_next_sync,
+            data_size: ctx.data_size,
+            last_sync: ctx.last_sync,
+            next_sync: ctx.next_sync,
             ..Default::default()
         },
         ControllerStatus::Syncing {
@@ -817,7 +866,7 @@ async fn handle_controller_status(
             let data_size = if *events_processed > 0 {
                 storage.calculate_pubky_size(pubky).await
             } else {
-                current_data_size
+                ctx.data_size
             };
 
             KeyState {
@@ -825,8 +874,8 @@ async fn handle_controller_status(
                     events_processed: *events_processed,
                 },
                 data_size,
-                last_sync: current_last_sync,
-                next_sync: current_next_sync,
+                last_sync: ctx.last_sync,
+                next_sync: ctx.next_sync,
                 ..Default::default()
             }
         }
@@ -836,22 +885,22 @@ async fn handle_controller_status(
                 status: KeyStatus::Idle,
                 data_size,
                 last_sync: Some(current_unix_timestamp()),
-                next_sync: Some(next_sync_time(sync_interval_secs)),
+                next_sync: Some(next_sync_time(ctx.sync_interval_secs)),
                 ..Default::default()
             }
         }
         ControllerStatus::Ended { .. } => KeyState {
             status: KeyStatus::Stopped,
-            data_size: current_data_size,
-            last_sync: current_last_sync,
-            next_sync: current_next_sync,
+            data_size: ctx.data_size,
+            last_sync: ctx.last_sync,
+            next_sync: ctx.next_sync,
             ..Default::default()
         },
         ControllerStatus::Error { message, .. } => KeyState {
             status: KeyStatus::Error,
-            data_size: current_data_size,
-            last_sync: current_last_sync,
-            next_sync: current_next_sync,
+            data_size: ctx.data_size,
+            last_sync: ctx.last_sync,
+            next_sync: ctx.next_sync,
             error: Some(KeyError {
                 code: KeyErrorCode::Internal,
                 message: message.clone(),
@@ -993,6 +1042,66 @@ mod tests {
             // Key should be automatically resumed from stored data
             let keys = manager.get_keys();
             assert_eq!(keys.len(), 1, "Key should be auto-resumed from stored data");
+            assert!(keys.contains(&pubky));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_manager_removed_key_not_resumed() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        // Add a key, then remove it (marks inactive)
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+            manager.add_key(pubky.clone()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            manager.remove_key(&pubky).await.unwrap();
+            manager.shutdown().await;
+        }
+
+        // New manager should NOT resume the inactive key
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+            let keys = manager.get_keys();
+            assert!(keys.is_empty(), "Inactive key should not be resumed");
+
+            // Data directory should still exist on disk
+            let key_dir = temp_dir.path().join("keys").join(pubky.z32());
+            assert!(key_dir.exists(), "Data should be preserved after remove");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_manager_readd_removed_key() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        // Add, remove, then re-add the same key
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+
+            manager.add_key(pubky.clone()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            manager.remove_key(&pubky).await.unwrap();
+
+            // Re-add should succeed and clear the inactive marker
+            manager.add_key(pubky.clone()).await.unwrap();
+            assert_eq!(manager.get_keys().len(), 1);
+            manager.shutdown().await;
+        }
+
+        // New manager should resume the re-added key
+        {
+            let config = create_test_config(&temp_dir);
+            let manager = BackupManager::new(config).await.unwrap();
+            let keys = manager.get_keys();
+            assert_eq!(keys.len(), 1, "Re-added key should be resumed");
             assert!(keys.contains(&pubky));
         }
     }
@@ -1265,10 +1374,12 @@ mod tests {
             &pubky,
             &storage,
             &error_status,
-            1000,
-            None,
-            None,
-            DEFAULT_SYNC_INTERVAL_SECONDS,
+            &StatusContext {
+                data_size: 1000,
+                last_sync: None,
+                next_sync: None,
+                sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+            },
         )
         .await;
 
@@ -1304,10 +1415,12 @@ mod tests {
             &pubky,
             &storage,
             &starting_status,
-            1234,
-            None,
-            None,
-            DEFAULT_SYNC_INTERVAL_SECONDS,
+            &StatusContext {
+                data_size: 1234,
+                last_sync: None,
+                next_sync: None,
+                sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+            },
         )
         .await;
 

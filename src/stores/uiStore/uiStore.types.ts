@@ -58,7 +58,7 @@ export interface UIState {
   toast: ToastState;
   // App state from backend
   keyStates: Record<string, KeyState>;
-  viewedPubky: string | null;
+  lastPubky: string | null;
   developerMode: boolean;
   navDisabled: boolean;
 }
@@ -76,7 +76,7 @@ export interface UIActions {
   setKeyState: (pubky: string, state: KeyState) => void;
   setAllKeyStates: (states: Record<string, KeyState>) => void;
   removeKeyState: (pubky: string) => void;
-  setViewedPubky: (pubky: string | null) => void;
+  setLastPubky: (pubky: string | null) => void;
   setDeveloperMode: (enabled: boolean) => void;
   setNavDisabled: (disabled: boolean) => void;
 }
@@ -96,7 +96,7 @@ export const uiInitialState: UIState = {
     message: "",
   },
   keyStates: {},
-  viewedPubky: null,
+  lastPubky: null,
   developerMode: false,
   navDisabled: false,
 };
@@ -113,7 +113,7 @@ export enum UIActionTypes {
   SET_KEY_STATE = "SET_KEY_STATE",
   SET_ALL_KEY_STATES = "SET_ALL_KEY_STATES",
   REMOVE_KEY_STATE = "REMOVE_KEY_STATE",
-  SET_VIEWED_PUBKY = "SET_VIEWED_PUBKY",
+  SET_LAST_PUBKY = "SET_LAST_PUBKY",
   SET_DEVELOPER_MODE = "SET_DEVELOPER_MODE",
   SET_NAV_DISABLED = "SET_NAV_DISABLED",
 }

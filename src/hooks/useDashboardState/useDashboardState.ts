@@ -3,6 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import * as Stores from "@/stores";
 import * as Hooks from "@/hooks";
 import { getConfig } from "@/services";
+import { Logger } from "@/lib";
 
 /**
  * Status information for the dashboard display
@@ -60,7 +61,11 @@ export function useDashboardState(): DashboardState {
   useEffect(() => {
     getConfig()
       .then((config) => setBackupLocation(config.keys_dir))
-      .catch(() => {});
+      .catch((err: unknown) =>
+        Logger.error("useDashboardState", "Failed to load config", {
+          error: err,
+        }),
+      );
   }, []);
 
   const pubky = appState.pubky;

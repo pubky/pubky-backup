@@ -88,7 +88,11 @@ export const useUIStore = create<UIStore>()(
         ),
 
       setAllKeyStates: (states: Record<string, KeyState>) =>
-        set({ keyStates: states }, false, UIActionTypes.SET_ALL_KEY_STATES),
+        set(
+          (s) => ({ keyStates: { ...states, ...s.keyStates } }),
+          false,
+          UIActionTypes.SET_ALL_KEY_STATES,
+        ),
 
       removeKeyState: (pubky: string) =>
         set(
@@ -100,8 +104,8 @@ export const useUIStore = create<UIStore>()(
           UIActionTypes.REMOVE_KEY_STATE,
         ),
 
-      setViewedPubky: (pubky: string | null) =>
-        set({ viewedPubky: pubky }, false, UIActionTypes.SET_VIEWED_PUBKY),
+      setLastPubky: (pubky: string | null) =>
+        set({ lastPubky: pubky }, false, UIActionTypes.SET_LAST_PUBKY),
 
       setDeveloperMode: (enabled: boolean) =>
         set(

@@ -23,6 +23,7 @@ pub(crate) const DATA_DIR_NAME: &str = "data";
 const SNAPSHOTS_DIR_NAME: &str = "snapshots";
 pub(crate) const CURSOR_FILENAME: &str = "cursor";
 pub(crate) const ERROR_LOG_FILENAME: &str = "error.log";
+const INACTIVE_FILENAME: &str = "inactive";
 /// Storage for a single Pubky key's backup data.
 ///
 /// Located at: `~/.pubky-backup/keys/<pubky>/`
@@ -105,6 +106,27 @@ impl KeyStorage {
                 Ok(None)
             }
         }
+    }
+
+    /// Mark this key as inactive (removed from syncing but data preserved).
+    pub async fn mark_inactive(&self) -> Result<(), StorageError> {
+        self.state_storage.write(INACTIVE_FILENAME, "").await
+    }
+
+    /// Check whether this key is marked as inactive.
+    pub fn is_inactive(&self) -> bool {
+        self.key_dir
+            .join(STATE_DIR_NAME)
+            .join(INACTIVE_FILENAME)
+            .exists()
+    }
+
+    /// Remove the inactive marker, re-activating this key.
+    pub async fn clear_inactive(&self) -> Result<(), StorageError> {
+        if self.is_inactive() {
+            self.state_storage.delete(INACTIVE_FILENAME).await?;
+        }
+        Ok(())
     }
 
     /// Write error to key-specific error log.
@@ -319,9 +341,10 @@ impl KeysStorage {
         KeyStorage::new(&self.keys_dir, pubky)
     }
 
-    /// List all public keys that have backed-up data.
+    /// List all active public keys that have backed-up data.
     ///
     /// Returns keys in normalized z32 format (no prefix).
+    /// Keys marked as inactive are excluded.
     pub fn list_keys(&self) -> Result<Vec<String>, StorageError> {
         let mut keys = Vec::new();
 
@@ -342,7 +365,11 @@ impl KeysStorage {
                     let name_str = name.to_string_lossy().to_string();
                     // Verify it's a valid public key
                     if let Ok(pubky) = PublicKey::from_str(&name_str) {
-                        keys.push(pubky.z32());
+                        // Skip keys marked as inactive
+                        let inactive_marker = path.join(STATE_DIR_NAME).join(INACTIVE_FILENAME);
+                        if !inactive_marker.exists() {
+                            keys.push(pubky.z32());
+                        }
                     }
                 }
             }
@@ -482,5 +509,48 @@ mod tests {
         let keys = keys_storage.list_keys().unwrap();
         assert_eq!(keys.len(), 1);
         assert!(keys.contains(&pubky.z32()));
+    }
+
+    #[tokio::test]
+    async fn test_inactive_marker() {
+        let (storage, _temp_dir) = create_test_key_storage();
+
+        // Initially active
+        assert!(!storage.is_inactive());
+
+        // Mark inactive
+        storage.mark_inactive().await.unwrap();
+        assert!(storage.is_inactive());
+
+        // Clear inactive
+        storage.clear_inactive().await.unwrap();
+        assert!(!storage.is_inactive());
+
+        // Clearing when already active is a no-op
+        storage.clear_inactive().await.unwrap();
+        assert!(!storage.is_inactive());
+    }
+
+    #[tokio::test]
+    async fn test_list_keys_excludes_inactive() {
+        let temp_dir = TempDir::new().unwrap();
+        let keys_storage = KeysStorage::new_with_keys_dir(temp_dir.path()).unwrap();
+
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        let key_storage = keys_storage.get_key_storage(&pubky).unwrap();
+
+        // Key should be listed
+        let keys = keys_storage.list_keys().unwrap();
+        assert_eq!(keys.len(), 1);
+
+        // Mark inactive — key should be excluded
+        key_storage.mark_inactive().await.unwrap();
+        let keys = keys_storage.list_keys().unwrap();
+        assert!(keys.is_empty());
+
+        // Clear inactive — key should be listed again
+        key_storage.clear_inactive().await.unwrap();
+        let keys = keys_storage.list_keys().unwrap();
+        assert_eq!(keys.len(), 1);
     }
 }

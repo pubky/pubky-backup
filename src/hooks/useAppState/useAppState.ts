@@ -28,11 +28,11 @@ function defaultNextSyncTime(): number {
  * Derive AppState-like object from KeyState for the viewed pubky
  */
 function deriveAppState(
-  viewedPubky: string | null,
+  lastPubky: string | null,
   keyStates: Record<string, KeyState>,
   developerMode: boolean,
 ): DerivedAppState {
-  if (viewedPubky === null) {
+  if (lastPubky === null) {
     return {
       pubky: null,
       developer_mode: developerMode,
@@ -46,11 +46,11 @@ function deriveAppState(
     };
   }
 
-  const keyState = keyStates[viewedPubky];
+  const keyState = keyStates[lastPubky];
   if (keyState === undefined) {
     // Key was just added but state hasn't arrived yet - show as syncing
     return {
-      pubky: viewedPubky,
+      pubky: lastPubky,
       developer_mode: developerMode,
       is_syncing: true,
       next_sync_time: 0,
@@ -68,7 +68,7 @@ function deriveAppState(
   const isStopped = keyState.status.type === "Stopped";
 
   return {
-    pubky: viewedPubky,
+    pubky: lastPubky,
     developer_mode: developerMode,
     is_syncing: isSyncing,
     next_sync_time: keyState.next_sync ?? defaultNextSyncTime(),
@@ -104,19 +104,19 @@ function deriveAppState(
  */
 export function useAppState(): DerivedAppState {
   // Use useShallow to ensure re-render when any property changes
-  const { viewedPubky, keyState, developerMode } = useUIStore(
+  const { lastPubky, keyState, developerMode } = useUIStore(
     useShallow((s) => ({
-      viewedPubky: s.viewedPubky,
-      keyState: s.viewedPubky !== null ? s.keyStates[s.viewedPubky] : undefined,
+      lastPubky: s.lastPubky,
+      keyState: s.lastPubky !== null ? s.keyStates[s.lastPubky] : undefined,
       developerMode: s.developerMode,
     })),
   );
 
   // Build keyStates with just the viewed key for deriveAppState
   const keyStates: Record<string, KeyState> =
-    viewedPubky !== null && keyState !== undefined
-      ? { [viewedPubky]: keyState }
+    lastPubky !== null && keyState !== undefined
+      ? { [lastPubky]: keyState }
       : {};
 
-  return deriveAppState(viewedPubky, keyStates, developerMode);
+  return deriveAppState(lastPubky, keyStates, developerMode);
 }

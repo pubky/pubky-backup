@@ -40,7 +40,7 @@ describe("useUIStore", () => {
         message: "",
       },
       keyStates: {},
-      viewedPubky: null,
+      lastPubky: null,
       developerMode: false,
     });
   });
@@ -287,30 +287,44 @@ describe("useUIStore", () => {
   });
 
   describe("setAllKeyStates", () => {
-    it("should replace all key states", () => {
-      useUIStore.getState().setKeyState("pk:existing", mockKeyState);
+    it("should set backend states and preserve existing real-time updates", () => {
+      // Simulate a real-time update that arrived before the REST response
+      useUIStore.getState().setKeyState("pk:existing", mockSyncingKeyState);
 
+      // Backend returns stale data for pk:existing plus a new key
+      useUIStore.getState().setAllKeyStates({
+        "pk:existing": mockKeyState,
+        "pk:new1": mockKeyState,
+      });
+
+      const state = useUIStore.getState();
+      // Real-time update wins over stale backend data
+      expect(state.keyStates["pk:existing"]).toEqual(mockSyncingKeyState);
+      // New key from backend is added
+      expect(state.keyStates["pk:new1"]).toEqual(mockKeyState);
+    });
+
+    it("should set all states when store is empty", () => {
       useUIStore.getState().setAllKeyStates({
         "pk:new1": mockKeyState,
         "pk:new2": mockSyncingKeyState,
       });
 
       const state = useUIStore.getState();
-      expect(state.keyStates["pk:existing"]).toBeUndefined();
       expect(state.keyStates["pk:new1"]).toEqual(mockKeyState);
       expect(state.keyStates["pk:new2"]).toEqual(mockSyncingKeyState);
     });
 
-    it("should handle empty object", () => {
+    it("should preserve existing keys when called with empty object", () => {
       useUIStore.getState().setKeyState("pk:key1", mockKeyState);
       useUIStore.getState().setAllKeyStates({});
 
       const state = useUIStore.getState();
-      expect(state.keyStates).toEqual({});
+      expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
     });
 
     it("should not affect other state", () => {
-      useUIStore.getState().setViewedPubky("pk:viewed");
+      useUIStore.getState().setLastPubky("pk:viewed");
       useUIStore.getState().setDeveloperMode(true);
 
       useUIStore.getState().setAllKeyStates({
@@ -318,7 +332,7 @@ describe("useUIStore", () => {
       });
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBe("pk:viewed");
+      expect(state.lastPubky).toBe("pk:viewed");
       expect(state.developerMode).toBe(true);
     });
   });
@@ -352,33 +366,33 @@ describe("useUIStore", () => {
     });
   });
 
-  describe("setViewedPubky", () => {
+  describe("setLastPubky", () => {
     it("should set viewed pubky", () => {
-      useUIStore.getState().setViewedPubky("pk:mykey");
+      useUIStore.getState().setLastPubky("pk:mykey");
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBe("pk:mykey");
+      expect(state.lastPubky).toBe("pk:mykey");
     });
 
     it("should update viewed pubky", () => {
-      useUIStore.getState().setViewedPubky("pk:first");
-      useUIStore.getState().setViewedPubky("pk:second");
+      useUIStore.getState().setLastPubky("pk:first");
+      useUIStore.getState().setLastPubky("pk:second");
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBe("pk:second");
+      expect(state.lastPubky).toBe("pk:second");
     });
 
     it("should clear viewed pubky with null", () => {
-      useUIStore.getState().setViewedPubky("pk:mykey");
-      useUIStore.getState().setViewedPubky(null);
+      useUIStore.getState().setLastPubky("pk:mykey");
+      useUIStore.getState().setLastPubky(null);
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBeNull();
+      expect(state.lastPubky).toBeNull();
     });
 
     it("should not affect key states", () => {
       useUIStore.getState().setKeyState("pk:key1", mockKeyState);
-      useUIStore.getState().setViewedPubky("pk:key1");
+      useUIStore.getState().setLastPubky("pk:key1");
 
       const state = useUIStore.getState();
       expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
@@ -402,13 +416,13 @@ describe("useUIStore", () => {
     });
 
     it("should not affect other state", () => {
-      useUIStore.getState().setViewedPubky("pk:mykey");
+      useUIStore.getState().setLastPubky("pk:mykey");
       useUIStore.getState().setKeyState("pk:key1", mockKeyState);
 
       useUIStore.getState().setDeveloperMode(true);
 
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBe("pk:mykey");
+      expect(state.lastPubky).toBe("pk:mykey");
       expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
     });
   });
@@ -419,9 +433,9 @@ describe("useUIStore", () => {
       expect(state.keyStates).toEqual({});
     });
 
-    it("should have null viewedPubky by default", () => {
+    it("should have null lastPubky by default", () => {
       const state = useUIStore.getState();
-      expect(state.viewedPubky).toBeNull();
+      expect(state.lastPubky).toBeNull();
     });
 
     it("should have developerMode false by default", () => {
