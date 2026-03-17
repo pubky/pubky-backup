@@ -1,0 +1,1 @@
+export { useAutoWindowResize } from "./useAutoWindowResize";
