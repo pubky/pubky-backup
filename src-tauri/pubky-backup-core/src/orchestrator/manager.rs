@@ -319,6 +319,32 @@ impl BackupManager {
         Ok(())
     }
 
+    /// Retry a key that is currently in error state.
+    ///
+    /// Tears down the errored controller, re-validates (homeserver discovery + data check),
+    /// and restarts the controller. If re-validation fails, the error propagates to the caller
+    /// instead of silently leaving the key in error state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
+    /// Returns validation errors if re-validation fails.
+    pub async fn retry_errored_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
+        // Remove the errored controller
+        self.stop_controller(pubky)?;
+
+        // Re-validate
+        if !self.config.developer_mode {
+            discovery::discover_homeserver(pubky, self.config.validation_timeout_secs).await?;
+            discovery::verify_pubky_has_data(pubky, self.config.validation_timeout_secs).await?;
+        }
+
+        // Restart the controller
+        self.start_controller(pubky.clone()).await?;
+        info!("Retried and restarted key: {}", pubky);
+        Ok(())
+    }
+
     /// Force immediate sync for a specific key.
     ///
     /// # Errors

@@ -161,8 +161,16 @@ async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
     let manager = get_manager().await?;
 
     // Check if key is already being backed up
-    if manager.get_key_state(&pubky).is_some() {
-        debug!("Key already being backed up");
+    if let Some(state) = manager.get_key_state(&pubky) {
+        if state.status == KeyStatus::Error {
+            debug!("Key is in error state, retrying validation");
+            manager
+                .retry_errored_key(&pubky)
+                .await
+                .map_err(BackupAppError::internal)?;
+        } else {
+            debug!("Key already being backed up");
+        }
         manager
             .write_last_pubky(&pubky)
             .await
