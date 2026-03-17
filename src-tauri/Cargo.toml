@@ -3,7 +3,7 @@ members = [".", "pubky-backup-core"]
 
 [package]
 name = "pubky-backup"
-version = "0.4.0"
+version = "0.4.1"
 description = "Pubky Backup App"
 authors = ["you"]
 edition = "2021"
