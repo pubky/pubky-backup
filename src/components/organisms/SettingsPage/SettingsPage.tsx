@@ -79,7 +79,7 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="flex flex-col gap-6 flex-1">
+    <div className="flex flex-col gap-6">
       {/* Header */}
       <div className="flex flex-col gap-1">
         <h2 className="text-xl font-bold leading-normal text-white text-left">

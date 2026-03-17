@@ -62,12 +62,13 @@ function DashboardPageContent() {
 
 export function App() {
   const currentScreen = Stores.useUIStore((s) => s.currentScreen);
+  const containerRef = Hooks.useAutoWindowResize();
 
   // Bootstrap app state from backend
   useBootstrap();
 
   return (
-    <>
+    <div ref={containerRef}>
       {currentScreen === "startup" ? (
         <Organisms.StartupForm />
       ) : (
@@ -81,6 +82,6 @@ export function App() {
         </main>
       )}
       <Molecules.Toast />
-    </>
+    </div>
   );
 }
