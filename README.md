@@ -6,9 +6,6 @@ A lightweight, multi-platform desktop application which maintains a local copy o
 
 Select a [release build](https://github.com/pubky/pubky-backup/releases), enter your pubkeys and let the backups begin!
 
-```
-chmod +x pubky-backup-*.AppImage
-```
 
 #### MacOS, Debian Linux and Windows 
 
