@@ -1,34 +1,43 @@
-# Pubky Backup App
+<p align="center">
+<img width="400" height="155" alt="pubky-backup" src="https://github.com/user-attachments/assets/8b32a453-d81b-4be7-b619-edb754298232" />
+</p>
 
-A basic multi-platform desktop application which takes a `pubky` and downloads all of it's files to a local directory.
+A lightweight, multi-platform desktop application which maintains a local copy of a `Pubky` User's published data. 
 
-The idea is for this to be a lightweight background process which continually keeps a Pubky User's local backup in-sync with it's published data. 
-
-## Download and run
-
-You can find pre-built packages on the [release page](https://github.com/pubky/pubky-backup/releases).
-
-Once downloaded you'll need to set permissions for your OS to run these packages, Eg:
-
-#### Linux
-
-`chmod +x pubky-backup.AppImage`
-
-#### MacOS
-
-`xattr -dr com.apple.quarantine pubky-backup.app`
+Select a [release build](https://github.com/pubky/pubky-backup/releases), enter your pubkeys and let the backups begin!
 
 
-## Development
+#### MacOS, Debian Linux and Windows 
 
-Run development server:
+Simply download the release build and run.
+
+#### Non-debian Linux
+
+Select the `.AppImage` release. After downloading, you'll need to make it executable before running:
 
 ```
-cargo tauri dev
+chmod +x pubky-backup-*.AppImage
 ```
 
 
-### Development mode (offline/no-network)
+---
+
+May the power ⚡ be with you. Powered by [pkarr](https://github.com/pubky/pkarr).
+
+--- 
+
+
+# Development
+
+## Build
+
+For executable build:
+
+```
+cargo tauri build
+```
+
+## Development mode (offline/no-network)
 
 Development mode is useful when working on the GUI without a real homeserver. It skips network validation and returns empty data instead of making network calls.
 
@@ -43,17 +52,12 @@ PUBKY_DEVELOPER_MODE=1 cargo tauri dev
 
 ### Frontend Tests
 
-Run frontend tests (watch mode):
+Run frontend tests:
 
 ```
 npm test
 ```
 
-Run frontend tests once:
-
-```
-npm run test:run
-```
 
 ### Rust Unit Tests
 
@@ -73,13 +77,6 @@ cargo test -p pubky-backup-core --test integration_tests
 
 Note: The first run will download PostgreSQL binaries (~50-100MB), which are cached for subsequent runs.
 
-## Build
-
-For executable build:
-
-```
-cargo tauri build
-```
 
 ## Bundle
 
@@ -96,7 +93,3 @@ These are configured in `tauri.conf.json`.
 
 Application Build and Github Release pipelines are triggered upon tag creation.
 
-
----
-
-May the power ⚡ be with you. Powered by [pkarr](https://github.com/pubky/pkarr).
