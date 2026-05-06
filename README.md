@@ -6,6 +6,9 @@ A lightweight, multi-platform desktop application which maintains a local copy o
 
 Select a [release build](https://github.com/pubky/pubky-backup/releases), enter your pubkeys and let the backups begin!
 
+```
+chmod +x pubky-backup-*.AppImage
+```
 
 #### MacOS, Debian Linux and Windows 
 
@@ -77,16 +80,6 @@ cargo test -p pubky-backup-core --test integration_tests
 
 Note: The first run will download PostgreSQL binaries (~50-100MB), which are cached for subsequent runs.
 
-
-## Bundle
-
-We choose to bundle the following package formats for their portability and ease-of-use:  
-
-- `AppImage` for Linux
-- `app` for MacOS
-- `msi` for Windowns
-
-These are configured in `tauri.conf.json`.
 
 
 # Release Github Workflow
