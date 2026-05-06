@@ -71,7 +71,9 @@ jobs:
       - name: Rename Linux artifacts
         if: matrix.platform == 'ubuntu-22.04'
         shell: bash
-        run: cp src-tauri/target/release/bundle/appimage/*.AppImage pubky-backup-${{ steps.version.outputs.version }}-linux-amd64.AppImage
+        run: |
+          cp src-tauri/target/release/bundle/appimage/*.AppImage pubky-backup-${{ steps.version.outputs.version }}-linux-amd64.AppImage
+          cp src-tauri/target/release/bundle/deb/*.deb pubky-backup-${{ steps.version.outputs.version }}-linux-amd64.deb
 
       - name: Rename Windows artifacts
         if: matrix.platform == 'windows-latest'

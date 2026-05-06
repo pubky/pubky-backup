@@ -310,7 +310,7 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppErro
     let keys_dir = get_manager().await?.keys_dir().to_path_buf();
     app_handle
         .opener()
-        .open_path(keys_dir.to_string_lossy().to_string(), None::<&str>)
+        .reveal_item_in_dir(keys_dir)
         .map_err(BackupAppError::internal)
 }
 
