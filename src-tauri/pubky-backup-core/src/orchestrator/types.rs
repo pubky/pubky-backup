@@ -3,7 +3,7 @@
 //! This module contains configuration and state types used by the [`BackupManager`](super::BackupManager).
 
 use pubky::PublicKey;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Configuration for the [`BackupManager`](super::BackupManager).
@@ -138,6 +138,25 @@ pub struct KeyUpdate {
     pub pubky: PublicKey,
     /// The new state of the key
     pub state: KeyState,
+}
+
+/// Type of activity event logged for a key.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityType {
+    FilesBackedUp,
+    InitialBackup,
+    SnapshotCreated,
+    SyncFailed,
+}
+
+/// A single activity log entry for a key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActivityEntry {
+    #[serde(rename = "type")]
+    pub activity_type: ActivityType,
+    pub message: String,
+    pub timestamp: u64,
 }
 
 fn serialize_pubky<S>(pubky: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>

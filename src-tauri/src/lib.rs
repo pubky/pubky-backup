@@ -11,8 +11,8 @@ use std::sync::{Arc, OnceLock};
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_developer_mode, parse_pubky, AppStorage, BackupManager, BackupManagerConfig, KeyState,
-    KeyStatus,
+    is_developer_mode, parse_pubky, ActivityEntry, AppStorage, BackupManager, BackupManagerConfig,
+    KeyState, KeyStatus,
 };
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -336,6 +336,14 @@ async fn create_snapshot(pubky_str: &str) -> Result<String, BackupAppError> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Get recent activity entries for a key.
+#[tauri::command]
+async fn get_activity(pubky_str: &str) -> Result<Vec<ActivityEntry>, BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    let manager = get_manager().await?;
+    Ok(manager.get_activity(&pubky, 100).await)
+}
+
 /// Move backup data to a new location.
 ///
 /// Shuts down all controllers, moves the keys directory, then recreates the manager.
@@ -511,6 +519,7 @@ pub fn run() {
             force_sync_now,
             open_data_dir,
             create_snapshot,
+            get_activity,
             set_sync_interval,
             set_backup_location
         ])

@@ -7,6 +7,7 @@ use super::config::ConfigStorage;
 use super::error::StorageError;
 use super::keys::{KeyStorage, KeysStorage};
 use super::migration::remove_legacy_data;
+use crate::orchestrator::types::ActivityEntry;
 use log::{error, info, warn};
 use pubky::{PubkyResource, PublicKey};
 use std::path::{Path, PathBuf};
@@ -101,7 +102,7 @@ impl AppDataStorage {
 ///     └── <pubky>/
 ///         ├── state/             # Backup state/metadata
 ///         │   ├── cursor         # Sync progress
-///         │   └── error.log      # Key-specific errors
+///         │   └── activity.log   # Activity log (JSON lines)
 ///         ├── data/              # Actual backed-up data
 ///         │   └── pub/
 ///         │       ├── profile.json
@@ -188,7 +189,7 @@ impl AppStorage {
         match key_storage.write_data(resource, data).await {
             Ok(_) => Ok(()),
             Err(e) => {
-                key_storage
+                self.app_data
                     .write_error(&resource.to_string(), &format!("Failed to write: {}", e))
                     .await?;
                 Ok(())
@@ -208,7 +209,7 @@ impl AppStorage {
         match key_storage.delete_data(resource).await {
             Ok(_) => Ok(()),
             Err(e) => {
-                key_storage
+                self.app_data
                     .write_error(&resource.to_string(), &format!("Failed to delete: {}", e))
                     .await?;
                 Ok(())
@@ -255,30 +256,37 @@ impl AppStorage {
         key_storage.read_cursor().await
     }
 
-    /// Write an error to the key-specific error log file.
-    ///
-    /// Used to log non-critical errors that don't stop the backup process.
-    ///
-    /// # Arguments
-    ///
-    /// * `pubky` - The public key this error relates to
-    /// * `url` - The URL or resource that caused the error
-    /// * `error_msg` - The error message to log
-    pub async fn write_error(
-        &self,
-        pubky: &PublicKey,
-        url: &str,
-        error_msg: &str,
-    ) -> Result<(), StorageError> {
-        let key_storage = self.key_storage(pubky)?;
-        key_storage.write_error(url, error_msg).await
-    }
-
     /// Write an error to the global error log file.
     ///
     /// Used for errors not specific to any key.
     pub async fn write_global_error(&self, url: &str, error_msg: &str) -> Result<(), StorageError> {
         self.app_data.write_error(url, error_msg).await
+    }
+
+    /// Write an activity entry to the key's activity log.
+    pub async fn write_activity(
+        &self,
+        pubky: &PublicKey,
+        entry: &ActivityEntry,
+    ) -> Result<(), StorageError> {
+        let key_storage = self.key_storage(pubky)?;
+        key_storage.write_activity(entry).await
+    }
+
+    /// Read activity entries for a key, newest first, up to `limit`.
+    pub async fn read_activity(&self, pubky: &PublicKey, limit: usize) -> Vec<ActivityEntry> {
+        match self.key_storage(pubky) {
+            Ok(key_storage) => key_storage.read_activity(limit).await,
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Count the number of snapshots for a key.
+    pub fn count_snapshots(&self, pubky: &PublicKey) -> usize {
+        match self.key_storage(pubky) {
+            Ok(key_storage) => key_storage.count_snapshots(),
+            Err(_) => 0,
+        }
     }
 
     /// Calculate the total size of data stored for a specific pubky.

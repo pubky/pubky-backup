@@ -441,7 +441,29 @@ impl BackupManager {
 
         let path = self.storage.create_snapshot(pubky).await?;
         info!("Created snapshot for {}: {}", pubky, path.display());
+
+        let snapshot_count = self.storage.count_snapshots(pubky);
+        if let Err(e) = self
+            .storage
+            .write_activity(
+                pubky,
+                &ActivityEntry {
+                    activity_type: ActivityType::SnapshotCreated,
+                    message: format!("Created snapshot v{}", snapshot_count),
+                    timestamp: current_unix_timestamp(),
+                },
+            )
+            .await
+        {
+            warn!("Failed to write activity for {}: {}", pubky, e);
+        }
+
         Ok(path)
+    }
+
+    /// Get recent activity entries for a key.
+    pub async fn get_activity(&self, pubky: &PublicKey, limit: usize) -> Vec<ActivityEntry> {
+        self.storage.read_activity(pubky, limit).await
     }
 
     /// Get the root data directory path (e.g. `~/.pubky-backup`).
@@ -824,6 +846,7 @@ fn spawn_status_listener(
                             last_sync: managed.state.last_sync,
                             next_sync: managed.state.next_sync,
                             sync_interval_secs: inner_read.sync_interval_secs,
+                            previous_status: managed.state.status.clone(),
                         }
                     };
 
@@ -865,6 +888,7 @@ struct StatusContext {
     last_sync: Option<u64>,
     next_sync: Option<u64>,
     sync_interval_secs: u64,
+    previous_status: KeyStatus,
 }
 
 /// Transform a [`ControllerStatus`] into a [`KeyState`] for external consumers.
@@ -907,10 +931,53 @@ async fn handle_controller_status(
         }
         ControllerStatus::Idle { .. } => {
             let data_size = storage.calculate_pubky_size(pubky).await;
+            let now = current_unix_timestamp();
+
+            // Emit activity entry based on transition
+            if ctx.last_sync.is_none() {
+                if let Err(e) = storage
+                    .write_activity(
+                        pubky,
+                        &ActivityEntry {
+                            activity_type: ActivityType::InitialBackup,
+                            message: "Initial backup successful".to_string(),
+                            timestamp: now,
+                        },
+                    )
+                    .await
+                {
+                    warn!("Failed to write activity for {}: {}", pubky, e);
+                }
+            } else if let KeyStatus::Syncing { events_processed } = &ctx.previous_status {
+                if *events_processed > 0 {
+                    if let Err(e) = storage
+                        .write_activity(
+                            pubky,
+                            &ActivityEntry {
+                                activity_type: ActivityType::FilesBackedUp,
+                                message: format!(
+                                    "{} new {} backed up",
+                                    events_processed,
+                                    if *events_processed == 1 {
+                                        "file"
+                                    } else {
+                                        "files"
+                                    }
+                                ),
+                                timestamp: now,
+                            },
+                        )
+                        .await
+                    {
+                        warn!("Failed to write activity for {}: {}", pubky, e);
+                    }
+                }
+            }
+
             KeyState {
                 status: KeyStatus::Idle,
                 data_size,
-                last_sync: Some(current_unix_timestamp()),
+                last_sync: Some(now),
                 next_sync: Some(next_sync_time(ctx.sync_interval_secs)),
                 ..Default::default()
             }
@@ -922,18 +989,34 @@ async fn handle_controller_status(
             next_sync: ctx.next_sync,
             ..Default::default()
         },
-        ControllerStatus::Error { message, .. } => KeyState {
-            status: KeyStatus::Error,
-            data_size: ctx.data_size,
-            last_sync: ctx.last_sync,
-            next_sync: ctx.next_sync,
-            error: Some(KeyError {
-                code: KeyErrorCode::Internal,
-                message: message.clone(),
-                recoverable: false,
-            }),
-            ..Default::default()
-        },
+        ControllerStatus::Error { message, .. } => {
+            if let Err(e) = storage
+                .write_activity(
+                    pubky,
+                    &ActivityEntry {
+                        activity_type: ActivityType::SyncFailed,
+                        message: message.clone(),
+                        timestamp: current_unix_timestamp(),
+                    },
+                )
+                .await
+            {
+                warn!("Failed to write activity for {}: {}", pubky, e);
+            }
+
+            KeyState {
+                status: KeyStatus::Error,
+                data_size: ctx.data_size,
+                last_sync: ctx.last_sync,
+                next_sync: ctx.next_sync,
+                error: Some(KeyError {
+                    code: KeyErrorCode::Internal,
+                    message: message.clone(),
+                    recoverable: false,
+                }),
+                ..Default::default()
+            }
+        }
     }
 }
 
@@ -1405,6 +1488,7 @@ mod tests {
                 last_sync: None,
                 next_sync: None,
                 sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+                previous_status: KeyStatus::Starting,
             },
         )
         .await;
@@ -1446,6 +1530,7 @@ mod tests {
                 last_sync: None,
                 next_sync: None,
                 sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+                previous_status: KeyStatus::Starting,
             },
         )
         .await;
@@ -1717,6 +1802,204 @@ mod tests {
         assert!(
             dirs.contains(&pubky.z32()),
             "key directories must be listable without a BackupManager"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_idle_after_initial_sync_writes_initial_backup_activity() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        let idle_status = ControllerStatus::Idle {
+            pubky: pubky.clone(),
+        };
+
+        // last_sync is None → initial backup
+        handle_controller_status(
+            &pubky,
+            &storage,
+            &idle_status,
+            &StatusContext {
+                data_size: 0,
+                last_sync: None,
+                next_sync: None,
+                sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+                previous_status: KeyStatus::Starting,
+            },
+        )
+        .await;
+
+        let entries = storage.read_activity(&pubky, 10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].activity_type, ActivityType::InitialBackup);
+        assert_eq!(entries[0].message, "Initial backup successful");
+    }
+
+    #[tokio::test]
+    async fn test_idle_after_syncing_with_events_writes_files_backed_up_activity() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        let idle_status = ControllerStatus::Idle {
+            pubky: pubky.clone(),
+        };
+
+        // last_sync is Some + previous_status was Syncing with events
+        handle_controller_status(
+            &pubky,
+            &storage,
+            &idle_status,
+            &StatusContext {
+                data_size: 500,
+                last_sync: Some(1000),
+                next_sync: Some(2000),
+                sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+                previous_status: KeyStatus::Syncing {
+                    events_processed: 5,
+                },
+            },
+        )
+        .await;
+
+        let entries = storage.read_activity(&pubky, 10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].activity_type, ActivityType::FilesBackedUp);
+        assert_eq!(entries[0].message, "5 new files backed up");
+    }
+
+    #[tokio::test]
+    async fn test_idle_after_syncing_one_event_writes_singular_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        handle_controller_status(
+            &pubky,
+            &storage,
+            &ControllerStatus::Idle {
+                pubky: pubky.clone(),
+            },
+            &StatusContext {
+                data_size: 500,
+                last_sync: Some(1000),
+                next_sync: Some(2000),
+                sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+                previous_status: KeyStatus::Syncing {
+                    events_processed: 1,
+                },
+            },
+        )
+        .await;
+
+        let entries = storage.read_activity(&pubky, 10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message, "1 new file backed up");
+    }
+
+    #[tokio::test]
+    async fn test_idle_after_syncing_zero_events_writes_no_activity() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        let idle_status = ControllerStatus::Idle {
+            pubky: pubky.clone(),
+        };
+
+        // Syncing with 0 events → no activity entry
+        handle_controller_status(
+            &pubky,
+            &storage,
+            &idle_status,
+            &StatusContext {
+                data_size: 500,
+                last_sync: Some(1000),
+                next_sync: Some(2000),
+                sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+                previous_status: KeyStatus::Syncing {
+                    events_processed: 0,
+                },
+            },
+        )
+        .await;
+
+        let entries = storage.read_activity(&pubky, 10).await;
+        assert!(entries.is_empty(), "No activity for zero-event sync");
+    }
+
+    #[tokio::test]
+    async fn test_error_status_writes_sync_failed_activity() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        let error_status = ControllerStatus::Error {
+            pubky: pubky.clone(),
+            message: "Connection refused".to_string(),
+        };
+
+        handle_controller_status(
+            &pubky,
+            &storage,
+            &error_status,
+            &StatusContext {
+                data_size: 100,
+                last_sync: Some(500),
+                next_sync: Some(1000),
+                sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+                previous_status: KeyStatus::Syncing {
+                    events_processed: 0,
+                },
+            },
+        )
+        .await;
+
+        let entries = storage.read_activity(&pubky, 10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].activity_type, ActivityType::SyncFailed);
+        assert_eq!(entries[0].message, "Connection refused");
+    }
+
+    #[tokio::test]
+    async fn test_starting_and_ended_write_no_activity() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        let ctx = StatusContext {
+            data_size: 0,
+            last_sync: None,
+            next_sync: None,
+            sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+            previous_status: KeyStatus::Starting,
+        };
+
+        handle_controller_status(
+            &pubky,
+            &storage,
+            &ControllerStatus::Starting {
+                pubky: pubky.clone(),
+            },
+            &ctx,
+        )
+        .await;
+
+        handle_controller_status(
+            &pubky,
+            &storage,
+            &ControllerStatus::Ended {
+                pubky: pubky.clone(),
+            },
+            &ctx,
+        )
+        .await;
+
+        let entries = storage.read_activity(&pubky, 10).await;
+        assert!(
+            entries.is_empty(),
+            "Starting and Ended should not produce activity entries"
         );
     }
 }

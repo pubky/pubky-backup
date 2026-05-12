@@ -5,12 +5,13 @@
 
 use super::common::Storage;
 use super::error::StorageError;
+use crate::orchestrator::types::ActivityEntry;
 use futures_lite::StreamExt;
 use log::{debug, error, info, warn};
 use pubky::{PubkyResource, PublicKey};
 use std::{
     fs::File,
-    io::Write,
+    io::{Read as _, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -22,7 +23,7 @@ pub(crate) const STATE_DIR_NAME: &str = "state";
 pub(crate) const DATA_DIR_NAME: &str = "data";
 const SNAPSHOTS_DIR_NAME: &str = "snapshots";
 pub(crate) const CURSOR_FILENAME: &str = "cursor";
-pub(crate) const ERROR_LOG_FILENAME: &str = "error.log";
+const ACTIVITY_LOG_FILENAME: &str = "activity.log";
 const INACTIVE_FILENAME: &str = "inactive";
 /// Storage for a single Pubky key's backup data.
 ///
@@ -30,13 +31,13 @@ const INACTIVE_FILENAME: &str = "inactive";
 ///
 /// Structure:
 /// - `state/cursor` - Sync progress cursor
-/// - `state/error.log` - Key-specific error log
+/// - `state/activity.log` - Activity log (JSON lines)
 /// - `data/pub/...` - Backed-up resources
 /// - `snapshots/<timestamp>.zip` - Point-in-time snapshots
 pub struct KeyStorage {
     /// The public key this storage is for
     pubky: PublicKey,
-    /// Storage for state files (cursor, error log)
+    /// Storage for state files (cursor, activity log)
     state_storage: Storage,
     /// Storage for backed-up data
     data_storage: Storage,
@@ -129,21 +130,89 @@ impl KeyStorage {
         Ok(())
     }
 
-    /// Write error to key-specific error log.
-    pub async fn write_error(&self, url: &str, error_msg: &str) -> Result<(), StorageError> {
-        let log_entry = format!(
-            "[{}] {}: {}\n",
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
-            url,
-            error_msg
-        );
-
+    /// Append an activity entry to the key's activity log.
+    pub async fn write_activity(&self, entry: &ActivityEntry) -> Result<(), StorageError> {
+        let mut line =
+            serde_json::to_string(entry).map_err(|e| StorageError::Internal(e.to_string()))?;
+        line.push('\n');
         self.state_storage
-            .append(ERROR_LOG_FILENAME, log_entry.clone())
+            .append(ACTIVITY_LOG_FILENAME, line)
             .await?;
-
-        error!("[{}] {}", self.pubky, log_entry.trim());
         Ok(())
+    }
+
+    /// Read activity entries, newest first, up to `limit`.
+    ///
+    /// Reads from the end of the file to avoid loading the entire log into memory.
+    pub async fn read_activity(&self, limit: usize) -> Vec<ActivityEntry> {
+        let path = self
+            .key_dir
+            .join(STATE_DIR_NAME)
+            .join(ACTIVITY_LOG_FILENAME);
+        tokio::task::spawn_blocking(move || Self::read_activity_blocking(&path, limit))
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Read the last `limit` lines from the activity log, newest first.
+    fn read_activity_blocking(path: &Path, limit: usize) -> Vec<ActivityEntry> {
+        let mut file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        };
+
+        let file_len = match file.seek(SeekFrom::End(0)) {
+            Ok(len) => len,
+            Err(_) => return Vec::new(),
+        };
+        if file_len == 0 {
+            return Vec::new();
+        }
+
+        // Read chunks from the end, growing if we don't find enough entries.
+        // Start with 512 bytes per entry; double if insufficient.
+        let mut chunk_size = (limit as u64 * 512).min(file_len);
+        loop {
+            let start = file_len - chunk_size;
+            if file.seek(SeekFrom::Start(start)).is_err() {
+                return Vec::new();
+            }
+
+            let mut buf = vec![0u8; chunk_size as usize];
+            if file.read_exact(&mut buf).is_err() {
+                return Vec::new();
+            }
+
+            let text = String::from_utf8_lossy(&buf);
+            // If we started mid-line (start > 0), the first partial line
+            // is correctly skipped by filter_map since it won't parse as JSON.
+            let entries: Vec<ActivityEntry> = text
+                .lines()
+                .rev()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .take(limit)
+                .collect();
+
+            // If we got enough entries or already read the whole file, return.
+            if entries.len() >= limit || chunk_size >= file_len {
+                return entries;
+            }
+
+            // Double the chunk and retry.
+            chunk_size = (chunk_size * 2).min(file_len);
+        }
+    }
+
+    /// Count the number of snapshot zip files for this key.
+    pub fn count_snapshots(&self) -> usize {
+        let snapshots_dir = self.key_dir.join(SNAPSHOTS_DIR_NAME);
+        match std::fs::read_dir(&snapshots_dir) {
+            Ok(entries) => entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "zip"))
+                .count(),
+            Err(_) => 0,
+        }
     }
 
     /// Write data to backup storage using PubkyResource path.
@@ -552,5 +621,193 @@ mod tests {
         key_storage.clear_inactive().await.unwrap();
         let keys = keys_storage.list_keys().unwrap();
         assert_eq!(keys.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_write_and_read_activity() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        use crate::orchestrator::types::{ActivityEntry, ActivityType};
+
+        let entry = ActivityEntry {
+            activity_type: ActivityType::InitialBackup,
+            message: "Initial backup successful".to_string(),
+            timestamp: 1000,
+        };
+        storage.write_activity(&entry).await.unwrap();
+
+        let entries = storage.read_activity(10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].activity_type, ActivityType::InitialBackup);
+        assert_eq!(entries[0].message, "Initial backup successful");
+        assert_eq!(entries[0].timestamp, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_read_activity_returns_newest_first() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        use crate::orchestrator::types::{ActivityEntry, ActivityType};
+
+        for i in 1..=5 {
+            storage
+                .write_activity(&ActivityEntry {
+                    activity_type: ActivityType::FilesBackedUp,
+                    message: format!("Entry {}", i),
+                    timestamp: i * 100,
+                })
+                .await
+                .unwrap();
+        }
+
+        let entries = storage.read_activity(10).await;
+        assert_eq!(entries.len(), 5);
+        // Newest (highest timestamp) first
+        assert_eq!(entries[0].timestamp, 500);
+        assert_eq!(entries[1].timestamp, 400);
+        assert_eq!(entries[4].timestamp, 100);
+    }
+
+    #[tokio::test]
+    async fn test_read_activity_respects_limit() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        use crate::orchestrator::types::{ActivityEntry, ActivityType};
+
+        for i in 1..=10 {
+            storage
+                .write_activity(&ActivityEntry {
+                    activity_type: ActivityType::FilesBackedUp,
+                    message: format!("Entry {}", i),
+                    timestamp: i * 100,
+                })
+                .await
+                .unwrap();
+        }
+
+        let entries = storage.read_activity(3).await;
+        assert_eq!(entries.len(), 3);
+        // Should be the 3 newest
+        assert_eq!(entries[0].timestamp, 1000);
+        assert_eq!(entries[1].timestamp, 900);
+        assert_eq!(entries[2].timestamp, 800);
+    }
+
+    #[tokio::test]
+    async fn test_read_activity_empty_file() {
+        let (storage, _temp_dir) = create_test_key_storage();
+
+        let entries = storage.read_activity(10).await;
+        assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_read_activity_skips_corrupt_lines() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        use crate::orchestrator::types::{ActivityEntry, ActivityType};
+
+        // Write a valid entry
+        storage
+            .write_activity(&ActivityEntry {
+                activity_type: ActivityType::InitialBackup,
+                message: "Good entry".to_string(),
+                timestamp: 1000,
+            })
+            .await
+            .unwrap();
+
+        // Write a corrupt line directly to the file
+        let path = storage
+            .key_dir
+            .join(STATE_DIR_NAME)
+            .join(ACTIVITY_LOG_FILENAME);
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"not valid json\n").unwrap();
+
+        // Write another valid entry
+        storage
+            .write_activity(&ActivityEntry {
+                activity_type: ActivityType::SyncFailed,
+                message: "Also good".to_string(),
+                timestamp: 2000,
+            })
+            .await
+            .unwrap();
+
+        let entries = storage.read_activity(10).await;
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].timestamp, 2000);
+        assert_eq!(entries[1].timestamp, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_count_snapshots_none() {
+        let (storage, _temp_dir) = create_test_key_storage();
+
+        assert_eq!(storage.count_snapshots(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_count_snapshots_with_zips() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+
+        // Write data so snapshot creation works
+        let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
+        storage
+            .write_data(&resource, b"data".to_vec())
+            .await
+            .unwrap();
+
+        // Create two snapshots
+        storage.create_snapshot().await.unwrap();
+        // Small delay to avoid timestamp collision
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        storage.create_snapshot().await.unwrap();
+
+        assert_eq!(storage.count_snapshots(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_count_snapshots_ignores_non_zip_files() {
+        let (storage, _temp_dir) = create_test_key_storage();
+
+        // Create snapshots dir with a non-zip file
+        let snapshots_dir = storage.key_dir.join(SNAPSHOTS_DIR_NAME);
+        std::fs::create_dir_all(&snapshots_dir).unwrap();
+        std::fs::write(snapshots_dir.join("notes.txt"), "not a zip").unwrap();
+
+        assert_eq!(storage.count_snapshots(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_activity_all_types_roundtrip() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        use crate::orchestrator::types::{ActivityEntry, ActivityType};
+
+        let types = [
+            ActivityType::FilesBackedUp,
+            ActivityType::InitialBackup,
+            ActivityType::SnapshotCreated,
+            ActivityType::SyncFailed,
+        ];
+
+        for (i, activity_type) in types.iter().enumerate() {
+            storage
+                .write_activity(&ActivityEntry {
+                    activity_type: activity_type.clone(),
+                    message: format!("msg {}", i),
+                    timestamp: (i as u64) * 100,
+                })
+                .await
+                .unwrap();
+        }
+
+        let entries = storage.read_activity(10).await;
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].activity_type, ActivityType::SyncFailed);
+        assert_eq!(entries[1].activity_type, ActivityType::SnapshotCreated);
+        assert_eq!(entries[2].activity_type, ActivityType::InitialBackup);
+        assert_eq!(entries[3].activity_type, ActivityType::FilesBackedUp);
     }
 }

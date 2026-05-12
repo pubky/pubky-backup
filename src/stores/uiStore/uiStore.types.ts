@@ -1,3 +1,11 @@
+export type ActivityType = "files_backed_up" | "initial_backup" | "snapshot_created" | "sync_failed";
+
+export interface ActivityEntry {
+  type: ActivityType;
+  message: string;
+  timestamp: number;
+}
+
 export type Screen = "startup" | "dashboard";
 export type StatusMessageMode = "sync" | "snapshot-success" | "snapshot-error";
 export type ToastType = "success" | "error";

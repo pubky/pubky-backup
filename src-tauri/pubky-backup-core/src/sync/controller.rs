@@ -351,10 +351,6 @@ impl BackupController {
                     Err(e) => {
                         let error_msg = format!("Sync error: {}", e);
                         error!("{}: {}", self.pubky, error_msg);
-                        let _ = self
-                            .storage
-                            .write_error(&self.pubky, "sync", &error_msg)
-                            .await;
                         self.send_status(ControllerStatus::Error {
                             pubky: self.pubky.clone(),
                             message: error_msg,
@@ -484,11 +480,7 @@ impl BackupController {
                 Err(e) => {
                     let _ = self
                         .storage
-                        .write_error(
-                            &self.pubky,
-                            "event_stream",
-                            &format!("Event stream error: {}", e),
-                        )
+                        .write_global_error("event_stream", &format!("Event stream error: {}", e))
                         .await;
                     // Save progress and break out of stream loop. The next sync interval will reconnect
                     self.save_cursor_if_present(last_cursor).await?;
@@ -531,8 +523,7 @@ impl BackupController {
                     Err(e) => {
                         // Log fetch errors and continue processing other events
                         self.storage
-                            .write_error(
-                                &self.pubky,
+                            .write_global_error(
                                 &event.resource.to_string(),
                                 &format!("Fetch failed: {}", e),
                             )
