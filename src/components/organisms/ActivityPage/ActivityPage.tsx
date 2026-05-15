@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useUIStore } from "@/stores/uiStore";
 import type { ActivityEntry } from "@/stores/uiStore";
-import { getActivity, openDataDir } from "@/services/tauri-commands";
+import { getActivity, openSnapshotsDir } from "@/services/tauri-commands";
 import { formatRelativeTime } from "@/utils/format";
 import * as Atoms from "@/components/atoms";
 
@@ -100,7 +100,7 @@ export function ActivityPage() {
                   <button
                     type="button"
                     title="Open snapshots folder"
-                    onClick={() => void openDataDir()}
+                    onClick={() => void openSnapshotsDir(lastPubky)}
                     className="shrink-0 ml-[-8px] text-text-secondary hover:text-white transition-colors cursor-pointer bg-transparent border-none p-0"
                   >
                     <Atoms.ExternalLinkIcon size={16} />

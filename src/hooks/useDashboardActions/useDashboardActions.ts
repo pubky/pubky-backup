@@ -50,14 +50,15 @@ export function useDashboardActions(): DashboardActions {
   // Snapshot message timeout ref
   const snapshotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Cleanup on unmount
+  // Cleanup on unmount: clear timeout and reset snapshot message mode
   useEffect(() => {
     return () => {
       if (snapshotTimeoutRef.current !== null) {
         clearTimeout(snapshotTimeoutRef.current);
       }
+      setStatusMessageMode("sync");
     };
-  }, []);
+  }, [setStatusMessageMode]);
 
   const showSnapshotMessage = useCallback(
     (mode: "snapshot-success" | "snapshot-error") => {

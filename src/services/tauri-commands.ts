@@ -141,6 +141,19 @@ export async function openDataDir(): Promise<void> {
 }
 
 /**
+ * Open the snapshots directory for a specific key in the system file browser
+ * @param pubkyStr - The pubky key whose snapshots dir to open
+ * @throws {BackendError} If opening directory fails
+ */
+export async function openSnapshotsDir(pubkyStr: string): Promise<void> {
+  try {
+    await invoke("open_snapshots_dir", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
  * Create a snapshot (zip archive) of a pubky's backed-up data
  * @param pubkyStr - The pubky key to create snapshot for
  * @returns Path to the created snapshot file

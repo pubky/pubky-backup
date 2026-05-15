@@ -342,8 +342,14 @@ impl BackupController {
                         sync_now = true;
                         continue;
                     }
-                    Ok(ControlFlow::Break(())) => {
-                        // Sync complete for this cycle, send Idle
+                    Ok(ControlFlow::Break(events_processed)) => {
+                        // Sync complete for this cycle
+                        if events_processed > 0 {
+                            self.send_status(ControllerStatus::Syncing {
+                                pubky: self.pubky.clone(),
+                                events_processed,
+                            });
+                        }
                         self.send_status(ControllerStatus::Idle {
                             pubky: self.pubky.clone(),
                         });
@@ -423,22 +429,15 @@ impl BackupController {
     ///
     /// This method performs a single sync batch, fetching events from the cursor position
     /// and processing them. Returns `ControlFlow::Continue(count)` if more events are available,
-    /// or `ControlFlow::Break(())` if sync is complete.
-    async fn perform_sync_batch(&self) -> Result<ControlFlow<(), usize>, SyncError> {
+    /// or `ControlFlow::Break(_)` if sync is complete.
+    async fn perform_sync_batch(&self) -> Result<ControlFlow<usize, usize>, SyncError> {
         let cursor = self.storage.read_cursor(&self.pubky).await?;
 
         // Get event stream - empty stream in developer mode (offline), real stream otherwise
         let event_stream = if is_developer_mode() {
             Box::pin(futures_util::stream::empty())
         } else {
-            match events::create_event_stream(&self.pubky_client, &self.pubky, cursor).await {
-                Ok(stream) => stream,
-                Err(e) => {
-                    error!("Sync events fetch failed: {}", e);
-                    // Treat network fetch failures as recoverable - retry on next sync interval
-                    return Ok(ControlFlow::Break(()));
-                }
-            }
+            events::create_event_stream(&self.pubky_client, &self.pubky, cursor).await?
         };
 
         self.process_event_stream(event_stream, cursor).await
@@ -459,7 +458,7 @@ impl BackupController {
             Box<dyn futures_util::Stream<Item = Result<Event, EventsError>> + Send>,
         >,
         initial_cursor: Option<u64>,
-    ) -> Result<ControlFlow<(), usize>, SyncError> {
+    ) -> Result<ControlFlow<usize, usize>, SyncError> {
         let mut events_processed = 0;
         let mut last_cursor: Option<u64> = initial_cursor;
 
@@ -494,12 +493,15 @@ impl BackupController {
             events_processed, self.pubky
         );
 
-        if events_processed > 0 {
-            // Save final cursor
-            self.save_cursor_if_present(last_cursor).await?;
+        // Save final cursor
+        self.save_cursor_if_present(last_cursor).await?;
+
+        if events_processed >= EVENT_BATCH_SIZE as usize {
+            // Full batch processed — there may be more events, fetch again immediately
             Ok(ControlFlow::Continue(events_processed))
         } else {
-            Ok(ControlFlow::Break(()))
+            // Partial or empty batch — we've caught up, wait for next sync interval
+            Ok(ControlFlow::Break(events_processed))
         }
     }
 
@@ -685,10 +687,10 @@ mod tests {
             create_test_interval_rx().1,
         );
 
-        // First batch should return Continue (more events available)
+        // Batch of 3 events (< EVENT_BATCH_SIZE) should return Break (caught up)
         let stream = events::test_helpers::create_test_event_stream(None);
         let result = controller.process_event_stream(stream, None).await.unwrap();
-        assert!(matches!(result, ControlFlow::Continue(3)));
+        assert!(matches!(result, ControlFlow::Break(_)));
 
         // Cursor should have been updated
         let cursor = storage.read_cursor(&pubky).await.unwrap();
@@ -710,29 +712,14 @@ mod tests {
             create_test_interval_rx().1,
         );
 
-        // Process multiple batches until completion
-        let mut iterations = 0;
-        let mut cursor: Option<u64> = None;
-        loop {
-            let stream = events::test_helpers::create_test_event_stream(cursor);
-            match controller
-                .process_event_stream(stream, cursor)
-                .await
-                .unwrap()
-            {
-                ControlFlow::Continue(count) => {
-                    iterations += 1;
-                    cursor = storage.read_cursor(&pubky).await.unwrap();
-                    assert!(count > 0);
-                    if iterations > 10 {
-                        panic!("Too many iterations - sync should complete");
-                    }
-                }
-                ControlFlow::Break(()) => break,
-            }
-        }
+        // A partial batch (< EVENT_BATCH_SIZE) returns Break immediately — no re-fetch needed
+        let stream = events::test_helpers::create_test_event_stream(None);
+        let result = controller.process_event_stream(stream, None).await.unwrap();
+        assert!(matches!(result, ControlFlow::Break(_)));
 
-        assert!(iterations > 0);
+        // Cursor should have been saved
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        assert_eq!(cursor, Some(3));
     }
 
     #[tokio::test]
@@ -854,12 +841,12 @@ mod tests {
             "Stream errors should be handled gracefully, not propagated"
         );
 
-        // Should indicate events were processed
-        let events_processed = result.unwrap();
+        // Partial batch (3 events < EVENT_BATCH_SIZE) should return Break (caught up)
+        let flow = result.unwrap();
         assert!(
-            matches!(events_processed, ControlFlow::Continue(3)),
-            "Should indicate 3 events were processed, got {:?}",
-            events_processed
+            matches!(flow, ControlFlow::Break(_)),
+            "Partial batch should return Break, got {:?}",
+            flow
         );
 
         // Cursor should have been saved at the last successful event (cursor=3)

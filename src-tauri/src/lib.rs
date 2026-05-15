@@ -314,6 +314,26 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppErro
         .map_err(BackupAppError::internal)
 }
 
+/// Open the snapshots directory for a specific key in the system file manager
+#[tauri::command]
+async fn open_snapshots_dir(
+    app_handle: tauri::AppHandle,
+    pubky_str: &str,
+) -> Result<(), BackupAppError> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    let snapshots_dir = get_manager()
+        .await?
+        .keys_dir()
+        .join(pubky.z32())
+        .join("snapshots");
+    app_handle
+        .opener()
+        .open_path(snapshots_dir.to_string_lossy(), None::<&str>)
+        .map_err(BackupAppError::internal)
+}
+
 /// Set the sync interval in seconds. Controllers pick up the new value dynamically.
 #[tauri::command]
 async fn set_sync_interval(interval_secs: u64) -> Result<(), BackupAppError> {
@@ -518,6 +538,7 @@ pub fn run() {
             delete_key,
             force_sync_now,
             open_data_dir,
+            open_snapshots_dir,
             create_snapshot,
             get_activity,
             set_sync_interval,
