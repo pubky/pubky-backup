@@ -282,9 +282,9 @@ impl AppStorage {
     }
 
     /// Count the number of snapshots for a key.
-    pub fn count_snapshots(&self, pubky: &PublicKey) -> usize {
+    pub async fn count_snapshots(&self, pubky: &PublicKey) -> usize {
         match self.key_storage(pubky) {
-            Ok(key_storage) => key_storage.count_snapshots(),
+            Ok(key_storage) => key_storage.count_snapshots().await,
             Err(_) => 0,
         }
     }

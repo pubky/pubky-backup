@@ -158,12 +158,19 @@ impl KeyStorage {
     fn read_activity_blocking(path: &Path, limit: usize) -> Vec<ActivityEntry> {
         let mut file = match File::open(path) {
             Ok(f) => f,
-            Err(_) => return Vec::new(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+            Err(e) => {
+                log::warn!("Failed to open activity log {}: {}", path.display(), e);
+                return Vec::new();
+            }
         };
 
         let file_len = match file.seek(SeekFrom::End(0)) {
             Ok(len) => len,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                log::warn!("Failed to seek activity log {}: {}", path.display(), e);
+                return Vec::new();
+            }
         };
         if file_len == 0 {
             return Vec::new();
@@ -204,15 +211,17 @@ impl KeyStorage {
     }
 
     /// Count the number of snapshot zip files for this key.
-    pub fn count_snapshots(&self) -> usize {
+    pub async fn count_snapshots(&self) -> usize {
         let snapshots_dir = self.key_dir.join(SNAPSHOTS_DIR_NAME);
-        match std::fs::read_dir(&snapshots_dir) {
+        tokio::task::spawn_blocking(move || match std::fs::read_dir(&snapshots_dir) {
             Ok(entries) => entries
                 .filter_map(|e| e.ok())
                 .filter(|e| e.path().extension().is_some_and(|ext| ext == "zip"))
                 .count(),
             Err(_) => 0,
-        }
+        })
+        .await
+        .unwrap_or(0)
     }
 
     /// Write data to backup storage using PubkyResource path.
@@ -744,7 +753,7 @@ mod tests {
     async fn test_count_snapshots_none() {
         let (storage, _temp_dir) = create_test_key_storage();
 
-        assert_eq!(storage.count_snapshots(), 0);
+        assert_eq!(storage.count_snapshots().await, 0);
     }
 
     #[tokio::test]
@@ -765,7 +774,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         storage.create_snapshot().await.unwrap();
 
-        assert_eq!(storage.count_snapshots(), 2);
+        assert_eq!(storage.count_snapshots().await, 2);
     }
 
     #[tokio::test]
@@ -777,7 +786,7 @@ mod tests {
         std::fs::create_dir_all(&snapshots_dir).unwrap();
         std::fs::write(snapshots_dir.join("notes.txt"), "not a zip").unwrap();
 
-        assert_eq!(storage.count_snapshots(), 0);
+        assert_eq!(storage.count_snapshots().await, 0);
     }
 
     #[tokio::test]

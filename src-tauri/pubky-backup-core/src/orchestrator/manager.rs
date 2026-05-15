@@ -430,7 +430,7 @@ impl BackupManager {
         let path = self.storage.create_snapshot(pubky).await?;
         info!("Created snapshot for {}: {}", pubky, path.display());
 
-        let snapshot_count = self.storage.count_snapshots(pubky);
+        let snapshot_count = self.storage.count_snapshots(pubky).await;
         if let Err(e) = self
             .storage
             .write_activity(
