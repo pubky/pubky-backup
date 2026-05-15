@@ -57,6 +57,8 @@ pub mod discovery;
 pub mod error;
 mod manager;
 pub mod session;
+mod status;
+mod sync_interval;
 pub mod types;
 
 pub use error::OrchestratorError;
