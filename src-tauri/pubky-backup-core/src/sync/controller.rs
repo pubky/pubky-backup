@@ -39,7 +39,7 @@ use tokio::time;
 pub const MIN_SYNC_INTERVAL_SECONDS: u64 = 10;
 
 /// Default sync interval in seconds between backup batches.
-pub const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 30;
+pub const DEFAULT_SYNC_INTERVAL_SECONDS: u64 = 300;
 
 /// Messages that can be sent to control the backup controller.
 ///
