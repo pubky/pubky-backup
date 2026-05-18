@@ -161,6 +161,28 @@ pub mod test_helpers {
         Box::pin(futures_util::stream::iter(events.into_iter().map(Ok)))
     }
 
+    /// Create a test event stream with exactly `count` events starting from `cursor_start`.
+    ///
+    /// Used to test multi-batch accumulation: create a stream with `count >= EVENT_BATCH_SIZE`
+    /// so `process_event_stream` returns `Continue`, then a smaller follow-up that returns `Break`.
+    pub fn create_sized_test_event_stream(
+        count: usize,
+        cursor_start: u64,
+    ) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
+        let mock_pubky = PublicKey::from_str(TEST_PUBKY).expect("Test pubky should be valid");
+        let z32 = mock_pubky.z32();
+
+        let events: Vec<Event> = (0..count as u64)
+            .map(|i| {
+                let cursor_id = cursor_start + i + 1;
+                let path = format!("/pub/posts/{:03}", cursor_id);
+                make_test_event(&z32, EventType::Put, &path, cursor_id)
+            })
+            .collect();
+
+        Box::pin(futures_util::stream::iter(events.into_iter().map(Ok)))
+    }
+
     /// Create a test event stream that fails after yielding some events.
     /// Used for testing error recovery and cursor persistence.
     pub fn create_failing_test_event_stream(

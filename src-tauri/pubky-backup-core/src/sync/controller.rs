@@ -303,6 +303,9 @@ impl BackupController {
 
         // Main sync loop - sync immediately on first iteration, then wait
         let mut sync_now = true;
+        // Accumulated event count across all batches within a single sync cycle.
+        // Reset when a new cycle begins; preserved across Continue (multi-batch) iterations.
+        let mut cycle_events: usize = 0;
 
         loop {
             // Check for pending commands before each operation.
@@ -318,6 +321,7 @@ impl BackupController {
                     ControllerCommand::ForceSync => {
                         info!("Force sync triggered");
                         sync_now = true;
+                        cycle_events = 0;
                     }
                 }
             }
@@ -325,34 +329,38 @@ impl BackupController {
             if sync_now {
                 sync_now = false;
 
-                info!("Syncing key: {}", self.pubky);
-
-                self.send_status(ControllerStatus::Syncing {
-                    pubky: self.pubky.clone(),
-                    events_processed: 0,
-                });
+                if cycle_events == 0 {
+                    info!("Syncing key: {}", self.pubky);
+                    self.send_status(ControllerStatus::Syncing {
+                        pubky: self.pubky.clone(),
+                        events_processed: 0,
+                    });
+                }
 
                 match self.perform_sync_batch().await {
-                    Ok(ControlFlow::Continue(events_processed)) => {
-                        // More events available, send status and loop back.
+                    Ok(ControlFlow::Continue(batch_count)) => {
+                        // More events available, send accumulated total and loop back.
+                        cycle_events += batch_count;
                         self.send_status(ControllerStatus::Syncing {
                             pubky: self.pubky.clone(),
-                            events_processed,
+                            events_processed: cycle_events,
                         });
                         sync_now = true;
                         continue;
                     }
-                    Ok(ControlFlow::Break(events_processed)) => {
+                    Ok(ControlFlow::Break(batch_count)) => {
                         // Sync complete for this cycle
-                        if events_processed > 0 {
+                        cycle_events += batch_count;
+                        if cycle_events > 0 {
                             self.send_status(ControllerStatus::Syncing {
                                 pubky: self.pubky.clone(),
-                                events_processed,
+                                events_processed: cycle_events,
                             });
                         }
                         self.send_status(ControllerStatus::Idle {
                             pubky: self.pubky.clone(),
                         });
+                        cycle_events = 0;
                     }
                     Err(e) => {
                         let error_msg = format!("Sync error: {}", e);
@@ -361,6 +369,7 @@ impl BackupController {
                             pubky: self.pubky.clone(),
                             message: error_msg,
                         });
+                        cycle_events = 0;
                         // Wait for next sync interval, then retry
                     }
                 }
@@ -373,6 +382,7 @@ impl BackupController {
             tokio::select! {
                 _ = &mut sleep => {
                     sync_now = true;
+                    cycle_events = 0;
                 }
                 _ = self.sync_interval_rx.changed() => {
                     // Interval changed - just loop back and sleep with the new value
@@ -395,6 +405,7 @@ impl BackupController {
                         Some(ControllerCommand::ForceSync) => {
                             info!("Force sync triggered");
                             sync_now = true;
+                            cycle_events = 0;
                         }
                         None => {
                             warn!("Backup controller control channel closed");
@@ -855,6 +866,61 @@ mod tests {
             saved_cursor,
             Some(3),
             "Cursor should be saved at last successful event before error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multi_batch_accumulates_cycle_events() {
+        // Verify that when process_event_stream returns Continue (full batch),
+        // the caller can accumulate counts across batches, and the final Break
+        // batch adds to the total. This mirrors the accumulation logic in run().
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        let pubky_client = create_test_pubky_client();
+
+        let controller = BackupController::new(
+            pubky.clone(),
+            storage.clone(),
+            pubky_client,
+            None,
+            None,
+            create_test_interval_rx().1,
+        );
+
+        let mut cycle_events: usize = 0;
+
+        // First batch: exactly EVENT_BATCH_SIZE events → should return Continue
+        let stream =
+            events::test_helpers::create_sized_test_event_stream(EVENT_BATCH_SIZE as usize, 0);
+        let result = controller.process_event_stream(stream, None).await.unwrap();
+        match result {
+            ControlFlow::Continue(count) => {
+                cycle_events += count;
+                assert_eq!(count, EVENT_BATCH_SIZE as usize);
+            }
+            ControlFlow::Break(_) => panic!("Full batch should return Continue"),
+        }
+
+        // Second batch: 7 events (< EVENT_BATCH_SIZE) → should return Break
+        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        let stream = events::test_helpers::create_sized_test_event_stream(7, cursor.unwrap_or(0));
+        let result = controller
+            .process_event_stream(stream, cursor)
+            .await
+            .unwrap();
+        match result {
+            ControlFlow::Break(count) => {
+                cycle_events += count;
+                assert_eq!(count, 7);
+            }
+            ControlFlow::Continue(_) => panic!("Partial batch should return Break"),
+        }
+
+        // Total accumulated across both batches
+        assert_eq!(
+            cycle_events,
+            EVENT_BATCH_SIZE as usize + 7,
+            "cycle_events should accumulate across batches"
         );
     }
 
