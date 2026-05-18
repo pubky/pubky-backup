@@ -5,16 +5,21 @@
 
 use super::error::EventsError;
 use futures_util::Stream;
+use log::{info, warn};
 use pubky::{Event, EventCursor, Pubky, PublicKey};
 use std::pin::Pin;
 
 /// Batch size for event stream processing and cursor save frequency.
 pub(super) const EVENT_BATCH_SIZE: u16 = 50;
 
+/// Maximum retry attempts for 429 Too Many Requests responses.
+const MAX_429_RETRIES: u32 = 3;
+
 /// Create an event stream for a given pubky.
 ///
 /// Returns a stream of events starting from the given cursor position.
 /// If cursor is None, starts from the beginning.
+/// Retries with exponential backoff on 429 Too Many Requests responses.
 pub(super) async fn create_event_stream(
     pubky_client: &Pubky,
     user: &PublicKey,
@@ -22,21 +27,56 @@ pub(super) async fn create_event_stream(
 ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>>, EventsError> {
     let cursor = cursor.map(EventCursor::new);
 
-    let sdk_stream = pubky_client
-        .event_stream_for_user(user, cursor)
-        .limit(EVENT_BATCH_SIZE)
-        .subscribe()
-        .await
-        .map_err(|e| {
-            EventsError::FetchFailed(format!("Failed to subscribe to event stream: {}", e))
-        })?;
+    let mut last_error = None;
 
-    // Map SDK errors to our error type
-    let mapped_stream = futures_util::StreamExt::map(sdk_stream, |result| {
-        result.map_err(|e| EventsError::FetchFailed(format!("Event stream error: {}", e)))
-    });
+    for attempt in 1..=MAX_429_RETRIES {
+        match pubky_client
+            .event_stream_for_user(user, cursor)
+            .limit(EVENT_BATCH_SIZE)
+            .subscribe()
+            .await
+        {
+            Ok(stream) => {
+                info!("Event stream subscribed OK for {}", user);
 
-    Ok(Box::pin(mapped_stream))
+                let mapped_stream = futures_util::StreamExt::map(stream, |result| {
+                    result
+                        .map_err(|e| EventsError::FetchFailed(format!("Event stream error: {}", e)))
+                });
+
+                return Ok(Box::pin(mapped_stream));
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("429") && attempt < MAX_429_RETRIES {
+                    let backoff_secs = 2u64.pow(attempt);
+                    warn!(
+                        "Event stream 429 for {} (attempt {}/{}), retrying in {}s",
+                        user, attempt, MAX_429_RETRIES, backoff_secs
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                    last_error = Some(msg);
+                    continue;
+                }
+                if msg.contains("429") {
+                    warn!(
+                        "Event stream 429 Too Many Requests for {} (exhausted retries)",
+                        user
+                    );
+                }
+                return Err(EventsError::FetchFailed(format!(
+                    "Failed to subscribe to event stream: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    Err(EventsError::FetchFailed(format!(
+        "Failed to subscribe to event stream after {} retries: {}",
+        MAX_429_RETRIES,
+        last_error.unwrap_or_default()
+    )))
 }
 
 #[cfg(test)]

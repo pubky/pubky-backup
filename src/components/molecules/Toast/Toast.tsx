@@ -47,7 +47,7 @@ export function Toast() {
       <div className="flex flex-col gap-1 flex-1">
         <div
           className={cn(
-            "text-base font-bold text-left",
+            "text-base font-bold text-left break-words",
             isError ? "text-red-400" : "text-text-muted",
           )}
         >

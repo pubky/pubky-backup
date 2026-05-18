@@ -675,63 +675,25 @@ impl BackupManager {
                 }
             };
 
-            let validation_result = if self.config.developer_mode {
-                Ok(())
-            } else {
-                match discovery::discover_homeserver(&pubky, self.config.validation_timeout_secs)
-                    .await
-                {
-                    Ok(_) => {
-                        discovery::verify_pubky_has_data(
-                            &pubky,
-                            self.config.validation_timeout_secs,
-                        )
-                        .await
-                    }
-                    Err(e) => Err(e),
-                }
-            };
-
-            match validation_result {
-                Ok(()) => {
-                    if let Err(e) = self.start_controller(pubky.clone()).await {
-                        let error_msg = format!("Failed to resume key {}: {}", pubky, e);
-                        error!("{}", error_msg);
-                        let _ = self
-                            .storage
-                            .write_global_error("resume_stored_keys", &error_msg)
-                            .await;
-                        // Start in error state
-                        self.start_controller_in_error_state(
-                            pubky,
-                            KeyError {
-                                code: KeyErrorCode::Internal,
-                                message: format!("Failed to resume: {}", e),
-                                recoverable: true,
-                            },
-                        )
-                        .await;
-                    }
-                }
-                Err(e) => {
-                    let error_msg =
-                        format!("Failed to validate key {} during resume: {}", pubky, e);
-                    warn!("{}", error_msg);
-                    let _ = self
-                        .storage
-                        .write_global_error("resume_stored_keys", &error_msg)
-                        .await;
-                    // Start in error state with recoverable flag
-                    self.start_controller_in_error_state(
-                        pubky,
-                        KeyError {
-                            code: KeyErrorCode::HomeserverUnreachable,
-                            message: format!("Validation failed: {}", e),
-                            recoverable: true,
-                        },
-                    )
+            // Skip validation on resume — these keys were validated when first added
+            // and already have data on disk. The controller's sync loop will handle
+            // transient network errors with its built-in retry mechanism.
+            if let Err(e) = self.start_controller(pubky.clone()).await {
+                let error_msg = format!("Failed to resume key {}: {}", pubky, e);
+                error!("{}", error_msg);
+                let _ = self
+                    .storage
+                    .write_global_error("resume_stored_keys", &error_msg)
                     .await;
-                }
+                self.start_controller_in_error_state(
+                    pubky,
+                    KeyError {
+                        code: KeyErrorCode::Internal,
+                        message: format!("Failed to resume: {}", e),
+                        recoverable: true,
+                    },
+                )
+                .await;
             }
         }
     }

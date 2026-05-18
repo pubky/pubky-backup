@@ -89,36 +89,35 @@ impl StatusHandler {
         let now = current_unix_timestamp();
         match status {
             ControllerStatus::Idle { .. } => {
-                // A key is "new" (first-ever sync) only when it has no cursor on disk
-                // and no prior sync this session. This avoids logging InitialBackup
-                // when the app restarts and resumes an existing key.
-                let has_prior_sync = self.last_sync.is_some()
-                    || self
+                // A key is "new" (first-ever sync) when last_sync is None (no prior
+                // Idle this session) and the activity log has no InitialBackup entry.
+                let is_initial = self.last_sync.is_none()
+                    && !self
                         .storage
-                        .read_cursor(&self.pubky)
+                        .read_activity(&self.pubky, 50)
                         .await
-                        .unwrap_or(None)
-                        .is_some();
+                        .iter()
+                        .any(|e| e.activity_type == ActivityType::InitialBackup);
 
-                if !has_prior_sync {
+                if is_initial {
+                    let count = match &self.previous_status {
+                        KeyStatus::Syncing { events_processed } => *events_processed,
+                        _ => 0,
+                    };
+                    let message = format!(
+                        "Initial backup successful — {}",
+                        format_files_backed_up(count)
+                    );
                     Some(ActivityEntry {
                         activity_type: ActivityType::InitialBackup,
-                        message: "Initial backup successful".to_string(),
+                        message,
                         timestamp: now,
                     })
                 } else if let KeyStatus::Syncing { events_processed } = &self.previous_status {
                     if *events_processed > 0 {
                         Some(ActivityEntry {
                             activity_type: ActivityType::FilesBackedUp,
-                            message: format!(
-                                "{} new {} backed up",
-                                events_processed,
-                                if *events_processed == 1 {
-                                    "file"
-                                } else {
-                                    "files"
-                                }
-                            ),
+                            message: format_files_backed_up(*events_processed),
                             timestamp: now,
                         })
                     } else {
@@ -144,6 +143,14 @@ pub(crate) fn current_unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+fn format_files_backed_up(count: usize) -> String {
+    format!(
+        "{} new {} backed up",
+        count,
+        if count == 1 { "file" } else { "files" }
+    )
 }
 
 /// Calculate next sync time.
@@ -259,7 +266,7 @@ mod tests {
     async fn test_idle_after_initial_sync_writes_initial_backup_activity() {
         let (_dir, storage, pubky) = setup();
 
-        // last_sync is None and no cursor on disk → initial backup
+        // last_sync is None and no InitialBackup in activity log → initial backup
         handler(&pubky, &storage, 0, None, KeyStatus::Starting)
             .handle(&ControllerStatus::Idle {
                 pubky: pubky.clone(),
@@ -269,17 +276,52 @@ mod tests {
         let entries = storage.read_activity(&pubky, 10).await;
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].activity_type, ActivityType::InitialBackup);
-        assert_eq!(entries[0].message, "Initial backup successful");
+        assert_eq!(
+            entries[0].message,
+            "Initial backup successful — 0 new files backed up"
+        );
     }
 
     #[tokio::test]
-    async fn test_resumed_key_with_cursor_writes_files_backed_up_not_initial() {
+    async fn test_initial_backup_includes_file_count() {
         let (_dir, storage, pubky) = setup();
 
-        // Simulate a resumed key: write a cursor to disk (as if it synced in a previous session)
-        storage.write_cursor(&pubky, 12345).await.unwrap();
+        let prev = KeyStatus::Syncing {
+            events_processed: 18,
+        };
+        handler(&pubky, &storage, 0, None, prev)
+            .handle(&ControllerStatus::Idle {
+                pubky: pubky.clone(),
+            })
+            .await;
 
-        // last_sync is None (fresh app start) but cursor exists on disk
+        let entries = storage.read_activity(&pubky, 10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].activity_type, ActivityType::InitialBackup);
+        assert_eq!(
+            entries[0].message,
+            "Initial backup successful — 18 new files backed up"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resumed_key_with_prior_initial_backup_writes_files_backed_up() {
+        let (_dir, storage, pubky) = setup();
+
+        // Simulate a resumed key: activity log already has an InitialBackup entry
+        storage
+            .write_activity(
+                &pubky,
+                &ActivityEntry {
+                    activity_type: ActivityType::InitialBackup,
+                    message: "Initial backup successful".to_string(),
+                    timestamp: 1000,
+                },
+            )
+            .await
+            .unwrap();
+
+        // last_sync is None (fresh app start) but InitialBackup exists in activity log
         let prev = KeyStatus::Syncing {
             events_processed: 3,
         };
@@ -290,8 +332,8 @@ mod tests {
             .await;
 
         let entries = storage.read_activity(&pubky, 10).await;
-        assert_eq!(entries.len(), 1);
-        // Should be FilesBackedUp, NOT InitialBackup
+        assert_eq!(entries.len(), 2);
+        // Newest should be FilesBackedUp, NOT a second InitialBackup
         assert_eq!(entries[0].activity_type, ActivityType::FilesBackedUp);
         assert_eq!(entries[0].message, "3 new files backed up");
     }
