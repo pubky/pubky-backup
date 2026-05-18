@@ -111,7 +111,9 @@ async fn get_manager() -> Result<Arc<BackupManager>, BackupAppError> {
 
 /// Parse a pubky z32 string, mapping errors to [`BackupAppError::InvalidPubkyFormat`].
 fn parse_pubky_for_command(pubky_str: &str) -> Result<PublicKey, BackupAppError> {
-    parse_pubky(pubky_str).map_err(|msg| BackupAppError::InvalidPubkyFormat { message: msg })
+    parse_pubky(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
+        message: e.to_string(),
+    })
 }
 
 async fn spawn_event_listener(manager: &BackupManager) {
@@ -323,11 +325,8 @@ async fn open_snapshots_dir(
     use tauri_plugin_opener::OpenerExt;
 
     let pubky = parse_pubky_for_command(pubky_str)?;
-    let snapshots_dir = get_manager()
-        .await?
-        .keys_dir()
-        .join(pubky.z32())
-        .join("snapshots");
+    let manager = get_manager().await?;
+    let snapshots_dir = manager.snapshots_dir(&pubky);
     app_handle
         .opener()
         .open_path(snapshots_dir.to_string_lossy(), None::<&str>)
@@ -358,10 +357,16 @@ async fn create_snapshot(pubky_str: &str) -> Result<String, BackupAppError> {
 
 /// Get recent activity entries for a key.
 #[tauri::command]
-async fn get_activity(pubky_str: &str) -> Result<Vec<ActivityEntry>, BackupAppError> {
+async fn get_activity(
+    pubky_str: &str,
+    limit: Option<usize>,
+) -> Result<Vec<ActivityEntry>, BackupAppError> {
+    const DEFAULT_ACTIVITY_LIMIT: usize = 100;
     let pubky = parse_pubky_for_command(pubky_str)?;
     let manager = get_manager().await?;
-    Ok(manager.get_activity(&pubky, 100).await)
+    Ok(manager
+        .get_activity(&pubky, limit.unwrap_or(DEFAULT_ACTIVITY_LIMIT))
+        .await)
 }
 
 /// Move backup data to a new location.

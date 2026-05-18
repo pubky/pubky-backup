@@ -289,6 +289,14 @@ impl AppStorage {
         }
     }
 
+    /// Get the snapshots directory path for a key.
+    pub fn snapshots_dir(&self, pubky: &PublicKey) -> PathBuf {
+        self.keys_storage
+            .keys_dir()
+            .join(pubky.z32())
+            .join("snapshots")
+    }
+
     /// Calculate the total size of data stored for a specific pubky.
     ///
     /// Recursively traverses the pubky's data directory and sums file sizes.

@@ -1,55 +1,40 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useUIStore } from "@/stores/uiStore";
 import type { ActivityEntry } from "@/stores/uiStore";
 import { getActivity, openSnapshotsDir } from "@/services/tauri-commands";
 import { formatRelativeTime } from "@/utils/format";
 import * as Atoms from "@/components/atoms";
 
-const MOCK_ACTIVITY: ActivityEntry[] = [
-  { type: "files_backed_up", message: "35 new files backed up", timestamp: Math.floor(Date.now() / 1000) - 60 },
-  { type: "files_backed_up", message: "10 new files backed up", timestamp: Math.floor(Date.now() / 1000) - 300 },
-  { type: "snapshot_created", message: "Created snapshot v14", timestamp: Math.floor(Date.now() / 1000) - 420 },
-  { type: "sync_failed", message: "no internet connection", timestamp: Math.floor(Date.now() / 1000) - 600 },
-  { type: "initial_backup", message: "Initial backup successful", timestamp: Math.floor(Date.now() / 1000) - 1800 },
-  { type: "files_backed_up", message: "35 new files backed up", timestamp: Math.floor(Date.now() / 1000) - 60 },
-  { type: "files_backed_up", message: "10 new files backed up", timestamp: Math.floor(Date.now() / 1000) - 300 },
-  { type: "snapshot_created", message: "Created snapshot v14", timestamp: Math.floor(Date.now() / 1000) - 420 },
-  { type: "sync_failed", message: "no internet connection", timestamp: Math.floor(Date.now() / 1000) - 600 },
-  { type: "initial_backup", message: "Initial backup successful", timestamp: Math.floor(Date.now() / 1000) - 1800 },
-];
-
 export function ActivityPage() {
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
   const lastPubky = useUIStore((s) => s.lastPubky);
-  const developerMode = useUIStore((s) => s.developerMode);
   const keyState = useUIStore((s) =>
     s.lastPubky ? s.keyStates[s.lastPubky] : undefined,
   );
+  const prevStatusType = useRef(keyState?.status.type);
 
   const fetchActivity = useCallback(async () => {
     if (!lastPubky) return;
-    if (developerMode) {
-      setEntries(MOCK_ACTIVITY);
-      return;
-    }
     try {
       const result = await getActivity(lastPubky);
       setEntries(result);
     } catch {
       // Silently ignore - activity is non-critical
     }
-  }, [lastPubky, developerMode]);
+  }, [lastPubky]);
 
   // Fetch on mount and when lastPubky changes
   useEffect(() => {
     fetchActivity();
   }, [fetchActivity]);
 
-  // Refetch when key transitions to Idle
+  // Refetch only on transition TO Idle (not on every re-render while Idle)
   useEffect(() => {
-    if (keyState?.status.type === "Idle") {
+    const currentType = keyState?.status.type;
+    if (currentType === "Idle" && prevStatusType.current !== "Idle") {
       fetchActivity();
     }
+    prevStatusType.current = currentType;
   }, [keyState?.status.type, fetchActivity]);
 
   if (!lastPubky) {

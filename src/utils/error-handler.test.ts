@@ -79,7 +79,7 @@ describe("handleBackendError", () => {
       const toast = getLastErrorToast();
       expect(toast.visible).toBe(true);
       expect(toast.message).toBe(
-        "Homeserver Not Found: Could not reach homeserver at example.com",
+        "Could not reach homeserver at example.com",
       );
     });
 
@@ -94,7 +94,7 @@ describe("handleBackendError", () => {
       const toast = getLastErrorToast();
       expect(toast.visible).toBe(true);
       expect(toast.message).toBe(
-        "Homeserver Not Found: Could not connect to your homeserver. Please check your pubky.",
+        "Please check your pubky.",
       );
     });
   });

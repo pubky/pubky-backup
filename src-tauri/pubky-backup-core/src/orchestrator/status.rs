@@ -7,20 +7,22 @@ use pubky::PublicKey;
 use tokio::sync::broadcast;
 
 use super::sync_interval::SyncInterval;
-use super::types::*;
+use super::types::{
+    ActivityEntry, ActivityType, KeyError, KeyErrorCode, KeyState, KeyStatus, KeyUpdate,
+};
 use crate::storage::AppStorage;
 use crate::sync::ControllerStatus;
 
 /// Handles a controller status update: resolves activity, writes it to the log,
 /// and maps the controller status to a [`KeyState`] for external consumers.
 pub(crate) struct StatusHandler {
-    pub pubky: PublicKey,
-    pub storage: Arc<AppStorage>,
-    pub data_size: u64,
-    pub last_sync: Option<u64>,
-    pub next_sync: Option<u64>,
-    pub sync_interval_secs: u64,
-    pub previous_status: KeyStatus,
+    pub(crate) pubky: PublicKey,
+    pub(crate) storage: Arc<AppStorage>,
+    pub(crate) data_size: u64,
+    pub(crate) last_sync: Option<u64>,
+    pub(crate) next_sync: Option<u64>,
+    pub(crate) sync_interval_secs: u64,
+    pub(crate) previous_status: KeyStatus,
 }
 
 impl StatusHandler {
@@ -91,10 +93,13 @@ impl StatusHandler {
             ControllerStatus::Idle { .. } => {
                 // A key is "new" (first-ever sync) when last_sync is None (no prior
                 // Idle this session) and the activity log has no InitialBackup entry.
+                // We scan the most recent entries for a prior InitialBackup.
+                // 50 is generous — InitialBackup is always among the first entries.
+                const INITIAL_BACKUP_SCAN_LIMIT: usize = 50;
                 let is_initial = self.last_sync.is_none()
                     && !self
                         .storage
-                        .read_activity(&self.pubky, 50)
+                        .read_activity(&self.pubky, INITIAL_BACKUP_SCAN_LIMIT)
                         .await
                         .iter()
                         .any(|e| e.activity_type == ActivityType::InitialBackup);
@@ -179,18 +184,18 @@ pub(crate) fn spawn_status_listener(
                     // Skip updates for keys that have been removed
                     let handler = {
                         let inner_read = inner.read();
-                        let Some(managed) = inner_read.keys.get(&pubky) else {
+                        let Some(snapshot) = inner_read.key_snapshot(&pubky) else {
                             debug!("Ignoring status update for removed key {}", pubky);
                             continue;
                         };
                         StatusHandler {
                             pubky: pubky.clone(),
                             storage: storage.clone(),
-                            data_size: managed.state.data_size,
-                            last_sync: managed.state.last_sync,
-                            next_sync: managed.state.next_sync,
+                            data_size: snapshot.data_size,
+                            last_sync: snapshot.last_sync,
+                            next_sync: snapshot.next_sync,
                             sync_interval_secs: sync_interval.read().get(),
-                            previous_status: managed.state.status.clone(),
+                            previous_status: snapshot.status,
                         }
                     };
 
@@ -198,9 +203,7 @@ pub(crate) fn spawn_status_listener(
 
                     {
                         let mut inner_write = inner.write();
-                        if let Some(managed_key) = inner_write.keys.get_mut(&pubky) {
-                            managed_key.state = new_state.clone();
-                        }
+                        inner_write.update_key_state(&pubky, new_state.clone());
                     }
 
                     let receivers = update_tx.send(KeyUpdate {

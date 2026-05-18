@@ -26,7 +26,10 @@ use super::error::OrchestratorError;
 use super::session;
 use super::status::{current_unix_timestamp, next_sync_time, spawn_status_listener};
 use super::sync_interval::SyncInterval;
-use super::types::*;
+use super::types::{
+    ActivityEntry, ActivityType, BackupManagerConfig, KeyError, KeyErrorCode, KeyState, KeyStatus,
+    KeyUpdate,
+};
 use crate::storage::AppStorage;
 use crate::sync::{BackupController, ControllerCommand, ControllerStatus};
 
@@ -37,20 +40,50 @@ use crate::sync::{BackupController, ControllerCommand, ControllerStatus};
 pub const MAX_KEYS: usize = 50;
 
 /// Internal state for a managed key.
-pub(crate) struct ManagedKey {
+struct ManagedKey {
     /// Sender for control messages to the backup controller (mpsc - single receiver)
-    pub(crate) control_tx: mpsc::Sender<ControllerCommand>,
+    control_tx: mpsc::Sender<ControllerCommand>,
     /// Current state of the key
-    pub(crate) state: KeyState,
+    state: KeyState,
     /// Handle to the controller task
-    pub(crate) task_handle: JoinHandle<()>,
+    task_handle: JoinHandle<()>,
 }
 
 pub(crate) struct ManagerInner {
     /// Map of public keys to their managed state
-    pub(crate) keys: HashMap<PublicKey, ManagedKey>,
+    keys: HashMap<PublicKey, ManagedKey>,
     /// Shared pubky client for SDK calls
-    pub(crate) pubky_client: Arc<Pubky>,
+    pubky_client: Arc<Pubky>,
+}
+
+/// Snapshot of a key's state values needed by the status listener.
+pub(crate) struct KeySnapshot {
+    pub(crate) data_size: u64,
+    pub(crate) last_sync: Option<u64>,
+    pub(crate) next_sync: Option<u64>,
+    pub(crate) status: KeyStatus,
+}
+
+impl ManagerInner {
+    /// Get a snapshot of a key's current state, or `None` if the key is not tracked.
+    pub(crate) fn key_snapshot(&self, pubky: &PublicKey) -> Option<KeySnapshot> {
+        self.keys.get(pubky).map(|m| KeySnapshot {
+            data_size: m.state.data_size,
+            last_sync: m.state.last_sync,
+            next_sync: m.state.next_sync,
+            status: m.state.status.clone(),
+        })
+    }
+
+    /// Update the state for a key. Returns false if the key is not tracked.
+    pub(crate) fn update_key_state(&mut self, pubky: &PublicKey, state: KeyState) -> bool {
+        if let Some(managed) = self.keys.get_mut(pubky) {
+            managed.state = state;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// A thread-safe backup manager for multiple pubky keys.
@@ -464,6 +497,11 @@ impl BackupManager {
     /// Get the current keys directory path.
     pub fn keys_dir(&self) -> &Path {
         self.storage.keys_dir()
+    }
+
+    /// Get the snapshots directory path for a key.
+    pub fn snapshots_dir(&self, pubky: &PublicKey) -> PathBuf {
+        self.storage.snapshots_dir(pubky)
     }
 
     /// Move the keys directory to a new parent location.

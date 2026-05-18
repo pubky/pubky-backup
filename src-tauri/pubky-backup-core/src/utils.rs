@@ -4,11 +4,10 @@ use std::str::FromStr;
 
 /// Parse a z32-encoded pubky string into a [`PublicKey`].
 ///
-/// Convenience wrapper around `PublicKey::from_str` with a descriptive error message.
-pub fn parse_pubky(pubky_str: &str) -> Result<PublicKey, String> {
+/// Convenience wrapper around `PublicKey::from_str`.
+pub fn parse_pubky(pubky_str: &str) -> Result<PublicKey, pubky::pkarr::errors::PublicKeyError> {
     let stripped = pubky_str.strip_prefix("pubky").unwrap_or(pubky_str);
     PublicKey::from_str(stripped)
-        .map_err(|e| format!("Invalid pubky format '{}': {}", pubky_str, e))
 }
 
 /// Maximum number of retry attempts for transient network errors

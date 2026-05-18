@@ -48,6 +48,9 @@ pub(super) async fn create_event_stream(
             }
             Err(e) => {
                 let msg = e.to_string();
+                // NOTE: String matching is fragile — the SDK doesn't expose a typed
+                // status code, so we check the error message. If the SDK changes its
+                // error format, this detection will silently stop working.
                 if msg.contains("429") && attempt < MAX_429_RETRIES {
                     let backoff_secs = 2u64.pow(attempt);
                     warn!(
