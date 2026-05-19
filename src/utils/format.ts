@@ -29,6 +29,27 @@ export function formatTimestamp(unixTimestamp: number): string {
 }
 
 /**
+ * Format a Unix timestamp into a relative time string (e.g. "2 min ago", "Yesterday")
+ */
+export function formatRelativeTime(timestamp: number): string {
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - timestamp;
+
+  if (diff < 60) return "Just now";
+  if (diff < 3600) {
+    const mins = Math.floor(diff / 60);
+    return `${mins} min ago`;
+  }
+  if (diff < 86400) {
+    const hours = Math.floor(diff / 3600);
+    return `${hours} hour${hours !== 1 ? "s" : ""} ago`;
+  }
+  if (diff < 172800) return "Yesterday";
+  const days = Math.floor(diff / 86400);
+  return `${days} day${days !== 1 ? "s" : ""} ago`;
+}
+
+/**
  * Format the countdown to next sync in a human-readable string
  */
 export function formatCountdown(nextSyncTime: number): string {

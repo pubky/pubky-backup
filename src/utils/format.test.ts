@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { formatFileSize, formatTimestamp, formatCountdown } from "./format";
+import {
+  formatFileSize,
+  formatTimestamp,
+  formatCountdown,
+  formatRelativeTime,
+} from "./format";
 
 describe("formatFileSize", () => {
   it("should format bytes correctly", () => {
@@ -169,5 +174,52 @@ describe("formatCountdown", () => {
     const now = Math.floor(Date.now() / 1000);
     expect(formatCountdown(now - 10)).toBe("Syncing soon...");
     expect(formatCountdown(now)).toBe("Syncing soon...");
+  });
+});
+
+describe("formatRelativeTime", () => {
+  it("should return 'Just now' for timestamps within the last 60 seconds", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(formatRelativeTime(now)).toBe("Just now");
+    expect(formatRelativeTime(now - 30)).toBe("Just now");
+    expect(formatRelativeTime(now - 59)).toBe("Just now");
+  });
+
+  it("should return minutes ago for timestamps within the last hour", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(formatRelativeTime(now - 60)).toBe("1 min ago");
+    expect(formatRelativeTime(now - 120)).toBe("2 min ago");
+    expect(formatRelativeTime(now - 3599)).toBe("59 min ago");
+  });
+
+  it("should return hours ago for timestamps within the last day", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(formatRelativeTime(now - 3600)).toBe("1 hour ago");
+    expect(formatRelativeTime(now - 7200)).toBe("2 hours ago");
+    expect(formatRelativeTime(now - 86399)).toBe("23 hours ago");
+  });
+
+  it("should use correct singular/plural for hours", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(formatRelativeTime(now - 3600)).toBe("1 hour ago");
+    expect(formatRelativeTime(now - 7200)).toBe("2 hours ago");
+  });
+
+  it("should return 'Yesterday' for timestamps 1-2 days ago", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(formatRelativeTime(now - 86400)).toBe("Yesterday");
+    expect(formatRelativeTime(now - 172799)).toBe("Yesterday");
+  });
+
+  it("should return days ago for timestamps older than 2 days", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(formatRelativeTime(now - 172800)).toBe("2 days ago");
+    expect(formatRelativeTime(now - 259200)).toBe("3 days ago");
+    expect(formatRelativeTime(now - 604800)).toBe("7 days ago");
+  });
+
+  it("should handle future timestamps gracefully as 'Just now'", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(formatRelativeTime(now + 100)).toBe("Just now");
   });
 });

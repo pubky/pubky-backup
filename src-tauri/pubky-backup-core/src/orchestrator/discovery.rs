@@ -33,10 +33,7 @@ pub async fn discover_homeserver(
             .get_homeserver_of(pubky)
             .await
             .ok_or_else(|| {
-                OrchestratorError::HomeserverNotFound(format!(
-                    "Could not discover homeserver for {}",
-                    pubky
-                ))
+                OrchestratorError::HomeserverNotFound("Could not discover homeserver".to_string())
             })
     })
     .await

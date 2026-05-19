@@ -32,9 +32,7 @@ export function handleBackendError(error: unknown): void {
       break;
 
     case "HomeserverNotFound":
-      showError(
-        `Homeserver Not Found: ${error.message || "Could not connect to your homeserver. Please check your pubky."}`,
-      );
+      showError(error.message || "Please check your pubky.");
       break;
 
     case "Internal":

@@ -1,5 +1,7 @@
 export { useUIStore } from "./uiStore.store";
 export type {
+  ActivityEntry,
+  ActivityType,
   Screen,
   Page,
   StatusMessageMode,

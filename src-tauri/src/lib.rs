@@ -11,8 +11,8 @@ use std::sync::{Arc, OnceLock};
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_developer_mode, parse_pubky, AppStorage, BackupManager, BackupManagerConfig, KeyState,
-    KeyStatus,
+    is_developer_mode, parse_pubky, ActivityEntry, AppStorage, BackupManager, BackupManagerConfig,
+    KeyState, KeyStatus,
 };
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -111,7 +111,9 @@ async fn get_manager() -> Result<Arc<BackupManager>, BackupAppError> {
 
 /// Parse a pubky z32 string, mapping errors to [`BackupAppError::InvalidPubkyFormat`].
 fn parse_pubky_for_command(pubky_str: &str) -> Result<PublicKey, BackupAppError> {
-    parse_pubky(pubky_str).map_err(|msg| BackupAppError::InvalidPubkyFormat { message: msg })
+    parse_pubky(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
+        message: e.to_string(),
+    })
 }
 
 async fn spawn_event_listener(manager: &BackupManager) {
@@ -314,6 +316,23 @@ async fn open_data_dir(app_handle: tauri::AppHandle) -> Result<(), BackupAppErro
         .map_err(BackupAppError::internal)
 }
 
+/// Open the snapshots directory for a specific key in the system file manager
+#[tauri::command]
+async fn open_snapshots_dir(
+    app_handle: tauri::AppHandle,
+    pubky_str: &str,
+) -> Result<(), BackupAppError> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    let manager = get_manager().await?;
+    let snapshots_dir = manager.snapshots_dir(&pubky);
+    app_handle
+        .opener()
+        .open_path(snapshots_dir.to_string_lossy(), None::<&str>)
+        .map_err(BackupAppError::internal)
+}
+
 /// Set the sync interval in seconds. Controllers pick up the new value dynamically.
 #[tauri::command]
 async fn set_sync_interval(interval_secs: u64) -> Result<(), BackupAppError> {
@@ -334,6 +353,20 @@ async fn create_snapshot(pubky_str: &str) -> Result<String, BackupAppError> {
         .await
         .map_err(BackupAppError::internal)?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Get recent activity entries for a key.
+#[tauri::command]
+async fn get_activity(
+    pubky_str: &str,
+    limit: Option<usize>,
+) -> Result<Vec<ActivityEntry>, BackupAppError> {
+    const DEFAULT_ACTIVITY_LIMIT: usize = 100;
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    let manager = get_manager().await?;
+    Ok(manager
+        .get_activity(&pubky, limit.unwrap_or(DEFAULT_ACTIVITY_LIMIT))
+        .await)
 }
 
 /// Move backup data to a new location.
@@ -510,7 +543,9 @@ pub fn run() {
             delete_key,
             force_sync_now,
             open_data_dir,
+            open_snapshots_dir,
             create_snapshot,
+            get_activity,
             set_sync_interval,
             set_backup_location
         ])

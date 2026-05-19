@@ -57,8 +57,13 @@ pub mod discovery;
 pub mod error;
 mod manager;
 pub mod session;
+mod status;
+mod sync_interval;
 pub mod types;
 
 pub use error::OrchestratorError;
 pub use manager::{BackupManager, MAX_KEYS};
-pub use types::{BackupManagerConfig, KeyError, KeyErrorCode, KeyState, KeyStatus, KeyUpdate};
+pub use types::{
+    ActivityEntry, ActivityType, BackupManagerConfig, KeyError, KeyErrorCode, KeyState, KeyStatus,
+    KeyUpdate,
+};
