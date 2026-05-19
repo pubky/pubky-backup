@@ -39,6 +39,14 @@ use crate::sync::{BackupController, ControllerCommand, ControllerStatus};
 /// Should be more flexible in the future but this is fine for current use cases.
 pub const MAX_KEYS: usize = 50;
 
+/// Per-key multiplier (in seconds) for the startup stagger window.
+///
+/// When resuming keys on startup, each controller is given a random initial
+/// delay in `0..(key_count * STAGGER_MULTIPLE)` seconds to avoid overwhelming
+/// the network with simultaneous requests. For example, with 10 keys this
+/// spreads first syncs over ~50 seconds.
+pub const STAGGER_MULTIPLE: usize = 5;
+
 /// Internal state for a managed key.
 struct ManagedKey {
     /// Sender for control messages to the backup controller (mpsc - single receiver)
@@ -235,7 +243,7 @@ impl BackupManager {
             OrchestratorError::Internal(format!("Failed to clear inactive marker: {}", e))
         })?;
 
-        self.start_controller(pubky.clone()).await?;
+        self.start_controller(pubky.clone(), false).await?;
 
         info!("Added key for backup: {}", pubky);
         Ok(())
@@ -361,7 +369,7 @@ impl BackupManager {
         }
 
         // Restart the controller
-        self.start_controller(pubky.clone()).await?;
+        self.start_controller(pubky.clone(), false).await?;
         info!("Retried and restarted key: {}", pubky);
         Ok(())
     }
@@ -630,8 +638,16 @@ impl BackupManager {
         );
     }
 
-    /// Start the backup controller for a key
-    async fn start_controller(&self, pubky: PublicKey) -> Result<(), OrchestratorError> {
+    /// Start the backup controller for a key.
+    ///
+    /// When `stagger` is true, a random initial delay (0..sync_interval) is applied
+    /// to avoid thundering-herd on startup. User-initiated actions (add_key, retry)
+    /// pass `false` so the first sync starts immediately.
+    async fn start_controller(
+        &self,
+        pubky: PublicKey,
+        stagger: bool,
+    ) -> Result<(), OrchestratorError> {
         let (control_tx, control_rx) = mpsc::channel(5);
 
         let initial_size = self.storage.calculate_pubky_size(&pubky).await;
@@ -650,12 +666,13 @@ impl BackupManager {
             (inner.pubky_client.clone(), inner.keys.len())
         };
 
-        // Generate random initial delay (0 to sync_interval_secs) to stagger syncs
-        // Skip staggering in developer mode or if this is the first key
-        let initial_delay = if self.config.developer_mode || key_count == 0 {
-            std::time::Duration::ZERO
+        // Stagger resumed keys at startup to avoid thundering-herd.
+        // Window = key_count * STAGGER_MULTIPLE, so 10 keys spread their stagger over 10*STAGGER_MULTIPLE.
+        let initial_delay = if stagger && !self.config.developer_mode && key_count > 0 {
+            let window_secs = (key_count * STAGGER_MULTIPLE) as u64;
+            std::time::Duration::from_secs(rand::random::<u64>() % window_secs)
         } else {
-            std::time::Duration::from_secs(rand::random::<u64>() % sync_interval_secs)
+            std::time::Duration::ZERO
         };
 
         let controller = BackupController::new(
@@ -716,7 +733,7 @@ impl BackupManager {
             // Skip validation on resume — these keys were validated when first added
             // and already have data on disk. The controller's sync loop will handle
             // transient network errors with its built-in retry mechanism.
-            if let Err(e) = self.start_controller(pubky.clone()).await {
+            if let Err(e) = self.start_controller(pubky.clone(), true).await {
                 let error_msg = format!("Failed to resume key {}: {}", pubky, e);
                 error!("{}", error_msg);
                 let _ = self
