@@ -169,7 +169,7 @@ export function KeysPage() {
             <span className="text-xs font-medium text-text-secondary uppercase tracking-widest">
               Your pubkys ({keys.length})
             </span>
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 overflow-y-auto max-h-[300px] pr-2">
               {keys.map((pubky) => (
                 <KeyItem
                   key={pubky}
