@@ -12,6 +12,25 @@ on:
 
 
 jobs:
+  frontend-checks:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install Node dependencies
+        run: npm ci
+      - name: Check formatting
+        run: npm run format:check
+      - name: Check typing
+        run: npm run type-check
+      - name: Run frontend tests
+        run: npm run test:run
+
   build:
     name: Build and lint
     runs-on: ubuntu-latest
@@ -56,24 +75,6 @@ jobs:
 
       - name: Run pubky-backup-core unit tests
         run: cd src-tauri && cargo test -p pubky-backup-core --lib --verbose
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install Node dependencies
-        run: npm ci
-
-      - name: Check formatting
-        run: npm run format:check
-
-      - name: Check typing
-        run: npm run type-check
-
-      - name: Run frontend tests
-        run: npm run test:run
 
   integration-tests:
     name: Integration tests

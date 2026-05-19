@@ -1,4 +1,8 @@
-export type ActivityType = "files_backed_up" | "initial_backup" | "snapshot_created" | "sync_failed";
+export type ActivityType =
+  | "files_backed_up"
+  | "initial_backup"
+  | "snapshot_created"
+  | "sync_failed";
 
 export interface ActivityEntry {
   type: ActivityType;

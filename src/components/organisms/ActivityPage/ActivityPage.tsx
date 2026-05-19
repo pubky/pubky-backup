@@ -64,9 +64,7 @@ export function ActivityPage() {
               <div className="flex gap-4 items-center">
                 <div
                   className={`size-2 rounded-full shrink-0 ${
-                    entry.type === "sync_failed"
-                      ? "bg-red-500"
-                      : "bg-green-500"
+                    entry.type === "sync_failed" ? "bg-red-500" : "bg-green-500"
                   }`}
                 />
                 <span className="text-sm font-bold text-white leading-5">
