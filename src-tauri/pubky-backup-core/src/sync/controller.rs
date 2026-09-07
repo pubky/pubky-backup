@@ -524,7 +524,7 @@ impl BackupController {
         }
 
         match event.event_type {
-            EventType::Put => {
+            EventType::Put { .. } => {
                 debug!("Processing PUT event for: {}", event.resource);
                 match fetcher::fetch_resource_data(&self.pubky_client, &event.resource).await {
                     Ok(data_vec) => {
@@ -781,7 +781,6 @@ mod tests {
             event_type: EventType::Delete,
             resource: resource.clone(),
             cursor: pubky::EventCursor::new(1),
-            content_hash: None,
         };
 
         // Process event
@@ -811,10 +810,9 @@ mod tests {
         // Create event for a different pubky
         let resource = PubkyResource::new(pubky2.clone(), "/pub/test.json").unwrap();
         let event = Event {
-            event_type: EventType::Put,
+            event_type: events::test_helpers::put_event_type(),
             resource: resource.clone(),
             cursor: pubky::EventCursor::new(1),
-            content_hash: None,
         };
 
         // Process event
