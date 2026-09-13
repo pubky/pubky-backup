@@ -89,6 +89,13 @@ pub mod test_helpers {
     use pubky::{EventCursor, EventType, PubkyResource};
     use std::str::FromStr;
 
+    /// Create a PUT event type with a placeholder content hash for tests.
+    pub fn put_event_type() -> EventType {
+        EventType::Put {
+            content_hash: [0; 32].into(),
+        }
+    }
+
     /// Create a test event with the given parameters.
     pub fn make_test_event(
         pubky_z32: &str,
@@ -102,7 +109,6 @@ pub mod test_helpers {
             event_type,
             resource,
             cursor: EventCursor::new(cursor_id),
-            content_hash: None,
         }
     }
 
@@ -119,28 +125,28 @@ pub mod test_helpers {
         let events: Vec<Event> = match cursor {
             None => {
                 vec![
-                    make_test_event(&z32, EventType::Put, "/pub/posts/001", 1),
-                    make_test_event(&z32, EventType::Put, "/pub/posts/002", 2),
-                    make_test_event(&z32, EventType::Put, "/pub/profile", 3),
+                    make_test_event(&z32, put_event_type(), "/pub/posts/001", 1),
+                    make_test_event(&z32, put_event_type(), "/pub/posts/002", 2),
+                    make_test_event(&z32, put_event_type(), "/pub/profile", 3),
                 ]
             }
             Some(c) if c < 3 => {
                 let mut events = vec![];
                 if c < 1 {
-                    events.push(make_test_event(&z32, EventType::Put, "/pub/posts/001", 1));
+                    events.push(make_test_event(&z32, put_event_type(), "/pub/posts/001", 1));
                 }
                 if c < 2 {
-                    events.push(make_test_event(&z32, EventType::Put, "/pub/posts/002", 2));
+                    events.push(make_test_event(&z32, put_event_type(), "/pub/posts/002", 2));
                 }
                 if c < 3 {
-                    events.push(make_test_event(&z32, EventType::Put, "/pub/profile", 3));
+                    events.push(make_test_event(&z32, put_event_type(), "/pub/profile", 3));
                 }
                 events
             }
             Some(3) | Some(4) => {
                 let mut events = vec![];
                 if cursor == Some(3) {
-                    events.push(make_test_event(&z32, EventType::Put, "/pub/posts/003", 4));
+                    events.push(make_test_event(&z32, put_event_type(), "/pub/posts/003", 4));
                 }
                 events.push(make_test_event(
                     &z32,
@@ -151,7 +157,7 @@ pub mod test_helpers {
                 events
             }
             Some(5) => {
-                vec![make_test_event(&z32, EventType::Put, "/pub/posts/004", 6)]
+                vec![make_test_event(&z32, put_event_type(), "/pub/posts/004", 6)]
             }
             _ => {
                 vec![]
@@ -176,7 +182,7 @@ pub mod test_helpers {
             .map(|i| {
                 let cursor_id = cursor_start + i + 1;
                 let path = format!("/pub/posts/{:03}", cursor_id);
-                make_test_event(&z32, EventType::Put, &path, cursor_id)
+                make_test_event(&z32, put_event_type(), &path, cursor_id)
             })
             .collect();
 
@@ -194,7 +200,7 @@ pub mod test_helpers {
         let mut items: Vec<Result<Event, EventsError>> = (1..=fail_after as u64)
             .map(|i| {
                 let path = format!("/pub/posts/{:03}", i);
-                Ok(make_test_event(&z32, EventType::Put, &path, i))
+                Ok(make_test_event(&z32, put_event_type(), &path, i))
             })
             .collect();
         items.push(Err(EventsError::FetchFailed(
@@ -223,7 +229,9 @@ mod tests {
         assert_eq!(events[0].cursor.id(), 1);
         assert_eq!(events[1].cursor.id(), 2);
         assert_eq!(events[2].cursor.id(), 3);
-        assert!(events.iter().all(|e| e.event_type == EventType::Put));
+        assert!(events
+            .iter()
+            .all(|e| matches!(e.event_type, EventType::Put { .. })));
 
         // Test stream with cursor=3 yields 2 events (PUT and DELETE)
         let mut stream = create_test_event_stream(Some(3));
@@ -233,7 +241,7 @@ mod tests {
         }
         assert_eq!(events.len(), 2, "Second batch should have 2 events");
         assert_eq!(events[0].cursor.id(), 4);
-        assert_eq!(events[0].event_type, EventType::Put);
+        assert!(matches!(events[0].event_type, EventType::Put { .. }));
         assert_eq!(events[1].cursor.id(), 5);
         assert_eq!(events[1].event_type, EventType::Delete);
 
