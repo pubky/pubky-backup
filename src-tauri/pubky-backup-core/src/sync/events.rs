@@ -4,6 +4,8 @@
 //! Test helpers for mock streams are available under `#[cfg(test)]`.
 
 use super::error::EventsError;
+use super::scope::{SyncScope, PRIVATE_PATH};
+use super::session::is_session_rejection;
 use futures_util::Stream;
 use log::{info, warn};
 use pubky::{Event, EventCursor, Pubky, PublicKey};
@@ -15,14 +17,20 @@ pub(super) const EVENT_BATCH_SIZE: u16 = 50;
 /// Maximum retry attempts for 429 Too Many Requests responses.
 const MAX_429_RETRIES: u32 = 3;
 
-/// Create an event stream for a given pubky.
+/// Create an event stream for one scope of a given pubky's data.
 ///
 /// Returns a stream of events starting from the given cursor position.
 /// If cursor is None, starts from the beginning.
 /// Retries with exponential backoff on 429 Too Many Requests responses.
+///
+/// # Errors
+///
+/// Returns `EventsError::SessionRejected` if the homeserver does not accept
+/// the session of a private scope.
 pub(super) async fn create_event_stream(
     pubky_client: &Pubky,
     user: &PublicKey,
+    scope: SyncScope<'_>,
     cursor: Option<u64>,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>>, EventsError> {
     let cursor = cursor.map(EventCursor::new);
@@ -30,12 +38,14 @@ pub(super) async fn create_event_stream(
     let mut last_error = None;
 
     for attempt in 1..=MAX_429_RETRIES {
-        match pubky_client
+        let mut builder = pubky_client
             .event_stream_for_user(user, cursor)
-            .limit(EVENT_BATCH_SIZE)
-            .subscribe()
-            .await
-        {
+            .limit(EVENT_BATCH_SIZE);
+        if let SyncScope::Private(session) = scope {
+            builder = builder.path(PRIVATE_PATH).session(session);
+        }
+
+        match builder.subscribe().await {
             Ok(stream) => {
                 info!("Event stream subscribed OK for {}", user);
 
@@ -47,6 +57,10 @@ pub(super) async fn create_event_stream(
                 return Ok(Box::pin(mapped_stream));
             }
             Err(e) => {
+                if matches!(scope, SyncScope::Private(_)) && is_session_rejection(&e) {
+                    warn!("Private event stream for {} rejected: {}", user, e);
+                    return Err(EventsError::SessionRejected);
+                }
                 let msg = e.to_string();
                 // NOTE: String matching is fragile — the SDK doesn't expose a typed
                 // status code, so we check the error message. If the SDK changes its

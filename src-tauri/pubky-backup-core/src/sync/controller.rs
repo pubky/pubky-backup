@@ -6,6 +6,9 @@
 //! 3. Deletes resources that have been removed
 //! 4. Tracks progress via cursors for resumable syncing
 //!
+//! Public data is always synced. Private data is synced as well while a session
+//! secret is stored for the pubky (see [`AppStorage::write_session_secret`]).
+//!
 //! # Responsibilities
 //!
 //! - Main sync loop with interval-based polling
@@ -22,13 +25,15 @@
 use super::error::{EventsError, SyncError};
 use super::events::{self, EVENT_BATCH_SIZE};
 use super::fetcher;
+use super::scope::SyncScope;
+use super::session::{is_session_rejection, restore_session};
 use crate::is_developer_mode;
 use crate::storage::AppStorage;
 #[cfg(test)]
 use crate::TEST_PUBKY;
 use futures_util::StreamExt;
 use log::{debug, error, info, warn};
-use pubky::{Event, EventType, Pubky, PublicKey};
+use pubky::{Event, EventType, Pubky, PubkySession, PublicKey};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -92,6 +97,12 @@ pub enum ControllerStatus {
         /// Human-readable error message
         message: String,
     },
+    /// The homeserver rejected the pubky's session, so its private data is no
+    /// longer synced. Public data keeps syncing.
+    SessionRejected {
+        /// The public key this status is for
+        pubky: PublicKey,
+    },
 }
 
 impl ControllerStatus {
@@ -102,7 +113,8 @@ impl ControllerStatus {
             | Self::Syncing { pubky, .. }
             | Self::Idle { pubky }
             | Self::Ended { pubky }
-            | Self::Error { pubky, .. } => pubky,
+            | Self::Error { pubky, .. }
+            | Self::SessionRejected { pubky } => pubky,
         }
     }
 }
@@ -156,6 +168,9 @@ impl ControllerStatus {
 ///                 ControllerStatus::Error { pubky, message, .. } => {
 ///                     println!("{}: Error: {}", pubky, message)
 ///                 },
+///                 ControllerStatus::SessionRejected { pubky } => {
+///                     println!("{}: Session rejected", pubky)
+///                 },
 ///             }
 ///         }
 ///     });
@@ -175,6 +190,16 @@ pub struct BackupController {
     initial_delay: Duration,
     /// Shared sync interval receiver - reads current interval dynamically
     sync_interval_rx: watch::Receiver<u64>,
+    /// Session of a signed-in pubky, restored from the stored session secret
+    session: Option<RestoredSession>,
+}
+
+/// A session together with the stored secret it was restored from, so a
+/// changed or removed secret is noticed.
+#[derive(Clone)]
+struct RestoredSession {
+    secret: String,
+    session: PubkySession,
 }
 
 impl BackupController {
@@ -213,6 +238,7 @@ impl BackupController {
             status_tx,
             initial_delay: Duration::ZERO,
             sync_interval_rx,
+            session: None,
         }
     }
 
@@ -436,28 +462,152 @@ impl BackupController {
         }
     }
 
-    /// Process events by streaming from the homeserver (or empty stream in developer mode).
+    /// Perform a single sync batch of public data and, if signed in, of private data.
     ///
-    /// This method performs a single sync batch, fetching events from the cursor position
-    /// and processing them. Returns `ControlFlow::Continue(count)` if more events are available,
-    /// or `ControlFlow::Break(_)` if sync is complete.
-    async fn perform_sync_batch(&self) -> Result<ControlFlow<usize, usize>, SyncError> {
-        let cursor = self.storage.read_cursor(&self.pubky).await?;
+    /// Returns `ControlFlow::Continue(count)` if more events are available in either
+    /// scope, or `ControlFlow::Break(count)` if sync is complete.
+    async fn perform_sync_batch(&mut self) -> Result<ControlFlow<usize, usize>, SyncError> {
+        let public = self.perform_scope_batch(SyncScope::Public).await?;
+
+        let private = match self.resolve_session().await? {
+            Some(restored) => self.perform_private_batch(&restored).await?,
+            None => ControlFlow::Break(0),
+        };
+
+        Ok(combine_batches(public, private))
+    }
+
+    /// Perform a single sync batch of private data.
+    ///
+    /// A session the homeserver rejects ends the private sync without failing
+    /// the batch, so the sync of public data still counts.
+    async fn perform_private_batch(
+        &mut self,
+        restored: &RestoredSession,
+    ) -> Result<ControlFlow<usize, usize>, SyncError> {
+        let scope = SyncScope::Private(&restored.session);
+        match self.perform_scope_batch(scope).await {
+            Err(SyncError::SessionRejected) => {
+                self.reject_session(&restored.secret);
+                Ok(ControlFlow::Break(0))
+            }
+            result => result,
+        }
+    }
+
+    /// Process events of one scope by streaming from the homeserver (or empty stream
+    /// in developer mode).
+    ///
+    /// Fetches events from the scope's cursor position and processes them.
+    async fn perform_scope_batch(
+        &self,
+        scope: SyncScope<'_>,
+    ) -> Result<ControlFlow<usize, usize>, SyncError> {
+        let cursor = self.read_cursor(scope).await?;
 
         // Get event stream - empty stream in developer mode (offline), real stream otherwise
         let event_stream = if is_developer_mode() {
             Box::pin(futures_util::stream::empty())
         } else {
-            events::create_event_stream(&self.pubky_client, &self.pubky, cursor).await?
+            match events::create_event_stream(&self.pubky_client, &self.pubky, scope, cursor).await
+            {
+                Ok(stream) => stream,
+                Err(EventsError::SessionRejected) => return Err(SyncError::SessionRejected),
+                Err(e) => return Err(e.into()),
+            }
         };
 
-        self.process_event_stream(event_stream, cursor).await
+        self.process_event_stream(event_stream, cursor, scope).await
     }
 
-    /// Save cursor progress if we have a cursor value.
-    async fn save_cursor_if_present(&self, cursor: Option<u64>) -> Result<(), SyncError> {
+    /// Get the session to sync private data with, or `None` if the pubky is not signed in.
+    ///
+    /// The stored session secret is the source of truth: signing in or out changes
+    /// it, and the controller picks that up on its next sync.
+    async fn resolve_session(&mut self) -> Result<Option<RestoredSession>, SyncError> {
+        let Some(secret) = self.storage.read_session_secret(&self.pubky)? else {
+            self.session = None;
+            return Ok(None);
+        };
+
+        if let Some(restored) = self.session.as_ref().filter(|s| s.secret == secret) {
+            return Ok(Some(restored.clone()));
+        }
+
+        // Restoring validates the session with the homeserver, so skip it when offline
+        if is_developer_mode() {
+            return Ok(None);
+        }
+
+        match restore_session(&secret, &self.pubky_client).await {
+            Ok(session) => {
+                info!("Restored session for key: {}", self.pubky);
+                let restored = RestoredSession { secret, session };
+                self.session = Some(restored.clone());
+                Ok(Some(restored))
+            }
+            Err(e) if is_session_rejection(&e) => {
+                warn!(
+                    "Stored session for {} is no longer valid: {}",
+                    self.pubky, e
+                );
+                self.reject_session(&secret);
+                Ok(None)
+            }
+            Err(e) => Err(SyncError::Internal(format!(
+                "Failed to restore session: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Forget a session the homeserver no longer accepts, so only public data is
+    /// synced until the pubky signs in again.
+    ///
+    /// Leaves the stored session alone if it is no longer the rejected one: the
+    /// pubky may have signed out, or signed in again, while this sync was running.
+    fn reject_session(&mut self, rejected_secret: &str) {
+        self.session = None;
+
+        match self.storage.read_session_secret(&self.pubky) {
+            Ok(Some(stored)) if stored == rejected_secret => {}
+            Ok(_) => return,
+            Err(e) => {
+                warn!("Failed to read session of {}: {}", self.pubky, e);
+                return;
+            }
+        }
+
+        if let Err(e) = self.storage.delete_session_secret(&self.pubky) {
+            warn!(
+                "Failed to delete rejected session for {}: {}",
+                self.pubky, e
+            );
+        }
+        self.send_status(ControllerStatus::SessionRejected {
+            pubky: self.pubky.clone(),
+        });
+    }
+
+    /// Read the cursor of a scope.
+    async fn read_cursor(&self, scope: SyncScope<'_>) -> Result<Option<u64>, SyncError> {
+        Ok(match scope {
+            SyncScope::Public => self.storage.read_cursor(&self.pubky).await?,
+            SyncScope::Private(_) => self.storage.read_private_cursor(&self.pubky).await?,
+        })
+    }
+
+    /// Save cursor progress of a scope if we have a cursor value.
+    async fn save_cursor_if_present(
+        &self,
+        cursor: Option<u64>,
+        scope: SyncScope<'_>,
+    ) -> Result<(), SyncError> {
         if let Some(c) = cursor {
-            self.storage.write_cursor(&self.pubky, c).await?;
+            match scope {
+                SyncScope::Public => self.storage.write_cursor(&self.pubky, c).await?,
+                SyncScope::Private(_) => self.storage.write_private_cursor(&self.pubky, c).await?,
+            }
         }
         Ok(())
     }
@@ -469,6 +619,7 @@ impl BackupController {
             Box<dyn futures_util::Stream<Item = Result<Event, EventsError>> + Send>,
         >,
         initial_cursor: Option<u64>,
+        scope: SyncScope<'_>,
     ) -> Result<ControlFlow<usize, usize>, SyncError> {
         let mut events_processed = 0;
         let mut last_cursor: Option<u64> = initial_cursor;
@@ -478,13 +629,13 @@ impl BackupController {
             match event_result {
                 Ok(event) => {
                     let event_cursor = event.cursor.id();
-                    self.process_single_event(&event).await?;
+                    self.process_single_event(&event, scope).await?;
                     events_processed += 1;
                     last_cursor = Some(event_cursor);
 
                     // Save cursor periodically (every EVENT_BATCH_SIZE events)
                     if events_processed % EVENT_BATCH_SIZE as usize == 0 {
-                        self.save_cursor_if_present(last_cursor).await?;
+                        self.save_cursor_if_present(last_cursor, scope).await?;
                     }
                 }
                 Err(e) => {
@@ -493,7 +644,7 @@ impl BackupController {
                         .write_global_error("event_stream", &format!("Event stream error: {}", e))
                         .await;
                     // Save progress and break out of stream loop. The next sync interval will reconnect
-                    self.save_cursor_if_present(last_cursor).await?;
+                    self.save_cursor_if_present(last_cursor, scope).await?;
                     break;
                 }
             }
@@ -505,7 +656,7 @@ impl BackupController {
         );
 
         // Save final cursor
-        self.save_cursor_if_present(last_cursor).await?;
+        self.save_cursor_if_present(last_cursor, scope).await?;
 
         if events_processed >= EVENT_BATCH_SIZE as usize {
             // Full batch processed — there may be more events, fetch again immediately
@@ -517,7 +668,11 @@ impl BackupController {
     }
 
     /// Process a single event
-    async fn process_single_event(&self, event: &Event) -> Result<(), SyncError> {
+    async fn process_single_event(
+        &self,
+        event: &Event,
+        scope: SyncScope<'_>,
+    ) -> Result<(), SyncError> {
         // Skip events for other pubkys
         if event.resource.owner != self.pubky {
             return Ok(());
@@ -526,13 +681,16 @@ impl BackupController {
         match event.event_type {
             EventType::Put { .. } => {
                 debug!("Processing PUT event for: {}", event.resource);
-                match fetcher::fetch_resource_data(&self.pubky_client, &event.resource).await {
+                match fetcher::fetch_resource_data(&self.pubky_client, scope, &event.resource).await
+                {
                     Ok(data_vec) => {
                         // Skip storing empty data (404 responses)
                         if !data_vec.is_empty() {
                             self.storage.write(&event.resource, data_vec).await?;
                         }
                     }
+                    // Stop here so the cursor doesn't move past data we couldn't read
+                    Err(SyncError::SessionRejected) => return Err(SyncError::SessionRejected),
                     Err(e) => {
                         // Log fetch errors and continue processing other events
                         self.storage
@@ -550,6 +708,24 @@ impl BackupController {
             }
         }
         Ok(())
+    }
+}
+
+/// Combine the batch results of two scopes: the cycle continues while either
+/// scope has more events, and the counts add up.
+fn combine_batches(
+    first: ControlFlow<usize, usize>,
+    second: ControlFlow<usize, usize>,
+) -> ControlFlow<usize, usize> {
+    let count = |batch: &ControlFlow<usize, usize>| match batch {
+        ControlFlow::Continue(count) | ControlFlow::Break(count) => *count,
+    };
+    let total = count(&first) + count(&second);
+
+    if first.is_continue() || second.is_continue() {
+        ControlFlow::Continue(total)
+    } else {
+        ControlFlow::Break(total)
     }
 }
 
@@ -700,7 +876,10 @@ mod tests {
 
         // Batch of 3 events (< EVENT_BATCH_SIZE) should return Break (caught up)
         let stream = events::test_helpers::create_test_event_stream(None);
-        let result = controller.process_event_stream(stream, None).await.unwrap();
+        let result = controller
+            .process_event_stream(stream, None, SyncScope::Public)
+            .await
+            .unwrap();
         assert!(matches!(result, ControlFlow::Break(_)));
 
         // Cursor should have been updated
@@ -725,7 +904,10 @@ mod tests {
 
         // A partial batch (< EVENT_BATCH_SIZE) returns Break immediately — no re-fetch needed
         let stream = events::test_helpers::create_test_event_stream(None);
-        let result = controller.process_event_stream(stream, None).await.unwrap();
+        let result = controller
+            .process_event_stream(stream, None, SyncScope::Public)
+            .await
+            .unwrap();
         assert!(matches!(result, ControlFlow::Break(_)));
 
         // Cursor should have been saved
@@ -784,7 +966,10 @@ mod tests {
         };
 
         // Process event
-        controller.process_single_event(&event).await.unwrap();
+        controller
+            .process_single_event(&event, SyncScope::Public)
+            .await
+            .unwrap();
 
         // Verify data was deleted
         assert!(storage.read(&resource).await.is_err());
@@ -816,7 +1001,10 @@ mod tests {
         };
 
         // Process event
-        controller.process_single_event(&event).await.unwrap();
+        controller
+            .process_single_event(&event, SyncScope::Public)
+            .await
+            .unwrap();
 
         // Verify data was NOT written for the other pubky
         assert!(storage.read(&resource).await.is_err());
@@ -842,7 +1030,9 @@ mod tests {
         let failing_stream = events::test_helpers::create_failing_test_event_stream(3);
 
         // Process the stream - should handle error gracefully (log and continue)
-        let result = controller.process_event_stream(failing_stream, None).await;
+        let result = controller
+            .process_event_stream(failing_stream, None, SyncScope::Public)
+            .await;
 
         // Should return Ok (stream errors are handled gracefully, not propagated)
         assert!(
@@ -890,7 +1080,10 @@ mod tests {
         // First batch: exactly EVENT_BATCH_SIZE events → should return Continue
         let stream =
             events::test_helpers::create_sized_test_event_stream(EVENT_BATCH_SIZE as usize, 0);
-        let result = controller.process_event_stream(stream, None).await.unwrap();
+        let result = controller
+            .process_event_stream(stream, None, SyncScope::Public)
+            .await
+            .unwrap();
         match result {
             ControlFlow::Continue(count) => {
                 cycle_events += count;
@@ -903,7 +1096,7 @@ mod tests {
         let cursor = storage.read_cursor(&pubky).await.unwrap();
         let stream = events::test_helpers::create_sized_test_event_stream(7, cursor.unwrap_or(0));
         let result = controller
-            .process_event_stream(stream, cursor)
+            .process_event_stream(stream, cursor, SyncScope::Public)
             .await
             .unwrap();
         match result {
@@ -1198,5 +1391,122 @@ mod tests {
 
         // Cleanup
         control_tx.send(ControllerCommand::Cancel).await.unwrap();
+    }
+
+    #[test]
+    fn test_combine_batches() {
+        use ControlFlow::{Break, Continue};
+
+        // (first, second, expected)
+        let cases = [
+            (Break(0), Break(0), Break(0)),
+            (Break(2), Break(3), Break(5)),
+            // The cycle continues while either scope has more events
+            (Continue(50), Break(3), Continue(53)),
+            (Break(3), Continue(50), Continue(53)),
+            (Continue(50), Continue(50), Continue(100)),
+        ];
+
+        for (first, second, expected) in cases {
+            assert_eq!(combine_batches(first, second), expected);
+        }
+    }
+
+    /// Create a controller whose status updates can be observed.
+    fn create_test_controller(
+        storage: Arc<AppStorage>,
+    ) -> (BackupController, broadcast::Receiver<ControllerStatus>) {
+        let (status_tx, status_rx) = broadcast::channel(10);
+        let controller = BackupController::new(
+            PublicKey::from_str(TEST_PUBKY).unwrap(),
+            storage,
+            create_test_pubky_client(),
+            None,
+            Some(status_tx),
+            create_test_interval_rx().1,
+        );
+        (controller, status_rx)
+    }
+
+    #[tokio::test]
+    async fn test_resolve_session_without_stored_secret() {
+        let (storage, _temp_dir) = create_test_storage();
+        let (mut controller, _status_rx) = create_test_controller(storage);
+
+        let session = controller.resolve_session().await.unwrap();
+
+        assert!(session.is_none(), "A signed-out key has no session");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_session_offline_keeps_stored_secret() {
+        enable_developer_mode();
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        storage.write_session_secret(&pubky, "secret").unwrap();
+        let (mut controller, mut status_rx) = create_test_controller(storage.clone());
+
+        let session = controller.resolve_session().await.unwrap();
+
+        // Offline the session can't be validated, but that must not sign the key out
+        assert!(session.is_none());
+        assert!(storage.read_session_secret(&pubky).unwrap().is_some());
+        assert!(status_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_reject_session_forgets_secret_and_reports() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        storage.write_session_secret(&pubky, "secret").unwrap();
+        let (mut controller, mut status_rx) = create_test_controller(storage.clone());
+
+        controller.reject_session("secret");
+
+        assert_eq!(storage.read_session_secret(&pubky).unwrap(), None);
+        assert!(matches!(
+            status_rx.try_recv().unwrap(),
+            ControllerStatus::SessionRejected { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_reject_session_keeps_newer_session() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        // The pubky signed out and in again while a sync used the old session
+        storage.write_session_secret(&pubky, "newer").unwrap();
+        let (mut controller, mut status_rx) = create_test_controller(storage.clone());
+
+        controller.reject_session("older");
+
+        assert_eq!(
+            storage.read_session_secret(&pubky).unwrap().as_deref(),
+            Some("newer")
+        );
+        assert!(status_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_reject_session_after_sign_out_reports_nothing() {
+        let (storage, _temp_dir) = create_test_storage();
+        let (mut controller, mut status_rx) = create_test_controller(storage);
+
+        controller.reject_session("older");
+
+        assert!(status_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_sync_batch_of_signed_out_key_leaves_private_cursor_untouched() {
+        enable_developer_mode();
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        let (mut controller, _status_rx) = create_test_controller(storage.clone());
+
+        let result = controller.perform_sync_batch().await.unwrap();
+
+        assert_eq!(result, ControlFlow::Break(0));
+        assert_eq!(storage.read_private_cursor(&pubky).await.unwrap(), None);
     }
 }

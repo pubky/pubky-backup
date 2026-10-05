@@ -40,6 +40,24 @@
 //! }
 //! ```
 //!
+//! # Private Data
+//!
+//! A backup covers a key's public data (`/pub`). To also back up its private
+//! data (`/priv`), sign in to the key. The key's owner approves the request in
+//! their signer app, so the key's secret never reaches this library:
+//!
+//! ```no_run
+//! # use pubky_backup_core::{BackupManager, OrchestratorError};
+//! # async fn example(manager: BackupManager, pubky: pubky::PublicKey) -> Result<(), OrchestratorError> {
+//! let request = manager.start_sign_in(&pubky).await?;
+//! println!("Approve in Pubky Ring: {}", request.authorization_url());
+//! request.approved().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! See [`AuthStatus`] for the states a key can be in.
+//!
 //! # Low-Level API
 //!
 //! For more control, use [`BackupController`] directly:
@@ -89,8 +107,8 @@ mod utils;
 
 // Re-export main types from orchestrator module
 pub use orchestrator::{
-    ActivityEntry, ActivityType, BackupManager, BackupManagerConfig, KeyError, KeyErrorCode,
-    KeyState, KeyStatus, KeyUpdate, OrchestratorError,
+    ActivityEntry, ActivityType, AuthStatus, BackupManager, BackupManagerConfig, KeyError,
+    KeyErrorCode, KeyState, KeyStatus, KeyUpdate, OrchestratorError, SignInRequest,
 };
 
 // Re-export main types from storage module
@@ -127,4 +145,13 @@ pub const TEST_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g
 /// ```
 pub fn is_developer_mode() -> bool {
     env::var("PUBKY_DEVELOPER_MODE").is_ok()
+}
+
+/// Check if testnet mode is enabled via environment variable.
+///
+/// In testnet mode, applications should back up from a local Pubky testnet
+/// instead of mainnet, by creating their manager with [`BackupManager::testnet`].
+/// Enable by setting the `PUBKY_TESTNET` environment variable.
+pub fn is_testnet_mode() -> bool {
+    env::var("PUBKY_TESTNET").is_ok()
 }

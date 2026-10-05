@@ -31,6 +31,7 @@ describe("DashboardForm", () => {
     total_files: null,
     files_synced: null,
     bytes_downloaded: null,
+    auth: { type: "SignedOut" },
   };
 
   const syncingKeyState: KeyState = {
@@ -42,6 +43,7 @@ describe("DashboardForm", () => {
     total_files: 100,
     files_synced: 50,
     bytes_downloaded: 1024,
+    auth: { type: "SignedOut" },
   };
 
   beforeEach(() => {

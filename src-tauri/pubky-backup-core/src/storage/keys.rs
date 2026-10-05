@@ -23,6 +23,8 @@ pub(crate) const STATE_DIR_NAME: &str = "state";
 pub(crate) const DATA_DIR_NAME: &str = "data";
 const SNAPSHOTS_DIR_NAME: &str = "snapshots";
 pub(crate) const CURSOR_FILENAME: &str = "cursor";
+const PRIVATE_CURSOR_FILENAME: &str = "private_cursor";
+const SESSION_FILENAME: &str = "session";
 const ACTIVITY_LOG_FILENAME: &str = "activity.log";
 const INACTIVE_FILENAME: &str = "inactive";
 /// Storage for a single Pubky key's backup data.
@@ -30,9 +32,12 @@ const INACTIVE_FILENAME: &str = "inactive";
 /// Located at: `~/.pubky-backup/keys/<pubky>/`
 ///
 /// Structure:
-/// - `state/cursor` - Sync progress cursor
+/// - `state/cursor` - Sync progress cursor for public data
+/// - `state/private_cursor` - Sync progress cursor for private data
+/// - `state/session` - Session secret of a signed-in key (owner-readable only)
 /// - `state/activity.log` - Activity log (JSON lines)
-/// - `data/pub/...` - Backed-up resources
+/// - `data/pub/...` - Backed-up public resources
+/// - `data/priv/...` - Backed-up private resources (signed-in keys only)
 /// - `snapshots/<timestamp>.zip` - Point-in-time snapshots
 pub struct KeyStorage {
     /// The public key this storage is for
@@ -59,27 +64,50 @@ impl KeyStorage {
         })
     }
 
-    /// Write cursor to track backup progress.
+    /// Write cursor to track backup progress of public data.
     ///
     /// Uses atomic write-then-rename to prevent torn writes on crashes.
     pub async fn write_cursor(&self, cursor_value: u64) -> Result<(), StorageError> {
-        let temp_path = format!("{}.tmp", CURSOR_FILENAME);
-        self.state_storage
-            .write(&temp_path, cursor_value.to_string())
-            .await?;
-        self.state_storage
-            .rename(&temp_path, CURSOR_FILENAME)
-            .await?;
-        debug!("Cursor value written: {}", cursor_value);
-        Ok(())
+        self.write_cursor_file(CURSOR_FILENAME, cursor_value).await
     }
 
-    /// Read existing cursor.
+    /// Read existing cursor for public data.
     ///
     /// Handles migration from old string-stored cursors by parsing the string as u64.
     /// The cursor value from the API was always u64, just previously stored as String.
     pub async fn read_cursor(&self) -> Result<Option<u64>, StorageError> {
-        match self.state_storage.read(CURSOR_FILENAME).await {
+        self.read_cursor_file(CURSOR_FILENAME).await
+    }
+
+    /// Write cursor to track backup progress of private data.
+    ///
+    /// Private data is synced separately from public data, so it has its own cursor.
+    pub async fn write_private_cursor(&self, cursor_value: u64) -> Result<(), StorageError> {
+        self.write_cursor_file(PRIVATE_CURSOR_FILENAME, cursor_value)
+            .await
+    }
+
+    /// Read existing cursor for private data.
+    pub async fn read_private_cursor(&self) -> Result<Option<u64>, StorageError> {
+        self.read_cursor_file(PRIVATE_CURSOR_FILENAME).await
+    }
+
+    async fn write_cursor_file(
+        &self,
+        filename: &str,
+        cursor_value: u64,
+    ) -> Result<(), StorageError> {
+        let temp_path = format!("{}.tmp", filename);
+        self.state_storage
+            .write(&temp_path, cursor_value.to_string())
+            .await?;
+        self.state_storage.rename(&temp_path, filename).await?;
+        debug!("Cursor value written to {}: {}", filename, cursor_value);
+        Ok(())
+    }
+
+    async fn read_cursor_file(&self, filename: &str) -> Result<Option<u64>, StorageError> {
+        match self.state_storage.read(filename).await {
             Ok(cursor_data) => {
                 let cursor_string = String::from_utf8(cursor_data)?;
                 let cursor_string = cursor_string.trim();
@@ -96,7 +124,7 @@ impl KeyStorage {
                                 "Invalid cursor value '{}' cannot be parsed as u64, resetting cursor",
                                 cursor_string
                             );
-                            let _ = self.state_storage.delete(CURSOR_FILENAME).await;
+                            let _ = self.state_storage.delete(filename).await;
                             Ok(None)
                         }
                     }
@@ -106,6 +134,57 @@ impl KeyStorage {
                 info!("Cursor file not found");
                 Ok(None)
             }
+        }
+    }
+
+    fn session_path(&self) -> PathBuf {
+        self.key_dir.join(STATE_DIR_NAME).join(SESSION_FILENAME)
+    }
+
+    /// Store the session secret of a signed-in key.
+    ///
+    /// The secret gives access to the key's data on its homeserver, so the file
+    /// is readable by its owner only (on Unix). Written atomically.
+    pub fn write_session_secret(&self, secret: &str) -> Result<(), StorageError> {
+        let path = self.session_path();
+        let temp_path = path.with_extension("tmp");
+        write_owner_only(&temp_path, secret)
+            .and_then(|_| std::fs::rename(&temp_path, &path))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&temp_path);
+                StorageError::Internal(format!("Failed to write session secret: {}", e))
+            })
+    }
+
+    /// Read the stored session secret, or `None` if the key is not signed in.
+    pub fn read_session_secret(&self) -> Result<Option<String>, StorageError> {
+        match std::fs::read_to_string(self.session_path()) {
+            Ok(secret) => Ok(Some(secret)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(StorageError::Internal(format!(
+                "Failed to read session secret: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Remove the stored session secret and return it, or `None` if the key is
+    /// not signed in.
+    pub fn take_session_secret(&self) -> Result<Option<String>, StorageError> {
+        let secret = self.read_session_secret()?;
+        self.delete_session_secret()?;
+        Ok(secret)
+    }
+
+    /// Delete the stored session secret. Does nothing if there is none.
+    pub fn delete_session_secret(&self) -> Result<(), StorageError> {
+        match std::fs::remove_file(self.session_path()) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(StorageError::Internal(format!(
+                "Failed to delete session secret: {}",
+                e
+            ))),
         }
     }
 
@@ -390,6 +469,18 @@ impl KeyStorage {
             }
         }
     }
+}
+
+/// Write a file that only its owner can read (mode 0600 on Unix).
+fn write_owner_only(path: &Path, contents: &str) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(contents.as_bytes())
 }
 
 /// Storage for managing multiple Pubky keys.
@@ -799,6 +890,9 @@ mod tests {
             ActivityType::InitialBackup,
             ActivityType::SnapshotCreated,
             ActivityType::SyncFailed,
+            ActivityType::SignedIn,
+            ActivityType::SignedOut,
+            ActivityType::SessionExpired,
         ];
 
         for (i, activity_type) in types.iter().enumerate() {
@@ -813,10 +907,108 @@ mod tests {
         }
 
         let entries = storage.read_activity(10).await;
-        assert_eq!(entries.len(), 4);
-        assert_eq!(entries[0].activity_type, ActivityType::SyncFailed);
-        assert_eq!(entries[1].activity_type, ActivityType::SnapshotCreated);
-        assert_eq!(entries[2].activity_type, ActivityType::InitialBackup);
-        assert_eq!(entries[3].activity_type, ActivityType::FilesBackedUp);
+        assert_eq!(entries.len(), 7);
+        assert_eq!(entries[0].activity_type, ActivityType::SessionExpired);
+        assert_eq!(entries[1].activity_type, ActivityType::SignedOut);
+        assert_eq!(entries[2].activity_type, ActivityType::SignedIn);
+        assert_eq!(entries[3].activity_type, ActivityType::SyncFailed);
+        assert_eq!(entries[4].activity_type, ActivityType::SnapshotCreated);
+        assert_eq!(entries[5].activity_type, ActivityType::InitialBackup);
+        assert_eq!(entries[6].activity_type, ActivityType::FilesBackedUp);
+    }
+
+    #[tokio::test]
+    async fn test_private_cursor_is_independent_of_public_cursor() {
+        let (storage, _temp_dir) = create_test_key_storage();
+
+        assert_eq!(storage.read_private_cursor().await.unwrap(), None);
+
+        storage.write_cursor(10).await.unwrap();
+        storage.write_private_cursor(20).await.unwrap();
+
+        assert_eq!(storage.read_cursor().await.unwrap(), Some(10));
+        assert_eq!(storage.read_private_cursor().await.unwrap(), Some(20));
+    }
+
+    #[test]
+    fn test_session_secret_roundtrip() {
+        let (storage, _temp_dir) = create_test_key_storage();
+
+        assert_eq!(storage.read_session_secret().unwrap(), None);
+
+        storage.write_session_secret("pubky:secret").unwrap();
+        assert_eq!(
+            storage.read_session_secret().unwrap(),
+            Some("pubky:secret".to_string())
+        );
+
+        // Writing again replaces the previous secret
+        storage.write_session_secret("pubky:newer").unwrap();
+        assert_eq!(
+            storage.read_session_secret().unwrap(),
+            Some("pubky:newer".to_string())
+        );
+    }
+
+    #[test]
+    fn test_take_session_secret() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        storage.write_session_secret("pubky:secret").unwrap();
+
+        assert_eq!(
+            storage.take_session_secret().unwrap(),
+            Some("pubky:secret".to_string())
+        );
+        assert_eq!(storage.read_session_secret().unwrap(), None);
+        // Taking when there is no secret is not an error
+        assert_eq!(storage.take_session_secret().unwrap(), None);
+    }
+
+    #[test]
+    fn test_delete_session_secret() {
+        let (storage, _temp_dir) = create_test_key_storage();
+
+        storage.write_session_secret("pubky:secret").unwrap();
+        storage.delete_session_secret().unwrap();
+        assert_eq!(storage.read_session_secret().unwrap(), None);
+
+        // Deleting when there is no secret is not an error
+        storage.delete_session_secret().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_session_secret_is_readable_by_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (storage, _temp_dir) = create_test_key_storage();
+        storage.write_session_secret("pubky:secret").unwrap();
+
+        let mode = std::fs::metadata(storage.session_path())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_excludes_session_secret() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        let resource = PubkyResource::new(pubky, "/pub/file.txt").unwrap();
+        storage
+            .write_data(&resource, b"data".to_vec())
+            .await
+            .unwrap();
+        storage.write_session_secret("pubky:secret").unwrap();
+
+        let snapshot_path = storage.create_snapshot().await.unwrap();
+
+        let mut archive = zip::ZipArchive::new(File::open(snapshot_path).unwrap()).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        assert!(names.iter().any(|name| name.ends_with("file.txt")));
+        assert!(!names.iter().any(|name| name.contains(SESSION_FILENAME)));
     }
 }

@@ -28,7 +28,7 @@ Types are mirrored by hand, with no codegen, so a change to the boundary touches
 
 1. Core: the `BackupManager` method or type, the re-export in `lib.rs` if it is new, and the API table and examples in `pubky-backup-core/README.md`.
 2. Tauri shell: the `#[tauri::command]` in `src-tauri/src/lib.rs`, and its entry in `generate_handler!`.
-3. Frontend: the wrapper in `src/services/tauri-commands.ts` (exported from `src/services/index.ts`), and the mirrored TypeScript types: `src/stores/uiStore/uiStore.types.ts` for `KeyState`, `KeyStatus`, `KeyError`, `ActivityEntry`, and `src/types/backend-errors.ts` for `BackupAppError`.
+3. Frontend: the wrapper in `src/services/tauri-commands.ts` (exported from `src/services/index.ts`), and the mirrored TypeScript types: `src/stores/uiStore/uiStore.types.ts` for `KeyState`, `KeyStatus`, `AuthStatus`, `KeyError`, `ActivityEntry`, and `src/types/backend-errors.ts` for `BackupAppError`.
 
 Serialized field names are snake_case on both sides (`data_size`, `last_sync`), and enums with data are tagged with `type`.
 
@@ -39,6 +39,10 @@ Run `cargo` from `src-tauri/` (the workspace root for both crates). Run `npm` fr
 ```bash
 # Run the app; PUBKY_DEVELOPER_MODE=1 skips the network and accepts any valid pubky
 PUBKY_DEVELOPER_MODE=1 cargo tauri dev
+
+# Run the app against a local Pubky network, for real syncing and sign-in without mainnet
+# (start the network and a test user first: see "Testnet mode" in README.md)
+PUBKY_TESTNET=1 cargo tauri dev
 
 # Rust checks, as CI runs them
 cargo fmt --all -- --check

@@ -28,6 +28,7 @@ describe("KeysPage", () => {
     total_files: null,
     files_synced: null,
     bytes_downloaded: null,
+    auth: { type: "SignedOut" },
   };
 
   beforeEach(() => {
@@ -77,6 +78,23 @@ describe("KeysPage", () => {
       // a2c7xq9ciiyv0987654321fedcba -> a2c7x...dcba
       expect(screen.getByText(/g1b6w/i)).toBeInTheDocument();
       expect(screen.getByText(/a2c7x/i)).toBeInTheDocument();
+    });
+
+    it("should show which keys have their private data backed up", () => {
+      useUIStore.setState({
+        keyStates: {
+          g1b6wp8bhhxt1234567890abcdef: mockKeyState,
+          a2c7xq9ciiyv0987654321fedcba: {
+            ...mockKeyState,
+            auth: { type: "SignedIn" },
+          },
+        },
+      });
+
+      render(<KeysPage />);
+
+      expect(screen.getAllByText("Public only")).toHaveLength(1);
+      expect(screen.getAllByText("Public + private")).toHaveLength(1);
     });
 
     it("should show 'Add another pubky' button", () => {

@@ -31,9 +31,12 @@ mod controller;
 pub mod error;
 mod events;
 mod fetcher;
+mod scope;
+pub(crate) mod session;
 
 pub use controller::{
     BackupController, ControllerCommand, ControllerStatus, DEFAULT_SYNC_INTERVAL_SECONDS,
     MIN_SYNC_INTERVAL_SECONDS,
 };
 pub use error::SyncError;
+pub(crate) use scope::PRIVATE_PATH;

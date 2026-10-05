@@ -129,6 +129,47 @@ export async function forceSyncNow(pubkyStr: string): Promise<void> {
 }
 
 /**
+ * Start signing in to a key, so that its private data is backed up as well.
+ * The outcome arrives with the key's state in a key-update event.
+ * @param pubkyStr - The pubky key to sign in to
+ * @returns The link to show to the key's owner, to approve in their signer app
+ * @throws {BackendError} If the sign-in cannot be started
+ */
+export async function startSignIn(pubkyStr: string): Promise<string> {
+  try {
+    return await invoke<string>("start_sign_in", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
+ * Cancel a sign-in that is still awaiting approval
+ * @param pubkyStr - The pubky key whose sign-in to cancel
+ * @throws {BackendError} If cancelling fails
+ */
+export async function cancelSignIn(pubkyStr: string): Promise<void> {
+  try {
+    await invoke("cancel_sign_in", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
+ * Sign out of a key, so that only its public data is backed up
+ * @param pubkyStr - The pubky key to sign out of
+ * @throws {BackendError} If signing out fails
+ */
+export async function signOut(pubkyStr: string): Promise<void> {
+  try {
+    await invoke("sign_out", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
  * Open the data directory in the system file browser
  * @throws {BackendError} If opening directory fails
  */

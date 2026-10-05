@@ -5,6 +5,7 @@
 use pubky::PublicKey;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use url::Url;
 
 /// Configuration for the [`BackupManager`](super::BackupManager).
 #[derive(Clone, Debug)]
@@ -17,6 +18,9 @@ pub struct BackupManagerConfig {
     pub developer_mode: bool,
     /// Sync interval in seconds (default: 30)
     pub sync_interval_secs: u64,
+    /// HTTP relay that delivers sign-in approvals from the user's signer app
+    /// (default: the Pubky SDK's public relay)
+    pub http_relay: Option<Url>,
 }
 
 impl Default for BackupManagerConfig {
@@ -26,6 +30,7 @@ impl Default for BackupManagerConfig {
             validation_timeout_secs: 30,
             developer_mode: false,
             sync_interval_secs: crate::sync::DEFAULT_SYNC_INTERVAL_SECONDS,
+            http_relay: None,
         }
     }
 }
@@ -52,6 +57,8 @@ pub struct KeyState {
     pub files_synced: Option<u64>,
     /// Total bytes downloaded in current sync
     pub bytes_downloaded: Option<u64>,
+    /// Whether the key is signed in, which decides what its backup covers
+    pub auth: AuthStatus,
 }
 
 impl Default for KeyState {
@@ -65,8 +72,38 @@ impl Default for KeyState {
             total_files: None,
             files_synced: None,
             bytes_downloaded: None,
+            auth: AuthStatus::SignedOut,
         }
     }
+}
+
+/// Whether a key is signed in, which decides what its backup covers.
+///
+/// Anyone can back up a key's public data (`/pub`). Private data (`/priv`) is
+/// only readable by the key's owner, so it is backed up only while signed in.
+/// Sign in with [`BackupManager::start_sign_in`](super::BackupManager::start_sign_in).
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum AuthStatus {
+    /// Not signed in. Only public data is backed up.
+    #[default]
+    SignedOut,
+    /// A sign-in was started and is waiting for the owner to approve it in
+    /// their signer app (e.g. Pubky Ring). Only public data is backed up meanwhile.
+    AwaitingApproval {
+        /// The `pubkyauth://` link to open or scan with the signer app
+        authorization_url: String,
+    },
+    /// Signed in. Private data is backed up as well as public data.
+    SignedIn,
+    /// The homeserver no longer accepts the session. Only public data is
+    /// backed up until the owner signs in again.
+    SessionExpired,
+    /// The last sign-in attempt failed. Only public data is backed up.
+    SignInFailed {
+        /// Human-readable reason
+        message: String,
+    },
 }
 
 /// Structured error for frontend display.
@@ -148,6 +185,9 @@ pub enum ActivityType {
     InitialBackup,
     SnapshotCreated,
     SyncFailed,
+    SignedIn,
+    SignedOut,
+    SessionExpired,
 }
 
 /// A single activity log entry for a key.

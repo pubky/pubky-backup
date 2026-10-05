@@ -25,6 +25,14 @@ pub enum OrchestratorError {
     #[error("Failed to validate key: {0}")]
     ValidationFailed(String),
 
+    /// Attempted to sign in to a key that is already signed in
+    #[error("Key {0} is already signed in")]
+    AlreadySignedIn(String),
+
+    /// Signing in or out failed
+    #[error("Authentication failed: {0}")]
+    AuthFailed(String),
+
     /// Storage operation failed
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),

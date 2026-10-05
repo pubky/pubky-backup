@@ -15,6 +15,10 @@ interface KeyItemProps {
 }
 
 function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
+  const isSignedIn = Stores.useUIStore(
+    (s) => s.keyStates[pubky]?.auth.type === "SignedIn",
+  );
+
   return (
     <div
       role="button"
@@ -39,6 +43,16 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
         {Utils.displayPubky(pubky)}
       </span>
       <div className="flex items-center gap-4">
+        <span
+          title={
+            isSignedIn
+              ? "Signed in: public and private data are backed up"
+              : "Not signed in: only public data is backed up"
+          }
+          className="text-xs font-medium text-text-secondary whitespace-nowrap"
+        >
+          {isSignedIn ? "Public + private" : "Public only"}
+        </span>
         {isSelected && (
           <Atoms.CheckIcon size={16} className="text-text-light" />
         )}

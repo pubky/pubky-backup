@@ -53,6 +53,7 @@
 //! }
 //! ```
 
+mod auth;
 pub mod discovery;
 pub mod error;
 mod manager;
@@ -61,9 +62,10 @@ mod status;
 mod sync_interval;
 pub mod types;
 
+pub use auth::SignInRequest;
 pub use error::OrchestratorError;
 pub use manager::{BackupManager, MAX_KEYS};
 pub use types::{
-    ActivityEntry, ActivityType, BackupManagerConfig, KeyError, KeyErrorCode, KeyState, KeyStatus,
-    KeyUpdate,
+    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyErrorCode, KeyState,
+    KeyStatus, KeyUpdate,
 };

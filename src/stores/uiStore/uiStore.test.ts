@@ -11,6 +11,7 @@ const mockKeyState: KeyState = {
   total_files: null,
   files_synced: null,
   bytes_downloaded: null,
+  auth: { type: "SignedOut" },
 };
 
 const mockSyncingKeyState: KeyState = {
@@ -22,6 +23,7 @@ const mockSyncingKeyState: KeyState = {
   total_files: 100,
   files_synced: 50,
   bytes_downloaded: 1024,
+  auth: { type: "SignedOut" },
 };
 
 describe("useUIStore", () => {

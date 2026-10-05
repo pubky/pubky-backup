@@ -256,6 +256,54 @@ impl AppStorage {
         key_storage.read_cursor().await
     }
 
+    /// Write the cursor tracking backup progress of a pubky's private data.
+    ///
+    /// Private data is synced separately from public data, so it has its own cursor.
+    pub async fn write_private_cursor(
+        &self,
+        pubky: &PublicKey,
+        cursor_value: u64,
+    ) -> Result<(), StorageError> {
+        let key_storage = self.key_storage(pubky)?;
+        key_storage.write_private_cursor(cursor_value).await
+    }
+
+    /// Read the cursor tracking backup progress of a pubky's private data.
+    ///
+    /// Returns `None` if no private data has been synced yet.
+    pub async fn read_private_cursor(
+        &self,
+        pubky: &PublicKey,
+    ) -> Result<Option<u64>, StorageError> {
+        let key_storage = self.key_storage(pubky)?;
+        key_storage.read_private_cursor().await
+    }
+
+    /// Store the session secret of a signed-in pubky.
+    pub fn write_session_secret(
+        &self,
+        pubky: &PublicKey,
+        secret: &str,
+    ) -> Result<(), StorageError> {
+        self.key_storage(pubky)?.write_session_secret(secret)
+    }
+
+    /// Read the stored session secret of a pubky, or `None` if it is not signed in.
+    pub fn read_session_secret(&self, pubky: &PublicKey) -> Result<Option<String>, StorageError> {
+        self.key_storage(pubky)?.read_session_secret()
+    }
+
+    /// Remove the stored session secret of a pubky and return it, or `None` if
+    /// it is not signed in.
+    pub fn take_session_secret(&self, pubky: &PublicKey) -> Result<Option<String>, StorageError> {
+        self.key_storage(pubky)?.take_session_secret()
+    }
+
+    /// Delete the stored session secret of a pubky. Does nothing if there is none.
+    pub fn delete_session_secret(&self, pubky: &PublicKey) -> Result<(), StorageError> {
+        self.key_storage(pubky)?.delete_session_secret()
+    }
+
     /// Write an error to the global error log file.
     ///
     /// Used for errors not specific to any key.

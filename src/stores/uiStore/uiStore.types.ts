@@ -2,7 +2,10 @@ export type ActivityType =
   | "files_backed_up"
   | "initial_backup"
   | "snapshot_created"
-  | "sync_failed";
+  | "sync_failed"
+  | "signed_in"
+  | "signed_out"
+  | "session_expired";
 
 export interface ActivityEntry {
   type: ActivityType;
@@ -45,6 +48,14 @@ export type KeyStatus =
   | { type: "Stopped" }
   | { type: "Error" };
 
+// Whether a key is signed in. Private data is backed up only while SignedIn.
+export type AuthStatus =
+  | { type: "SignedOut" }
+  | { type: "AwaitingApproval"; authorization_url: string }
+  | { type: "SignedIn" }
+  | { type: "SessionExpired" }
+  | { type: "SignInFailed"; message: string };
+
 export interface KeyState {
   status: KeyStatus;
   data_size: number;
@@ -54,6 +65,7 @@ export interface KeyState {
   total_files: number | null;
   files_synced: number | null;
   bytes_downloaded: number | null;
+  auth: AuthStatus;
 }
 
 export interface KeyUpdate {

@@ -1,6 +1,7 @@
 import * as Atoms from "@/components/atoms";
 import * as Molecules from "@/components/molecules";
 import { ActionButtons } from "../ActionButtons";
+import { CoverageCard } from "../CoverageCard";
 import * as Hooks from "@/hooks";
 import * as Utils from "@/utils";
 
@@ -74,6 +75,9 @@ export function DashboardForm() {
           }
         />
       </div>
+
+      {/* What is backed up, and signing in to add private data */}
+      {pubky !== null && <CoverageCard pubky={pubky} />}
 
       {/* Action buttons */}
       <ActionButtons

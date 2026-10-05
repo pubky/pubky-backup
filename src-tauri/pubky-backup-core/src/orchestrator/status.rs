@@ -75,6 +75,10 @@ impl StatusHandler {
                 }
             }
             ControllerStatus::Ended { .. } => self.base_state(KeyStatus::Stopped),
+            // Only private data stopped syncing, so the sync status itself is unchanged
+            ControllerStatus::SessionRejected { .. } => {
+                self.base_state(self.previous_status.clone())
+            }
             ControllerStatus::Error { message, .. } => KeyState {
                 error: Some(KeyError {
                     code: KeyErrorCode::Internal,
@@ -135,6 +139,11 @@ impl StatusHandler {
             ControllerStatus::Error { message, .. } => Some(ActivityEntry {
                 activity_type: ActivityType::SyncFailed,
                 message: message.clone(),
+                timestamp: now,
+            }),
+            ControllerStatus::SessionRejected { .. } => Some(ActivityEntry {
+                activity_type: ActivityType::SessionExpired,
+                message: "Session expired — sign in again to back up private data".to_string(),
                 timestamp: now,
             }),
             _ => None,
@@ -201,10 +210,17 @@ pub(crate) fn spawn_status_listener(
 
                     let new_state = handler.handle(&status).await;
 
-                    {
+                    let applied = {
                         let mut inner_write = inner.write();
-                        inner_write.update_key_state(&pubky, new_state.clone());
-                    }
+                        if matches!(status, ControllerStatus::SessionRejected { .. }) {
+                            inner_write.expire_session(&pubky);
+                        }
+                        inner_write.apply_controller_state(&pubky, new_state)
+                    };
+                    // Skip the broadcast if the key was removed while handling the update
+                    let Some(new_state) = applied else {
+                        continue;
+                    };
 
                     let receivers = update_tx.send(KeyUpdate {
                         pubky: pubky.clone(),
@@ -471,5 +487,29 @@ mod tests {
         assert!(matches!(state.status, KeyStatus::Starting));
         assert_eq!(state.data_size, 1234);
         assert!(state.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_session_rejected_keeps_sync_status_and_writes_activity() {
+        let (_dir, storage, pubky) = setup();
+
+        let prev = KeyStatus::Syncing {
+            events_processed: 3,
+        };
+        let state = handler(&pubky, &storage, 100, Some(500), prev.clone())
+            .handle(&ControllerStatus::SessionRejected {
+                pubky: pubky.clone(),
+            })
+            .await;
+
+        // Public data keeps syncing, so this is not a sync error
+        assert_eq!(state.status, prev);
+        assert!(state.error.is_none());
+        assert_eq!(state.data_size, 100);
+        assert_eq!(state.last_sync, Some(500));
+
+        let entries = storage.read_activity(&pubky, 10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].activity_type, ActivityType::SessionExpired);
     }
 }
