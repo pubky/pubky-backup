@@ -1,7 +1,8 @@
 //! Integration tests using real pubky-testnet infrastructure.
 //!
-//! These tests spin up an ephemeral testnet with embedded PostgreSQL and a real
-//! homeserver, testing the backup controller against actual network operations.
+//! These tests spin up an ephemeral testnet with a Docker PostgreSQL container and a
+//! real homeserver, testing the backup controller against actual network operations.
+//! Docker must be running on the host.
 //!
 //! # Running the tests
 //!
@@ -12,9 +13,9 @@
 //! A single testnet instance is shared across all tests to minimize startup overhead.
 //! Tests are serialized using `serial_test` to ensure proper sequencing.
 
-use pubky::{Keypair, PubkyResource, PublicKey};
+use pubky::{Keypair, PubkyResource, PubkySession, PubkySigner, PublicKey};
 use pubky_backup_core::{AppStorage, BackupController, ControllerCommand, ControllerStatus};
-use pubky_testnet::EphemeralTestnet;
+use pubky_testnet::{docker_postgres::DockerPostgres, EphemeralTestnet};
 use serial_test::serial;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -51,11 +52,17 @@ async fn get_shared_testnet() -> &'static EphemeralTestnet {
                 .expect("Failed to create testnet runtime");
 
             let testnet = rt.block_on(async {
+                // The testnet lives in a static, which is never dropped. Use the shared
+                // container, which is removed by an `atexit` hook, so it isn't left running.
+                let postgres = DockerPostgres::shared()
+                    .await
+                    .connection_string()
+                    .expect("Failed to get docker postgres connection string");
                 EphemeralTestnet::builder()
-                    .with_embedded_postgres()
+                    .postgres(postgres)
                     .build()
                     .await
-                    .expect("Failed to start testnet with embedded postgres")
+                    .expect("Failed to start testnet with docker postgres")
             });
 
             (rt, testnet)
@@ -64,6 +71,14 @@ async fn get_shared_testnet() -> &'static EphemeralTestnet {
     })
     .await
     .expect("Failed to get testnet")
+}
+
+/// Helper to create an account on the homeserver, returning a cookie session.
+///
+/// The SDK deprecates cookie auth in favour of grants, but cookie auth is what we use.
+#[allow(deprecated)]
+async fn signup_with_cookie(signer: &PubkySigner, homeserver_pk: &PublicKey) -> PubkySession {
+    signer.signup_cookie(homeserver_pk, None).await.unwrap()
 }
 
 /// Helper to run a controller until it reaches Idle state (sync complete).
@@ -127,8 +142,8 @@ async fn test_backup_sync_put_delete_and_cursor() {
     // Create a user for this test
     let keypair = Keypair::random();
     let signer = pubky_client.signer(keypair.clone());
-    let session = signer.signup(&homeserver_pk.into(), None).await.unwrap();
-    let user_pk: PublicKey = keypair.public_key().into();
+    let session = signup_with_cookie(&signer, &homeserver_pk).await;
+    let user_pk = keypair.public_key();
 
     // === Part 1: Write test data ===
     session
@@ -232,8 +247,8 @@ async fn test_backup_controller_run_loop() {
 
     let keypair = Keypair::random();
     let signer = pubky_client.signer(keypair.clone());
-    let session = signer.signup(&homeserver_pk.into(), None).await.unwrap();
-    let user_pk: PublicKey = keypair.public_key().into();
+    let session = signup_with_cookie(&signer, &homeserver_pk).await;
+    let user_pk = keypair.public_key();
 
     // Write some data
     session
@@ -320,14 +335,11 @@ async fn test_multiple_users_isolation() {
     let signer1 = pubky_client.signer(keypair1.clone());
     let signer2 = pubky_client.signer(keypair2.clone());
 
-    let session1 = signer1
-        .signup(&homeserver_pk.clone().into(), None)
-        .await
-        .unwrap();
-    let session2 = signer2.signup(&homeserver_pk.into(), None).await.unwrap();
+    let session1 = signup_with_cookie(&signer1, &homeserver_pk).await;
+    let session2 = signup_with_cookie(&signer2, &homeserver_pk).await;
 
-    let user1_pk: PublicKey = keypair1.public_key().into();
-    let user2_pk: PublicKey = keypair2.public_key().into();
+    let user1_pk = keypair1.public_key();
+    let user2_pk = keypair2.public_key();
 
     // Each user writes their own data
     session1
