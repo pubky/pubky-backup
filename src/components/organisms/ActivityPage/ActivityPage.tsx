@@ -1,9 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useUIStore } from "@/stores/uiStore";
-import type { ActivityEntry } from "@/stores/uiStore";
+import type { ActivityEntry, ActivityType } from "@/stores/uiStore";
 import { getActivity, openSnapshotsDir } from "@/services/tauri-commands";
 import { formatRelativeTime } from "@/utils/format";
 import * as Atoms from "@/components/atoms";
+
+/** Activity that means something stopped being backed up. */
+const FAILURE_TYPES: ActivityType[] = ["sync_failed", "session_expired"];
 
 export function ActivityPage() {
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
@@ -64,7 +67,9 @@ export function ActivityPage() {
               <div className="flex gap-4 items-center">
                 <div
                   className={`size-2 rounded-full shrink-0 ${
-                    entry.type === "sync_failed" ? "bg-red-500" : "bg-green-500"
+                    FAILURE_TYPES.includes(entry.type)
+                      ? "bg-red-500"
+                      : "bg-green-500"
                   }`}
                 />
                 <span className="text-sm font-bold text-white leading-5">

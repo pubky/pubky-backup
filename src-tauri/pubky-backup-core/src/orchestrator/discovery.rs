@@ -5,7 +5,7 @@
 //! - [`discover_homeserver`] - Resolves a pubky's homeserver via PKDNS
 //! - [`verify_pubky_has_data`] - Checks that a pubky has backup-able data at `/pub/`
 
-use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
+use pubky::{Pubky, PubkyResource, PublicKey};
 
 use super::error::OrchestratorError;
 
@@ -13,6 +13,7 @@ use super::error::OrchestratorError;
 ///
 /// # Arguments
 ///
+/// * `pubky_client` - The Pubky client to resolve with
 /// * `pubky` - The public key to discover the homeserver for
 /// * `timeout_secs` - Timeout for the discovery operation
 ///
@@ -24,12 +25,12 @@ use super::error::OrchestratorError;
 ///
 /// Returns `OrchestratorError::HomeserverNotFound` if discovery times out or fails.
 pub async fn discover_homeserver(
+    pubky_client: &Pubky,
     pubky: &PublicKey,
     timeout_secs: u64,
 ) -> Result<PublicKey, OrchestratorError> {
     tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-        Pkdns::new()
-            .map_err(|e| OrchestratorError::HomeserverNotFound(e.to_string()))?
+        pubky_client
             .get_homeserver_of(pubky)
             .await
             .map_err(|e| OrchestratorError::HomeserverNotFound(e.to_string()))?
@@ -49,6 +50,7 @@ pub async fn discover_homeserver(
 ///
 /// # Arguments
 ///
+/// * `pubky_client` - The Pubky client to read with
 /// * `pubky` - The public key to check
 /// * `timeout_secs` - Timeout for the check operation
 ///
@@ -58,11 +60,11 @@ pub async fn discover_homeserver(
 /// - The check times out
 /// - No data is found at the pubky's `/pub/` path
 pub async fn verify_pubky_has_data(
+    pubky_client: &Pubky,
     pubky: &PublicKey,
     timeout_secs: u64,
 ) -> Result<(), OrchestratorError> {
-    let pubky_storage = PublicStorage::new()
-        .map_err(|e| OrchestratorError::ValidationFailed(format!("Storage error: {}", e)))?;
+    let pubky_storage = pubky_client.public_storage();
 
     let path = PubkyResource::new(pubky.clone(), "/pub/").map_err(|e| {
         OrchestratorError::ValidationFailed(format!("Invalid resource path: {}", e))
@@ -89,7 +91,8 @@ mod tests {
         // A valid z-base-32 key that has no homeserver registered
         let pubky =
             PublicKey::from_str("yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy").unwrap();
-        let result = discover_homeserver(&pubky, 3).await;
+        let pubky_client = Pubky::new().unwrap();
+        let result = discover_homeserver(&pubky_client, &pubky, 3).await;
         assert!(result.is_err());
     }
 }

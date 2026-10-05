@@ -48,6 +48,26 @@ PUBKY_DEVELOPER_MODE=1 cargo tauri dev
 ```
 
 
+## Testnet mode (local network)
+
+Testnet mode runs the app against a Pubky network on your own machine, so you can exercise real syncing and signing in without mainnet or a phone. It needs Docker.
+
+```bash
+cd src-tauri
+
+# 1. Start a local DHT, homeserver and relays. Prints the homeserver's key.
+cargo run -p pubky-backup-core --example dev_testnet
+
+# 2. Create a test user with some public and private data. Prints the user's pubky.
+PUBKY_TESTNET=1 cargo run -p pubky-backup-core --example dev_signer -- signup <homeserver> user.key
+
+# 3. Run the app against the local network and add that pubky
+PUBKY_TESTNET=1 cargo tauri dev
+
+# 4. Click "Sign in", copy the link, and approve it in place of Pubky Ring
+PUBKY_TESTNET=1 cargo run -p pubky-backup-core --example dev_signer -- approve 'pubkyauth://...' user.key
+```
+
 ## Testing
 
 ### Frontend Tests

@@ -29,6 +29,7 @@ describe("useKeyUpdates", () => {
     total_files: null,
     files_synced: null,
     bytes_downloaded: null,
+    auth: { type: "SignedOut" },
   };
 
   beforeEach(() => {
@@ -161,6 +162,7 @@ describe("useKeyUpdates", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {

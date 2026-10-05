@@ -11,10 +11,14 @@
 //! - Handling 404 responses gracefully
 //! - Returning empty data in developer mode (no network calls)
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use log::{debug, info};
 use pubky::{Pubky, PubkyResource};
 
 use super::error::SyncError;
+use super::scope::SyncScope;
+use super::session::is_session_rejection;
 use crate::is_developer_mode;
 use crate::utils::retry_with_backoff;
 
@@ -26,6 +30,7 @@ use crate::utils::retry_with_backoff;
 /// # Arguments
 ///
 /// * `pubky_client` - The Pubky client for making requests
+/// * `scope` - The scope the resource belongs to, which decides how it is read
 /// * `resource` - The resource to fetch
 ///
 /// # Returns
@@ -35,9 +40,12 @@ use crate::utils::retry_with_backoff;
 ///
 /// # Errors
 ///
-/// Returns `SyncError::Internal` if the fetch fails for non-404 reasons.
+/// Returns `SyncError::SessionRejected` if the homeserver does not accept the
+/// session of a private scope.
+/// Returns `SyncError::Internal` if the fetch fails for other non-404 reasons.
 pub(super) async fn fetch_resource_data(
     pubky_client: &Pubky,
+    scope: SyncScope<'_>,
     resource: &PubkyResource,
 ) -> Result<Vec<u8>, SyncError> {
     if is_developer_mode() {
@@ -45,15 +53,26 @@ pub(super) async fn fetch_resource_data(
     }
 
     let public_storage = pubky_client.public_storage();
+    // The retry helper only carries error messages, so note a rejection on the side
+    let session_rejected = AtomicBool::new(false);
     let response = match retry_with_backoff(|| async {
-        public_storage
-            .get(resource)
-            .await
-            .map_err(|e| format!("{}", e))
+        let result = match scope {
+            SyncScope::Public => public_storage.get(resource).await,
+            SyncScope::Private(session) => session.storage().get(&resource.path).await,
+        };
+        result.map_err(|e| {
+            if matches!(scope, SyncScope::Private(_)) && is_session_rejection(&e) {
+                session_rejected.store(true, Ordering::Relaxed);
+            }
+            format!("{}", e)
+        })
     })
     .await
     {
         Ok(response) => response,
+        Err(_) if session_rejected.load(Ordering::Relaxed) => {
+            return Err(SyncError::SessionRejected);
+        }
         Err(e) => {
             // Handle 404s gracefully - resource was deleted between event and fetch
             if e.contains("404") || e.to_lowercase().contains("not found") {
@@ -98,7 +117,9 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let resource = PubkyResource::new(pubky, "/pub/profile.json").unwrap();
 
-        let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();
+        let data = fetch_resource_data(&pubky_client, SyncScope::Public, &resource)
+            .await
+            .unwrap();
 
         // Developer mode returns empty data (no network calls)
         assert!(data.is_empty());
@@ -112,7 +133,9 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let resource = PubkyResource::new(pubky, "/pub/posts/123").unwrap();
 
-        let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();
+        let data = fetch_resource_data(&pubky_client, SyncScope::Public, &resource)
+            .await
+            .unwrap();
 
         // Developer mode returns empty data (no network calls)
         assert!(data.is_empty());

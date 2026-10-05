@@ -13,6 +13,10 @@ pub enum SyncError {
     #[error("Events error: {0}")]
     Events(#[from] EventsError),
 
+    /// The homeserver rejected the key's session
+    #[error("The homeserver rejected the session")]
+    SessionRejected,
+
     /// Internal sync error
     #[error("Internal error: {0}")]
     Internal(String),
@@ -24,4 +28,8 @@ pub enum EventsError {
     /// Failed to fetch or subscribe to event stream
     #[error("Failed to fetch events: {0}")]
     FetchFailed(String),
+
+    /// The homeserver rejected the session used to subscribe to private events
+    #[error("The homeserver rejected the session")]
+    SessionRejected,
 }

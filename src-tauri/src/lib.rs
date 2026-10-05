@@ -11,8 +11,8 @@ use std::sync::{Arc, OnceLock};
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_developer_mode, parse_pubky, ActivityEntry, AppStorage, BackupManager, BackupManagerConfig,
-    KeyState, KeyStatus,
+    is_developer_mode, is_testnet_mode, parse_pubky, ActivityEntry, AppStorage, BackupManager,
+    BackupManagerConfig, KeyState, KeyStatus,
 };
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -58,6 +58,17 @@ fn create_config() -> BackupManagerConfig {
     }
 }
 
+/// Create a BackupManager for mainnet, or for a local testnet in testnet mode.
+async fn create_manager() -> Result<BackupManager, BackupAppError> {
+    let config = create_config();
+    let manager = if is_testnet_mode() {
+        BackupManager::testnet(config).await
+    } else {
+        BackupManager::new(config).await
+    };
+    manager.map_err(BackupAppError::internal)
+}
+
 /// Ensure a BackupManager exists inside the global slot.
 ///
 /// The write-mutex serialises creation so only one caller builds the
@@ -76,9 +87,7 @@ async fn ensure_manager() -> Result<(), BackupAppError> {
         return Ok(());
     }
 
-    let manager = BackupManager::new(create_config())
-        .await
-        .map_err(BackupAppError::internal)?;
+    let manager = create_manager().await?;
 
     spawn_event_listener(&manager).await;
     let _ = MANAGER.set(ArcSwap::from_pointee(manager));
@@ -291,6 +300,46 @@ async fn delete_key(pubky_str: &str) -> Result<(), BackupAppError> {
     Ok(())
 }
 
+/// Start signing in to a key, so that its private data is backed up as well.
+///
+/// Returns the link to show to the key's owner. The outcome arrives with the
+/// key's state in a `key-update` event.
+#[tauri::command]
+async fn start_sign_in(pubky_str: &str) -> Result<String, BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    let request = get_manager()
+        .await?
+        .start_sign_in(&pubky)
+        .await
+        .map_err(BackupAppError::internal)?;
+    debug!("Sign-in started for: {}", pubky);
+    Ok(request.authorization_url().to_string())
+}
+
+/// Cancel a sign-in that is still awaiting approval.
+#[tauri::command]
+async fn cancel_sign_in(pubky_str: &str) -> Result<(), BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager()
+        .await?
+        .cancel_sign_in(&pubky)
+        .await
+        .map_err(BackupAppError::internal)
+}
+
+/// Sign out of a key, so that only its public data is backed up.
+#[tauri::command]
+async fn sign_out(pubky_str: &str) -> Result<(), BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager()
+        .await?
+        .sign_out(&pubky)
+        .await
+        .map_err(BackupAppError::internal)?;
+    debug!("Signed out of: {}", pubky);
+    Ok(())
+}
+
 /// Send backup controller task ForceSync message.
 #[tauri::command]
 async fn force_sync_now(pubky_str: &str) -> Result<(), BackupAppError> {
@@ -400,9 +449,7 @@ async fn set_backup_location(new_parent: &str) -> Result<String, BackupAppError>
             .map_err(BackupAppError::internal)?;
 
         // Create a fresh manager — reads keys_location from config, resumes controllers
-        let new_manager = BackupManager::new(create_config())
-            .await
-            .map_err(BackupAppError::internal)?;
+        let new_manager = create_manager().await?;
         spawn_event_listener(&new_manager).await;
         slot.store(Arc::new(new_manager));
 
@@ -471,6 +518,9 @@ pub fn run() {
 
     if is_developer_mode() {
         info!("Developer mode enabled via PUBKY_DEVELOPER_MODE environment variable");
+    }
+    if is_testnet_mode() {
+        info!("Testnet mode enabled via PUBKY_TESTNET environment variable");
     }
 
     tauri::Builder::default()
@@ -542,6 +592,9 @@ pub fn run() {
             remove_key,
             delete_key,
             force_sync_now,
+            start_sign_in,
+            cancel_sign_in,
+            sign_out,
             open_data_dir,
             open_snapshots_dir,
             create_snapshot,

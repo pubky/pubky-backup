@@ -11,6 +11,7 @@ export type {
   UIStore,
   KeyState,
   KeyStatus,
+  AuthStatus,
   KeyError,
   KeyErrorCode,
   KeyUpdate,
