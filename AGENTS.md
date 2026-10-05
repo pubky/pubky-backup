@@ -53,7 +53,7 @@ npm run type-check
 npm run test:run
 ```
 
-The integration tests start a real `pubky-testnet` with an embedded Postgres, which downloads binaries on first run. They exercise core directly, with no Tauri involved, which is also the quickest way to check that a feature works without the GUI.
+The integration tests start a real `pubky-testnet` with a Postgres container, so Docker must be running. They exercise core directly, with no Tauri involved, which is also the quickest way to check that a feature works without the GUI.
 
 ## Frontend layout
 

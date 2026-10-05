@@ -91,11 +91,5 @@ jobs:
           name: rust-build
           path: src-tauri/target
 
-      - name: Cache PostgreSQL binaries
-        uses: actions/cache@v4
-        with:
-          path: /home/runner/.cache/pubky-testnet/postgresql
-          key: postgres-embedded-${{ runner.os }}
-
       - name: Run integration tests
         run: cd src-tauri && cargo test -p pubky-backup-core --test integration_tests --verbose -- --test-threads=1

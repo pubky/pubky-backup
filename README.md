@@ -69,13 +69,13 @@ cargo test --lib
 
 ### Rust Integration Tests
 
-Integration tests use a real `pubky-testnet` with an ephemeral homeserver and embedded PostgreSQL.
+Integration tests use a real `pubky-testnet` with an ephemeral homeserver and a PostgreSQL container started through Docker.
 
 ```bash
 cargo test -p pubky-backup-core --test integration_tests
 ```
 
-Note: The first run will download PostgreSQL binaries (~50-100MB), which are cached for subsequent runs.
+Note: Docker must be running. The first run pulls the PostgreSQL image.
 
 
 
