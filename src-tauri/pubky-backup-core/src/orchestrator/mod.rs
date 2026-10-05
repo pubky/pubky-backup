@@ -7,14 +7,14 @@
 //!
 //! - [`BackupManager`] - Thread-safe manager for multiple pubky backups
 //! - [`types`] - Configuration and state types for the manager
-//! - [`discovery`] - Homeserver discovery and pubky validation
+//! - [`discovery`] - Homeserver discovery
 //! - [`session`] - Session persistence (last used pubky)
 //!
 //! # Architecture
 //!
 //! The orchestrator module sits above the sync module, managing:
 //! 1. Adding/removing pubky keys for backup
-//! 2. Validating pubkys (homeserver discovery, data existence)
+//! 2. Validating pubkys (homeserver discovery)
 //! 3. Spawning and controlling [`BackupController`](crate::sync::BackupController) instances
 //! 4. Broadcasting status updates to subscribers via [`KeyUpdate`]
 //! 5. Automatic resumption of backups from stored data
