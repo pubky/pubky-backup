@@ -21,10 +21,6 @@ pub enum OrchestratorError {
     #[error("Could not find homeserver: {0}")]
     HomeserverNotFound(String),
 
-    /// Failed to validate a pubky (data check, etc.)
-    #[error("Failed to validate key: {0}")]
-    ValidationFailed(String),
-
     /// Attempted to sign in to a key that is already signed in
     #[error("Key {0} is already signed in")]
     AlreadySignedIn(String),

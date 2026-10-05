@@ -1,11 +1,10 @@
-//! Homeserver discovery and pubky validation.
+//! Homeserver discovery.
 //!
-//! This module provides two independent operations:
-//!
-//! - [`discover_homeserver`] - Resolves a pubky's homeserver via PKDNS
-//! - [`verify_pubky_has_data`] - Checks that a pubky has backup-able data at `/pub/`
+//! [`discover_homeserver`] resolves a pubky's homeserver via PKDNS. It is the
+//! one check a pubky must pass to be backed up: without a homeserver there is
+//! nothing to back up from. A pubky does not need to have any data yet.
 
-use pubky::{Pubky, PubkyResource, PublicKey};
+use pubky::{Pubky, PublicKey};
 
 use super::error::OrchestratorError;
 
@@ -42,43 +41,6 @@ pub async fn discover_homeserver(
     .map_err(|_| {
         OrchestratorError::HomeserverNotFound("Homeserver discovery timed out".to_string())
     })?
-}
-
-/// Verify that a pubky has data available for backup.
-///
-/// Checks if the pubky's `/pub/` directory exists and is accessible.
-///
-/// # Arguments
-///
-/// * `pubky_client` - The Pubky client to read with
-/// * `pubky` - The public key to check
-/// * `timeout_secs` - Timeout for the check operation
-///
-/// # Errors
-///
-/// Returns `OrchestratorError::ValidationFailed` if:
-/// - The check times out
-/// - No data is found at the pubky's `/pub/` path
-pub async fn verify_pubky_has_data(
-    pubky_client: &Pubky,
-    pubky: &PublicKey,
-    timeout_secs: u64,
-) -> Result<(), OrchestratorError> {
-    let pubky_storage = pubky_client.public_storage();
-
-    let path = PubkyResource::new(pubky.clone(), "/pub/").map_err(|e| {
-        OrchestratorError::ValidationFailed(format!("Invalid resource path: {}", e))
-    })?;
-
-    tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        pubky_storage.get(path),
-    )
-    .await
-    .map_err(|_| OrchestratorError::ValidationFailed("Data check timed out".to_string()))?
-    .map_err(|e| OrchestratorError::ValidationFailed(format!("No data found for pubky: {}", e)))?;
-
-    Ok(())
 }
 
 #[cfg(test)]

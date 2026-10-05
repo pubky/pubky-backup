@@ -260,7 +260,7 @@ impl BackupManager {
 
     /// Add a key to be backed up.
     ///
-    /// This method validates the key (discovers homeserver, checks data exists),
+    /// This method checks that the key has a homeserver (it need not have any data yet),
     /// then starts syncing. If backup data already exists on disk, it resumes
     /// from where it left off.
     ///
@@ -268,7 +268,7 @@ impl BackupManager {
     ///
     /// Returns `OrchestratorError::KeyAlreadyExists` if the key is already being backed up.
     /// Returns `OrchestratorError::KeyLimitReached` if MAX_KEYS limit is reached.
-    /// Returns `OrchestratorError::ValidationFailed` if the key cannot be validated.
+    /// Returns `OrchestratorError::HomeserverNotFound` if the key has no homeserver.
     pub async fn add_key(&self, pubky: PublicKey) -> Result<(), OrchestratorError> {
         // Early check if key already exists or limit reached.
         // Note: There's a small race window between this check and the actual insert in
@@ -406,7 +406,7 @@ impl BackupManager {
 
     /// Retry a key that is currently in error state.
     ///
-    /// Tears down the errored controller, re-validates (homeserver discovery + data check),
+    /// Tears down the errored controller, re-validates (homeserver discovery),
     /// and restarts the controller. If re-validation fails, the error propagates to the caller
     /// instead of silently leaving the key in error state.
     ///
@@ -658,7 +658,10 @@ impl BackupManager {
 
     // --- Internal methods ---
 
-    /// Check that a key has a homeserver and data to back up.
+    /// Check that a key has a homeserver to back up from.
+    ///
+    /// The key need not have any data yet: it may be new, or all its data may
+    /// be private, which only shows once it is signed in.
     ///
     /// Skipped in developer mode, which makes no network calls.
     async fn validate_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
@@ -669,7 +672,7 @@ impl BackupManager {
         let pubky_client = self.inner.read().pubky_client.clone();
         let timeout_secs = self.config.validation_timeout_secs;
         discovery::discover_homeserver(&pubky_client, pubky, timeout_secs).await?;
-        discovery::verify_pubky_has_data(&pubky_client, pubky, timeout_secs).await
+        Ok(())
     }
 
     /// Append an entry to a key's activity log. Failures are logged, not returned.

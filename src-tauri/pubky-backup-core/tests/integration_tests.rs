@@ -16,7 +16,7 @@
 use pubky::{Keypair, PubkyResource, PubkySession, PubkySigner, PublicKey};
 use pubky_backup_core::{
     AppStorage, AuthStatus, BackupController, BackupManager, BackupManagerConfig,
-    ControllerCommand, ControllerStatus, KeyState, KeyStatus,
+    ControllerCommand, ControllerStatus, KeyState, KeyStatus, OrchestratorError,
 };
 use pubky_testnet::{docker_postgres::DockerPostgres, EphemeralTestnet};
 use serial_test::serial;
@@ -402,6 +402,18 @@ impl BackedUpUser {
     /// Sign up a user with one private and one public file, then start
     /// backing up its key and wait for the first sync to finish.
     async fn create() -> Self {
+        // The private file is written first, so its event is older than the
+        // position the public sync reaches
+        Self::create_with_files(&[
+            ("/priv/secret.txt", "private data"),
+            ("/pub/public.txt", "public data"),
+        ])
+        .await
+    }
+
+    /// Sign up a user with the given files, written in order, then start
+    /// backing up its key and wait for the first sync to finish.
+    async fn create_with_files(files: &[(&str, &str)]) -> Self {
         let testnet = get_shared_testnet().await;
         let pubky_client = testnet.sdk().unwrap();
         let homeserver_pk = testnet.homeserver_app().public_key();
@@ -411,18 +423,13 @@ impl BackedUpUser {
         let session = signup_with_cookie(&signer, &homeserver_pk).await;
         let pubky = keypair.public_key();
 
-        // The private file is written first, so its event is older than the
-        // position the public sync reaches
-        session
-            .storage()
-            .put("/priv/secret.txt", "private data")
-            .await
-            .unwrap();
-        session
-            .storage()
-            .put("/pub/public.txt", "public data")
-            .await
-            .unwrap();
+        for (path, content) in files {
+            session
+                .storage()
+                .put(*path, content.to_string())
+                .await
+                .unwrap();
+        }
 
         let data_dir = TempDir::new().unwrap();
         let manager = start_manager(&data_dir).await;
@@ -591,6 +598,75 @@ async fn test_sign_in_backs_up_private_data() {
     );
 
     user.manager.shutdown().await;
+}
+
+/// A key does not need public data to be backed up: all its data may be private.
+#[tokio::test]
+#[serial]
+async fn test_key_with_only_private_data_can_be_backed_up() {
+    let user = BackedUpUser::create_with_files(&[("/priv/secret.txt", "private data")]).await;
+
+    // The homeserver has no public directory for this user at all
+    let public_dir = PubkyResource::new(user.pubky.clone(), "/pub/").unwrap();
+    let testnet = get_shared_testnet().await;
+    assert!(testnet
+        .sdk()
+        .unwrap()
+        .public_storage()
+        .get(public_dir)
+        .await
+        .is_err());
+
+    user.sign_in().await;
+    user.sync_until_backed_up("/priv/secret.txt", Some("private data"))
+        .await;
+
+    user.manager.shutdown().await;
+}
+
+/// A key with no data yet can be added, and is backed up once it has some.
+#[tokio::test]
+#[serial]
+async fn test_key_without_data_can_be_added() {
+    let user = BackedUpUser::create_with_files(&[]).await;
+    assert!(user
+        .manager
+        .get_key_state(&user.pubky)
+        .unwrap()
+        .error
+        .is_none());
+
+    user.session
+        .storage()
+        .put("/pub/first.txt", "first file")
+        .await
+        .unwrap();
+    user.sync_until_backed_up("/pub/first.txt", Some("first file"))
+        .await;
+
+    user.manager.shutdown().await;
+}
+
+/// A key that no homeserver knows is refused up front, rather than added and
+/// left failing on every sync.
+#[tokio::test]
+#[serial]
+async fn test_key_without_homeserver_is_rejected() {
+    let data_dir = TempDir::new().unwrap();
+    let manager = start_manager(&data_dir).await;
+    let unknown = Keypair::random().public_key();
+
+    let result = manager.add_key(unknown.clone()).await;
+
+    assert!(
+        matches!(result, Err(OrchestratorError::HomeserverNotFound(_))),
+        "Unexpected result: {result:?}"
+    );
+    assert!(manager.get_key_state(&unknown).is_none());
+    // Nothing was stored, so the key isn't resumed on the next start either
+    assert!(manager.list_pubky_directories().unwrap().is_empty());
+
+    manager.shutdown().await;
 }
 
 /// The session is stored, so a restarted manager keeps backing up private data.
