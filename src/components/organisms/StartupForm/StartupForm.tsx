@@ -9,7 +9,10 @@ export function StartupForm() {
   const { isResuming } = Hooks.useResumeLastPubky();
 
   const handleAdded = useCallback(() => {
-    Stores.useUIStore.getState().setScreen("dashboard");
+    // Show the new pubky's sync page, whatever page the dashboard was on before
+    const { setPage, setScreen } = Stores.useUIStore.getState();
+    setPage("sync");
+    setScreen("dashboard");
   }, []);
 
   // Determine placeholder based on available keys

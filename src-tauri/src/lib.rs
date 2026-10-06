@@ -266,6 +266,46 @@ async fn sign_out(app: AppHandle, pubky_str: &str) -> Result<(), BackupAppError>
     Ok(())
 }
 
+/// Start mirroring a key to a second homeserver, so that it holds the same data.
+///
+/// Returns the link to show to the key's owner. The outcome arrives with the
+/// key's state in a `key-update` event.
+#[tauri::command]
+async fn start_mirror(
+    app: AppHandle,
+    pubky_str: &str,
+    homeserver_str: &str,
+) -> Result<String, BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    let homeserver =
+        parse_pubky(homeserver_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
+            message: format!("Invalid homeserver key: {}", e),
+        })?;
+    let request = get_manager(&app)
+        .await?
+        .start_mirror(&pubky, &homeserver)
+        .await?;
+    debug!("Mirror requested for {} to {}", pubky, homeserver);
+    Ok(request.authorization_url().to_string())
+}
+
+/// Cancel a mirror request that is still awaiting approval.
+#[tauri::command]
+async fn cancel_mirror(app: AppHandle, pubky_str: &str) -> Result<(), BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager(&app).await?.cancel_mirror(&pubky).await?;
+    Ok(())
+}
+
+/// Stop mirroring a key. What was copied to the mirror stays there.
+#[tauri::command]
+async fn stop_mirror(app: AppHandle, pubky_str: &str) -> Result<(), BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager(&app).await?.stop_mirror(&pubky).await?;
+    debug!("Mirror stopped for: {}", pubky);
+    Ok(())
+}
+
 /// Send backup controller task ForceSync message.
 #[tauri::command]
 async fn force_sync_now(app: AppHandle, pubky_str: &str) -> Result<(), BackupAppError> {
@@ -470,6 +510,9 @@ pub fn run() {
             sign_in_new_key,
             cancel_sign_in_new_key,
             sign_out,
+            start_mirror,
+            cancel_mirror,
+            stop_mirror,
             open_data_dir,
             open_snapshots_dir,
             create_snapshot,

@@ -30,6 +30,7 @@ describe("useAppState", () => {
       next_sync: 1672531230,
       error: null,
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {
@@ -56,6 +57,7 @@ describe("useAppState", () => {
       next_sync: null,
       error: null,
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {
@@ -81,6 +83,7 @@ describe("useAppState", () => {
         message: "Connection failed",
       },
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {
@@ -121,6 +124,7 @@ describe("useAppState", () => {
       next_sync: null,
       error: null,
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {
@@ -147,6 +151,7 @@ describe("useAppState", () => {
       next_sync: 1672531230,
       error: null,
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {
@@ -170,6 +175,7 @@ describe("useAppState", () => {
       next_sync: null,
       error: null,
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {
@@ -192,6 +198,7 @@ describe("useAppState", () => {
       next_sync: null,
       error: null,
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {
@@ -215,6 +222,7 @@ describe("useAppState", () => {
       next_sync: null,
       error: null,
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {
@@ -234,6 +242,7 @@ describe("useAppState", () => {
       next_sync: 1672531230,
       error: null,
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {

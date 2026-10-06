@@ -28,6 +28,7 @@ describe("KeysPage", () => {
     next_sync: 1672531230,
     error: null,
     auth: { type: "SignedOut" },
+    mirror: { type: "NotMirrored" },
   };
 
   beforeEach(() => {
@@ -94,6 +95,24 @@ describe("KeysPage", () => {
 
       expect(screen.getAllByText("Public only")).toHaveLength(1);
       expect(screen.getAllByText("Public + private")).toHaveLength(1);
+    });
+
+    it("should show which keys are mirrored", () => {
+      useUIStore.setState({
+        keyStates: {
+          g1b6wp8bhhxt1234567890abcdef: {
+            ...mockKeyState,
+            auth: { type: "SignedIn" },
+            mirror: { type: "Mirroring", homeserver: "some-homeserver" },
+          },
+        },
+      });
+
+      render(<KeysPage />);
+
+      expect(
+        screen.getByText("Public + private, mirrored"),
+      ).toBeInTheDocument();
     });
 
     it("should show 'Add another pubky' button", () => {

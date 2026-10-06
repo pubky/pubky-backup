@@ -1,10 +1,10 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import * as Atoms from "@/components/atoms";
 import * as Molecules from "@/components/molecules";
 import * as Hooks from "@/hooks";
 import * as Stores from "@/stores";
 import * as Utils from "@/utils";
-import type { AuthStatus } from "@/stores/uiStore";
+import type { AuthStatus, MirrorStatus } from "@/stores/uiStore";
 import { cn, Logger } from "@/lib";
 
 type PrivateAction = "sign-in" | "cancel" | "sign-out";
@@ -59,6 +59,67 @@ function describePrivateCoverage(auth: AuthStatus): PrivateCoverage {
   }
 }
 
+type MirrorAction = "add" | "stop" | "approve-again" | "retry";
+
+interface MirrorCoverage {
+  description: string;
+  tone: "neutral" | "warning";
+  actionLabel: string;
+  action: MirrorAction;
+  /** A second, less prominent way out of this state */
+  secondaryAction?: { label: string; action: MirrorAction };
+}
+
+/** What to tell the user about their mirror, and what they can do next. */
+function describeMirrorCoverage(mirror: MirrorStatus): MirrorCoverage {
+  switch (mirror.type) {
+    case "NotMirrored":
+      return {
+        description:
+          "Not mirrored. Copy your backup to a second homeserver as well.",
+        tone: "neutral",
+        actionLabel: "Add mirror",
+        action: "add",
+      };
+    case "AwaitingApproval":
+      return {
+        description: `Scan with Pubky Ring and approve. This grants write access, used only to copy your backup to ${Utils.displayPubky(mirror.homeserver)}. Your key never leaves Pubky Ring.`,
+        tone: "neutral",
+        actionLabel: "Cancel",
+        action: "stop",
+      };
+    case "Mirroring":
+      return {
+        description: `Copied to ${Utils.displayPubky(mirror.homeserver)} after every sync.`,
+        tone: "neutral",
+        actionLabel: "Stop",
+        action: "stop",
+      };
+    case "SessionExpired":
+      return {
+        description: `Paused: ${Utils.displayPubky(mirror.homeserver)} no longer accepts the session. Approve again to resume.`,
+        tone: "warning",
+        actionLabel: "Approve again",
+        action: "approve-again",
+        secondaryAction: { label: "Stop", action: "stop" },
+      };
+    case "Failing":
+      return {
+        description: `Copying to ${Utils.displayPubky(mirror.homeserver)} is failing: ${mirror.message}`,
+        tone: "warning",
+        actionLabel: "Stop",
+        action: "stop",
+      };
+    case "SetupFailed":
+      return {
+        description: `Mirroring to ${Utils.displayPubky(mirror.homeserver)} failed: ${mirror.message}`,
+        tone: "warning",
+        actionLabel: "Try again",
+        action: "retry",
+      };
+  }
+}
+
 interface CoverageRowProps {
   title: string;
   description: string;
@@ -90,7 +151,7 @@ function CoverageRow({
         <strong className="text-base font-bold text-white">{title}</strong>
         <span
           className={cn(
-            "text-sm",
+            "text-sm break-words",
             tone === "warning" ? "text-pubky-red" : "text-text-secondary",
           )}
         >
@@ -98,6 +159,80 @@ function CoverageRow({
         </span>
       </div>
       {action}
+    </div>
+  );
+}
+
+interface ActionButtonProps {
+  label: string;
+  /** Primary buttons invite the next step; secondary ones undo or stop */
+  isPrimary: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+}
+
+function ActionButton({
+  label,
+  isPrimary,
+  onClick,
+  disabled,
+}: ActionButtonProps) {
+  return (
+    <Atoms.Button
+      variant={isPrimary ? "primary" : "secondary"}
+      onClick={onClick}
+      disabled={disabled}
+      className="py-2 px-4 shrink-0"
+    >
+      <span
+        className={cn(
+          "text-sm",
+          isPrimary ? "font-bold text-pubky-purple" : "font-medium text-white",
+        )}
+      >
+        {label}
+      </span>
+    </Atoms.Button>
+  );
+}
+
+interface MirrorFormProps {
+  initialHomeserver: string;
+  isPending: boolean;
+  onSubmit: (homeserver: string) => void;
+  onCancel: () => void;
+}
+
+/** Asks which homeserver to mirror to. */
+function MirrorForm({
+  initialHomeserver,
+  isPending,
+  onSubmit,
+  onCancel,
+}: MirrorFormProps) {
+  const [homeserver, setHomeserver] = useState(initialHomeserver);
+  const trimmed = homeserver.trim();
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Molecules.PubkyInput
+        value={homeserver}
+        onChange={setHomeserver}
+        placeholder="Homeserver key"
+      />
+      <span className="text-sm text-text-secondary">
+        Your key must already have an account on that homeserver. Everything
+        backed up is copied there, then every later change.
+      </span>
+      <div className="flex gap-2 self-end">
+        <ActionButton label="Cancel" isPrimary={false} onClick={onCancel} />
+        <ActionButton
+          label="Request approval"
+          isPrimary
+          onClick={() => onSubmit(trimmed)}
+          disabled={!trimmed || isPending}
+        />
+      </div>
     </div>
   );
 }
@@ -126,54 +261,80 @@ export interface CoverageCardProps {
 }
 
 /**
- * Shows whether a pubky's private data is backed up, and lets its owner sign
- * in to add it or sign out. Public data is always backed up, which the
+ * Shows whether a pubky's private data is backed up and whether its backup is
+ * mirrored to a second homeserver, and lets its owner sign in, sign out, and
+ * set up or stop a mirror. Public data is always backed up, which the
  * dashboard header shows.
  */
 export function CoverageCard({ pubky }: CoverageCardProps) {
   const auth =
     Stores.useUIStore((s) => s.keyStates[pubky]?.auth) ?? Utils.SIGNED_OUT;
-  const { startSignIn, cancelSignIn, signOut, isPending } = Hooks.useSignIn();
+  const mirror =
+    Stores.useUIStore((s) => s.keyStates[pubky]?.mirror) ?? Utils.NOT_MIRRORED;
+  const signIn = Hooks.useSignIn();
+  const mirroring = Hooks.useMirror();
+  const isPending = signIn.isPending || mirroring.isPending;
+  const [mirrorForm, setMirrorForm] = useState<{ homeserver: string } | null>(
+    null,
+  );
 
   const privateCoverage = describePrivateCoverage(auth);
+  const mirrorCoverage = describeMirrorCoverage(mirror);
+  const secondaryMirrorAction = mirrorCoverage.secondaryAction;
 
-  const handleAction = async () => {
-    const actions: Record<PrivateAction, (pubky: string) => Promise<void>> = {
-      "sign-in": startSignIn,
-      cancel: cancelSignIn,
-      "sign-out": signOut,
-    };
+  /** Run a backend action, showing its error to the user if it fails. */
+  const attempt = async (what: string, action: () => Promise<void>) => {
     try {
-      await actions[privateCoverage.action](pubky);
+      await action();
+      return true;
     } catch (error: unknown) {
-      Logger.error("CoverageCard", `Failed to ${privateCoverage.action}`, {
-        error,
-      });
+      Logger.error("CoverageCard", `Failed to ${what}`, { error });
       Utils.handleBackendError(error);
+      return false;
     }
   };
 
-  const actionButton = (
-    <Atoms.Button
-      variant={privateCoverage.action === "sign-in" ? "primary" : "secondary"}
-      onClick={() => void handleAction()}
-      disabled={isPending}
-      className="py-2 px-4 shrink-0"
-    >
-      <span
-        className={cn(
-          "text-sm",
-          privateCoverage.action === "sign-in"
-            ? "font-bold text-pubky-purple"
-            : "font-medium text-white",
-        )}
-      >
-        {privateCoverage.actionLabel}
-      </span>
-    </Atoms.Button>
-  );
+  const handlePrivateAction = () => {
+    const actions: Record<PrivateAction, (pubky: string) => Promise<void>> = {
+      "sign-in": signIn.startSignIn,
+      cancel: signIn.cancelSignIn,
+      "sign-out": signIn.signOut,
+    };
+    void attempt(privateCoverage.action, () =>
+      actions[privateCoverage.action](pubky),
+    );
+  };
 
-  // While a sign-in awaits approval the card shows only that, which keeps the
+  const handleMirrorAction = (action: MirrorAction) => {
+    const homeserver = mirror.type === "NotMirrored" ? "" : mirror.homeserver;
+    switch (action) {
+      case "add":
+      case "retry":
+        setMirrorForm({ homeserver });
+        return;
+      case "approve-again":
+        void attempt("request the mirror again", () =>
+          mirroring.startMirror(pubky, homeserver),
+        );
+        return;
+      case "stop":
+        void attempt("stop the mirror", () => mirroring.stopMirror(pubky));
+        return;
+    }
+  };
+
+  const handleMirrorSubmit = async (homeserver: string) => {
+    // The form closes once the request is accepted; the QR code follows in the key's state
+    if (
+      await attempt("request the mirror", () =>
+        mirroring.startMirror(pubky, homeserver),
+      )
+    ) {
+      setMirrorForm(null);
+    }
+  };
+
+  // While a request awaits approval the card shows only that, which keeps the
   // dashboard within the window's maximum height
   if (auth.type === "AwaitingApproval") {
     return (
@@ -181,7 +342,50 @@ export function CoverageCard({ pubky }: CoverageCardProps) {
         <Molecules.SignInApproval
           authorizationUrl={auth.authorization_url}
           instructions={privateCoverage.description}
-          action={actionButton}
+          action={
+            <ActionButton
+              label="Cancel"
+              isPrimary={false}
+              onClick={() =>
+                void attempt("cancel", () => signIn.cancelSignIn(pubky))
+              }
+              disabled={isPending}
+            />
+          }
+        />
+      </CoverageCardFrame>
+    );
+  }
+  if (mirror.type === "AwaitingApproval") {
+    return (
+      <CoverageCardFrame title="Approve the mirror">
+        <Molecules.SignInApproval
+          authorizationUrl={mirror.authorization_url}
+          instructions={mirrorCoverage.description}
+          action={
+            <ActionButton
+              label="Cancel"
+              isPrimary={false}
+              onClick={() =>
+                void attempt("cancel the mirror", () =>
+                  mirroring.cancelMirror(pubky),
+                )
+              }
+              disabled={isPending}
+            />
+          }
+        />
+      </CoverageCardFrame>
+    );
+  }
+  if (mirrorForm !== null) {
+    return (
+      <CoverageCardFrame title="Mirror to another homeserver">
+        <MirrorForm
+          initialHomeserver={mirrorForm.homeserver}
+          isPending={isPending}
+          onSubmit={(homeserver) => void handleMirrorSubmit(homeserver)}
+          onCancel={() => setMirrorForm(null)}
         />
       </CoverageCardFrame>
     );
@@ -194,7 +398,38 @@ export function CoverageCard({ pubky }: CoverageCardProps) {
         description={privateCoverage.description}
         tone={privateCoverage.tone}
         isCovered={auth.type === "SignedIn"}
-        action={actionButton}
+        action={
+          <ActionButton
+            label={privateCoverage.actionLabel}
+            isPrimary={privateCoverage.action === "sign-in"}
+            onClick={handlePrivateAction}
+            disabled={isPending}
+          />
+        }
+      />
+      <CoverageRow
+        title="Mirror"
+        description={mirrorCoverage.description}
+        tone={mirrorCoverage.tone}
+        isCovered={mirror.type === "Mirroring"}
+        action={
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <ActionButton
+              label={mirrorCoverage.actionLabel}
+              isPrimary={mirrorCoverage.action !== "stop"}
+              onClick={() => handleMirrorAction(mirrorCoverage.action)}
+              disabled={isPending}
+            />
+            {secondaryMirrorAction && (
+              <ActionButton
+                label={secondaryMirrorAction.label}
+                isPrimary={false}
+                onClick={() => handleMirrorAction(secondaryMirrorAction.action)}
+                disabled={isPending}
+              />
+            )}
+          </div>
+        }
       />
     </CoverageCardFrame>
   );

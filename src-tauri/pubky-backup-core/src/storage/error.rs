@@ -24,6 +24,16 @@ pub enum StorageError {
     OperationFailed(Box<OperationFailedError>),
 }
 
+impl StorageError {
+    /// Whether the operation failed because the file does not exist.
+    pub fn is_not_found(&self) -> bool {
+        matches!(
+            self,
+            Self::OperationFailed(failed) if failed.source.kind() == opendal::ErrorKind::NotFound
+        )
+    }
+}
+
 /// Detailed error for failed storage operations.
 #[derive(Debug)]
 pub struct OperationFailedError {

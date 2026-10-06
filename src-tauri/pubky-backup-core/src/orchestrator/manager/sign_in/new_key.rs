@@ -8,8 +8,9 @@ use log::{info, warn};
 use pubky::PublicKey;
 use tokio::sync::oneshot;
 
-use super::{replace_pending_sign_in, BackupManager, PendingSignIn, SignInTarget};
-use crate::orchestrator::auth::{self, SignInFlow, SignInRequest};
+use super::super::approval::{replace_pending_approval, ApprovalTarget, PendingApproval};
+use super::BackupManager;
+use crate::orchestrator::auth::{self, ApprovalFlow, ApprovalRequest};
 use crate::orchestrator::error::OrchestratorError;
 
 impl BackupManager {
@@ -20,7 +21,7 @@ impl BackupManager {
     /// backed up yet: the owner doesn't have to enter their pubky, only approve
     /// the returned request in their signer app (e.g. Pubky Ring). The approving
     /// key is added if it is not backed up yet, then signed in, replacing any
-    /// sign-in it had. [`SignInRequest::approved`] returns that key.
+    /// sign-in it had. [`ApprovalRequest::approved`] returns that key.
     ///
     /// Only one such sign-in is pending at a time: starting another replaces it.
     /// Until it is approved there is no key to report its status on, so follow
@@ -46,12 +47,12 @@ impl BackupManager {
     /// being added, e.g. `OrchestratorError::HomeserverNotFound`.
     pub async fn start_sign_in_for_new_key(
         &self,
-    ) -> Result<SignInRequest<PublicKey>, OrchestratorError> {
+    ) -> Result<ApprovalRequest<PublicKey>, OrchestratorError> {
         let flow = self.start_sign_in_flow()?;
         let authorization_url = flow.authorization_url().to_string();
 
         let (outcome_tx, outcome_rx) = oneshot::channel();
-        let id = PendingSignIn::next_id();
+        let id = PendingApproval::next_id();
         let manager = self.clone();
         let wait_for_approval = async move {
             let outcome = manager.finish_sign_in_for_new_key(id, flow).await;
@@ -64,17 +65,20 @@ impl BackupManager {
             // before it is registered
             let mut inner = self.inner.write();
             let task = tokio::spawn(wait_for_approval);
-            replace_pending_sign_in(&mut inner.new_key_sign_in, Some(PendingSignIn { id, task }));
+            replace_pending_approval(
+                &mut inner.new_key_sign_in,
+                Some(PendingApproval { id, task }),
+            );
         }
 
         info!("Started sign-in for a new key");
-        Ok(SignInRequest::new(authorization_url, outcome_rx))
+        Ok(ApprovalRequest::new(authorization_url, outcome_rx))
     }
 
     /// Cancel the sign-in started by [`BackupManager::start_sign_in_for_new_key`],
     /// if it is still awaiting approval.
     pub fn cancel_sign_in_for_new_key(&self) {
-        let cancelled = replace_pending_sign_in(&mut self.inner.write().new_key_sign_in, None);
+        let cancelled = replace_pending_approval(&mut self.inner.write().new_key_sign_in, None);
         if cancelled {
             info!("Cancelled sign-in for a new key");
         }
@@ -85,14 +89,14 @@ impl BackupManager {
     async fn finish_sign_in_for_new_key(
         &self,
         id: u64,
-        flow: SignInFlow,
+        flow: ApprovalFlow,
     ) -> Result<PublicKey, OrchestratorError> {
-        let approval = auth::await_any_approval(flow).await;
-        if !self.claim_sign_in(SignInTarget::NewKey, id) {
+        let approval = auth::await_any_approval(flow, &auth::sign_in_capabilities()).await;
+        if !self.claim_approval(ApprovalTarget::NewKeySignIn, id) {
             if let Ok(session) = approval {
                 auth::end_session(session);
             }
-            return Err(auth::sign_in_cancelled());
+            return Err(auth::approval_cancelled());
         }
 
         let session = approval.inspect_err(|e| warn!("Sign-in for a new key failed: {}", e))?;
@@ -116,11 +120,11 @@ mod tests {
 
     /// Register a pending new-key sign-in whose task never finishes.
     fn register_pending_sign_in(manager: &BackupManager) -> u64 {
-        let id = PendingSignIn::next_id();
+        let id = PendingApproval::next_id();
         let task = tokio::spawn(std::future::pending());
-        replace_pending_sign_in(
+        replace_pending_approval(
             &mut manager.inner.write().new_key_sign_in,
-            Some(PendingSignIn { id, task }),
+            Some(PendingApproval { id, task }),
         );
         id
     }
@@ -140,8 +144,8 @@ mod tests {
         let (_dir, manager) = setup().await;
         let id = register_pending_sign_in(&manager);
 
-        assert!(manager.claim_sign_in(SignInTarget::NewKey, id));
-        assert!(!manager.claim_sign_in(SignInTarget::NewKey, id));
+        assert!(manager.claim_approval(ApprovalTarget::NewKeySignIn, id));
+        assert!(!manager.claim_approval(ApprovalTarget::NewKeySignIn, id));
     }
 
     #[tokio::test]
@@ -151,7 +155,7 @@ mod tests {
 
         manager.cancel_sign_in_for_new_key();
 
-        assert!(!manager.claim_sign_in(SignInTarget::NewKey, id));
+        assert!(!manager.claim_approval(ApprovalTarget::NewKeySignIn, id));
     }
 
     #[tokio::test]
@@ -160,8 +164,8 @@ mod tests {
         let replaced = register_pending_sign_in(&manager);
         let current = register_pending_sign_in(&manager);
 
-        assert!(!manager.claim_sign_in(SignInTarget::NewKey, replaced));
-        assert!(manager.claim_sign_in(SignInTarget::NewKey, current));
+        assert!(!manager.claim_approval(ApprovalTarget::NewKeySignIn, replaced));
+        assert!(manager.claim_approval(ApprovalTarget::NewKeySignIn, current));
     }
 
     #[tokio::test]

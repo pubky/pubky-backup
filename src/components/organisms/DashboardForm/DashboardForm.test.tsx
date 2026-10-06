@@ -29,6 +29,7 @@ describe("DashboardForm", () => {
     next_sync: Math.floor(Date.now() / 1000) + 30, // 30 seconds from now
     error: null,
     auth: { type: "SignedOut" },
+    mirror: { type: "NotMirrored" },
   };
 
   const syncingKeyState: KeyState = {
@@ -38,6 +39,7 @@ describe("DashboardForm", () => {
     next_sync: null,
     error: null,
     auth: { type: "SignedOut" },
+    mirror: { type: "NotMirrored" },
   };
 
   beforeEach(() => {

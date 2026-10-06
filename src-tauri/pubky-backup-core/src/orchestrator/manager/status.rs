@@ -15,13 +15,13 @@ use tokio::sync::broadcast;
 use super::{BackupManager, ManagerInner};
 use crate::orchestrator::sync_interval::SyncInterval;
 use crate::orchestrator::types::{
-    ActivityEntry, ActivityType, AuthStatus, KeyError, KeyState, KeyStatus, KeyUpdate,
+    ActivityEntry, ActivityType, AuthStatus, KeyError, KeyState, KeyStatus, KeyUpdate, MirrorStatus,
 };
 use crate::storage::AppStorage;
 use crate::sync::{ControllerStatus, ControllerUpdate, SessionSecret};
 
 /// The part of a key's state that its controller reports: everything but the
-/// sign-in status, which the manager keeps.
+/// sign-in and mirror status, which the manager keeps.
 #[derive(Clone, Debug)]
 pub(super) struct SyncState {
     pub(super) status: KeyStatus,
@@ -44,8 +44,8 @@ impl Default for SyncState {
 }
 
 impl SyncState {
-    /// The key's full state, given its sign-in status.
-    pub(super) fn with_auth(self, auth: AuthStatus) -> KeyState {
+    /// The key's full state, given its sign-in and mirror status.
+    pub(super) fn into_key_state(self, auth: AuthStatus, mirror: MirrorStatus) -> KeyState {
         KeyState {
             status: self.status,
             data_size: self.data_size,
@@ -53,6 +53,7 @@ impl SyncState {
             next_sync: self.next_sync,
             error: self.error,
             auth,
+            mirror,
         }
     }
 }
@@ -113,10 +114,14 @@ impl StatusHandler {
                 }
             }
             ControllerStatus::Ended => self.base_state(KeyStatus::Stopped),
-            // Never reached: the listener handles a rejected session with the
-            // key's sign-in status instead of calling `handle`. Returning the
-            // previous state keeps the match exhaustive without a panic.
-            ControllerStatus::SessionRejected { .. } => self.previous.clone(),
+            // Never reached: the listener handles notices about the key's
+            // session or mirror with its sign-in or mirror status instead of
+            // calling `handle`. Returning the previous state keeps the match
+            // exhaustive without a panic.
+            ControllerStatus::SessionRejected { .. }
+            | ControllerStatus::MirrorSessionRejected { .. }
+            | ControllerStatus::MirrorFailed { .. }
+            | ControllerStatus::MirrorRecovered => self.previous.clone(),
             ControllerStatus::Error { message } => SyncState {
                 error: Some(KeyError {
                     message: message.clone(),
@@ -268,9 +273,26 @@ impl StatusListener {
     /// Apply a controller's status update to its key, and tell subscribers.
     async fn apply(&self, update: ControllerUpdate) {
         let ControllerUpdate { pubky, status } = update;
-        if let ControllerStatus::SessionRejected { secret } = &status {
-            self.expire_rejected_session(&pubky, secret).await;
-            return;
+        // Notices about the key's session or mirror change its sign-in or
+        // mirror status, which the manager keeps, rather than its sync status
+        match &status {
+            ControllerStatus::SessionRejected { secret } => {
+                self.expire_rejected_session(&pubky, secret).await;
+                return;
+            }
+            ControllerStatus::MirrorSessionRejected { secret } => {
+                self.expire_rejected_mirror_session(&pubky, secret).await;
+                return;
+            }
+            ControllerStatus::MirrorFailed { message } => {
+                self.note_mirror_failure(&pubky, message).await;
+                return;
+            }
+            ControllerStatus::MirrorRecovered => {
+                self.note_mirror_recovery(&pubky);
+                return;
+            }
+            _ => {}
         }
 
         // Skip updates for keys that have been removed
@@ -321,6 +343,61 @@ impl StatusListener {
             pubky: pubky.clone(),
             state,
         });
+    }
+
+    /// Mark a key's mirror session as expired after the mirror rejected it,
+    /// and tell subscribers.
+    async fn expire_rejected_mirror_session(&self, pubky: &PublicKey, secret: &SessionSecret) {
+        let expired = self
+            .inner
+            .write()
+            .expire_mirror_session(&self.storage, pubky, secret);
+        let Some(state) = expired else {
+            return;
+        };
+        log_activity(
+            &self.storage,
+            pubky,
+            ActivityType::MirrorSessionExpired,
+            "Mirror session expired — approve the mirror again to keep mirroring".to_string(),
+        )
+        .await;
+        let _ = self.update_tx.send(KeyUpdate {
+            pubky: pubky.clone(),
+            state,
+        });
+    }
+
+    /// Mark a key's mirror as failing, log the failure and tell subscribers.
+    async fn note_mirror_failure(&self, pubky: &PublicKey, message: &str) {
+        let Some(state) = self
+            .inner
+            .write()
+            .apply_mirror_failure(pubky, Some(message))
+        else {
+            return;
+        };
+        log_activity(
+            &self.storage,
+            pubky,
+            ActivityType::MirrorFailed,
+            message.to_string(),
+        )
+        .await;
+        let _ = self.update_tx.send(KeyUpdate {
+            pubky: pubky.clone(),
+            state,
+        });
+    }
+
+    /// Mark a key's mirror as working again, and tell subscribers.
+    fn note_mirror_recovery(&self, pubky: &PublicKey) {
+        if let Some(state) = self.inner.write().apply_mirror_failure(pubky, None) {
+            let _ = self.update_tx.send(KeyUpdate {
+                pubky: pubky.clone(),
+                state,
+            });
+        }
     }
 }
 
@@ -541,6 +618,35 @@ mod tests {
         assert!(matches!(state.status, KeyStatus::Starting));
         assert_eq!(state.data_size, 1234);
         assert!(state.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mirror_notices_keep_sync_state_and_write_no_activity() {
+        let (_dir, storage, pubky) = setup();
+        let prev = KeyStatus::Syncing {
+            events_processed: 3,
+        };
+        let notices = [
+            ControllerStatus::MirrorFailed {
+                message: "Could not reach the mirror".to_string(),
+            },
+            ControllerStatus::MirrorRecovered,
+            ControllerStatus::MirrorSessionRejected {
+                secret: SessionSecret::new("secret".to_string()),
+            },
+        ];
+
+        for notice in &notices {
+            let state = handler(&pubky, &storage, 100, Some(500), prev.clone())
+                .handle(notice)
+                .await;
+
+            // The backup itself carries on, so this is not a sync error; the
+            // listener logs what these notices mean for the mirror
+            assert_eq!(state.status, prev);
+            assert!(state.error.is_none());
+        }
+        assert!(storage.read_activity(&pubky, 10).await.is_empty());
     }
 
     #[tokio::test]

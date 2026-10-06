@@ -51,7 +51,7 @@ impl Default for BackupManagerConfig {
 ///
 /// This struct contains all the information needed to display
 /// the current status of a key's backup process.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct KeyState {
     /// Current status of the key backup
     pub status: KeyStatus,
@@ -65,6 +65,8 @@ pub struct KeyState {
     pub error: Option<KeyError>,
     /// Whether the key is signed in, which decides what its backup covers
     pub auth: AuthStatus,
+    /// Whether the key's data is also copied to a second homeserver
+    pub mirror: MirrorStatus,
 }
 
 impl Default for KeyState {
@@ -76,6 +78,7 @@ impl Default for KeyState {
             next_sync: None,
             error: None,
             auth: AuthStatus::SignedOut,
+            mirror: MirrorStatus::NotMirrored,
         }
     }
 }
@@ -109,8 +112,82 @@ pub enum AuthStatus {
     },
 }
 
-/// The error that put a key's backup in [`KeyStatus::Error`].
-#[derive(Clone, Debug, Serialize)]
+/// Whether a key's backed-up data is also copied to a mirror: a second
+/// homeserver, which then holds the same data as the key's own.
+///
+/// What is backed up is what gets mirrored, so private data reaches the mirror
+/// only while the key is signed in (see [`AuthStatus`]). Deletions are mirrored
+/// too. The key must already have an account on the mirror. Set a mirror up
+/// with [`BackupManager::start_mirror`](super::BackupManager::start_mirror).
+///
+/// Homeservers are given as their z32-encoded public keys.
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum MirrorStatus {
+    /// The key has no mirror.
+    #[default]
+    NotMirrored,
+    /// A mirror was requested and is waiting for the owner to approve write
+    /// access to it in their signer app (e.g. Pubky Ring).
+    AwaitingApproval {
+        /// The requested mirror homeserver
+        homeserver: String,
+        /// The `pubkyauth://` link to open or scan with the signer app
+        authorization_url: String,
+    },
+    /// Changes are copied to the mirror after every sync.
+    Mirroring {
+        /// The mirror homeserver
+        homeserver: String,
+    },
+    /// The mirror no longer accepts the key's session. Nothing is copied until
+    /// the owner approves again, after which copying resumes where it stopped.
+    SessionExpired {
+        /// The mirror homeserver
+        homeserver: String,
+    },
+    /// Copying to the mirror is failing. It is retried on every sync and
+    /// resumes where it stopped.
+    Failing {
+        /// The mirror homeserver
+        homeserver: String,
+        /// Human-readable reason
+        message: String,
+    },
+    /// The last attempt to set the mirror up failed.
+    SetupFailed {
+        /// The requested mirror homeserver
+        homeserver: String,
+        /// Human-readable reason
+        message: String,
+    },
+}
+
+impl MirrorStatus {
+    /// The mirror homeserver this status is about, if any.
+    pub fn homeserver(&self) -> Option<&str> {
+        match self {
+            Self::NotMirrored => None,
+            Self::AwaitingApproval { homeserver, .. }
+            | Self::Mirroring { homeserver }
+            | Self::SessionExpired { homeserver }
+            | Self::Failing { homeserver, .. }
+            | Self::SetupFailed { homeserver, .. } => Some(homeserver),
+        }
+    }
+
+    /// Whether the key holds a session on its mirror and changes are copied to
+    /// it, or at least attempted.
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Mirroring { .. } | Self::Failing { .. })
+    }
+}
+
+/// Structured error for frontend display.
+///
+/// Contains error details in a format suitable for
+/// showing to users in the UI.
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct KeyError {
     /// Human-readable error message
     pub message: String,
@@ -162,6 +239,10 @@ pub enum ActivityType {
     SignedIn,
     SignedOut,
     SessionExpired,
+    MirrorStarted,
+    MirrorStopped,
+    MirrorSessionExpired,
+    MirrorFailed,
 }
 
 /// A single activity log entry for a key.

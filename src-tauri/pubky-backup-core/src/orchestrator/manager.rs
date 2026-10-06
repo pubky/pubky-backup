@@ -21,19 +21,23 @@ use pubky::{Pubky, PublicKey};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
+use super::auth;
 use super::discovery;
 use super::error::OrchestratorError;
 use super::sync_interval::SyncInterval;
 use super::types::{
     ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyState, KeyStatus, KeyUpdate,
+    MirrorStatus,
 };
 use crate::storage::AppStorage;
 use crate::sync::{BackupController, ControllerCommand, ControllerUpdate};
 
+mod approval;
+mod mirror;
 mod sign_in;
 mod status;
 
-use sign_in::PendingSignIn;
+use approval::PendingApproval;
 use status::{log_activity, next_sync_time, SyncState};
 
 /// Maximum number of keys that can be backed up simultaneously.
@@ -61,16 +65,22 @@ struct ManagedKey {
     sync: SyncState,
     /// Whether the key is signed in
     auth: AuthStatus,
+    /// Whether the key's data is also copied to a second homeserver
+    mirror: MirrorStatus,
     /// Handle to the controller task
     task_handle: JoinHandle<()>,
     /// A sign-in of this key that awaits approval
-    pending_sign_in: Option<PendingSignIn>,
+    pending_sign_in: Option<PendingApproval>,
+    /// A mirror request of this key that awaits approval
+    pending_mirror: Option<PendingApproval>,
 }
 
 impl ManagedKey {
     /// The key's state, as reported to subscribers.
     fn state(&self) -> KeyState {
-        self.sync.clone().with_auth(self.auth.clone())
+        self.sync
+            .clone()
+            .into_key_state(self.auth.clone(), self.mirror.clone())
     }
 }
 
@@ -79,7 +89,7 @@ struct ManagerInner {
     /// Map of public keys to their managed state
     keys: HashMap<PublicKey, ManagedKey>,
     /// A sign-in that adds whichever key approves it, while it awaits approval
-    new_key_sign_in: Option<PendingSignIn>,
+    new_key_sign_in: Option<PendingApproval>,
     /// Set by [`BackupManager::shutdown`], after which no key is added
     is_shut_down: bool,
 }
@@ -315,7 +325,10 @@ impl BackupManager {
                 .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?
         };
 
-        if let Some(pending) = managed_key.pending_sign_in {
+        for pending in [managed_key.pending_sign_in, managed_key.pending_mirror]
+            .into_iter()
+            .flatten()
+        {
             pending.cancel();
         }
 
@@ -346,7 +359,8 @@ impl BackupManager {
     }
 
     /// Stop syncing a key and mark it inactive. Backed-up data is preserved on disk
-    /// but the key will not be resumed on next launch. A signed-in key is signed out.
+    /// but the key will not be resumed on next launch. A signed-in key is signed
+    /// out, on its mirror too.
     ///
     /// Use `delete_key()` to also remove all backed-up data.
     ///
@@ -356,6 +370,7 @@ impl BackupManager {
     pub async fn remove_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
         self.stop_controller(pubky)?;
         self.discard_session_of_removed_key(pubky);
+        self.discard_mirror_session_of_removed_key(pubky);
 
         // Mark the key as inactive so it won't be resumed on next launch
         let key_storage = self.storage.key_storage(pubky)?;
@@ -369,7 +384,7 @@ impl BackupManager {
     }
 
     /// Remove a key AND delete all backed-up data from disk. A signed-in key is
-    /// signed out.
+    /// signed out, on its mirror too. Data on the mirror stays.
     ///
     /// Awaits the controller task to ensure all in-flight IO completes
     /// before deleting files from disk.
@@ -380,6 +395,7 @@ impl BackupManager {
     pub async fn delete_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
         let handle = self.stop_controller(pubky)?;
         self.discard_session_of_removed_key(pubky);
+        self.discard_mirror_session_of_removed_key(pubky);
         self.clear_last_pubky_if_empty();
 
         // Await the controller to ensure all in-flight IO completes before deleting files
@@ -674,8 +690,46 @@ impl BackupManager {
         Ok(())
     }
 
+    /// Run `update` on a tracked key under the state lock, then broadcast the
+    /// key's state if its sign-in or mirror status changed.
+    ///
+    /// Changes to what is stored for the key belong inside `update`, so that
+    /// they can't interleave with another change of status. `update` must not
+    /// use the manager's state itself. Returns `None` if the key is not tracked.
+    fn update_key<R>(
+        &self,
+        pubky: &PublicKey,
+        update: impl FnOnce(&mut ManagedKey) -> R,
+    ) -> Option<R> {
+        let (result, changed_state) = {
+            let mut inner = self.inner.write();
+            let managed = inner.keys.get_mut(pubky)?;
+            let previous = (managed.auth.clone(), managed.mirror.clone());
+            let result = update(managed);
+            let changed = managed.auth != previous.0 || managed.mirror != previous.1;
+            (result, changed.then(|| managed.state()))
+        };
+
+        if let Some(state) = changed_state {
+            let _ = self.update_tx.send(KeyUpdate {
+                pubky: pubky.clone(),
+                state,
+            });
+        }
+        Some(result)
+    }
+
+    /// End a session that was already forgotten locally, on the homeserver its
+    /// stored secret names: the key's own, or its mirror.
+    fn end_session_on_homeserver(&self, secret: String, pubky: &PublicKey) {
+        if self.config.offline {
+            return;
+        }
+        auth::end_stored_session(secret, pubky.clone(), self.pubky_client.as_ref().clone());
+    }
+
     /// Register a key in the manager: insert it into the keys map and broadcast
-    /// its state. Its sign-in status comes from its stored session.
+    /// its state. Its sign-in and mirror status come from what is stored for it.
     ///
     /// # Errors
     ///
@@ -692,8 +746,10 @@ impl BackupManager {
             control_tx,
             sync,
             auth: self.stored_auth_status(&pubky),
+            mirror: self.stored_mirror_status(&pubky),
             task_handle,
             pending_sign_in: None,
+            pending_mirror: None,
         };
         let state = managed.state();
 
