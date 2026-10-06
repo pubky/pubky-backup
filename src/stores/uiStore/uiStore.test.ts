@@ -9,6 +9,7 @@ const mockKeyState: KeyState = {
   next_sync: 1672531230,
   error: null,
   auth: { type: "SignedOut" },
+  mirror: { type: "NotMirrored" },
 };
 
 const mockSyncingKeyState: KeyState = {
@@ -18,6 +19,7 @@ const mockSyncingKeyState: KeyState = {
   next_sync: null,
   error: null,
   auth: { type: "SignedOut" },
+  mirror: { type: "NotMirrored" },
 };
 
 describe("useUIStore", () => {

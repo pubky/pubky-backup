@@ -29,6 +29,14 @@ pub enum OrchestratorError {
     #[error("Authentication failed: {0}")]
     AuthFailed(String),
 
+    /// Attempted to set up a mirror for a key that already has one
+    #[error("Key {0} already has a mirror")]
+    AlreadyMirrored(String),
+
+    /// Setting up or stopping a mirror failed
+    #[error("Mirroring failed: {0}")]
+    MirrorFailed(String),
+
     /// Storage operation failed
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),

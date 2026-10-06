@@ -13,11 +13,14 @@
 //! A single testnet instance is shared across all tests to minimize startup overhead.
 //! Tests are serialized using `serial_test` to ensure proper sequencing.
 
-use pubky::{Capabilities, ClientId, Keypair, PubkyResource, PubkySession, PubkySigner, PublicKey};
+use pubky::{
+    AuthFlowKind, Capabilities, ClientId, Keypair, Method, PubkyGrantAuthFlow, PubkyResource,
+    PubkySession, PubkySigner, PublicKey,
+};
 use pubky_backup_core::{
     AppStorage, AuthStatus, BackupController, BackupManager, BackupManagerConfig,
     ControllerCommand, ControllerStatus, ControllerUpdate, DataScope, KeyState, KeyStatus,
-    OrchestratorError,
+    MirrorStatus, OrchestratorError,
 };
 use pubky_testnet::{docker_postgres::DockerPostgres, EphemeralTestnet};
 use serial_test::serial;
@@ -43,6 +46,9 @@ fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
 /// Uses a dedicated tokio runtime to keep the testnet alive across test boundaries.
 static SHARED_TESTNET: OnceLock<(tokio::runtime::Runtime, EphemeralTestnet)> = OnceLock::new();
 
+/// A second homeserver on the shared testnet, for keys to be mirrored to.
+static MIRROR_HOMESERVER: OnceLock<PublicKey> = OnceLock::new();
+
 /// Get the shared testnet instance, initializing it on first use.
 /// The testnet runs in its own dedicated runtime to survive across test boundaries.
 async fn get_shared_testnet() -> &'static EphemeralTestnet {
@@ -62,13 +68,21 @@ async fn get_shared_testnet() -> &'static EphemeralTestnet {
                     .await
                     .connection_string()
                     .expect("Failed to get docker postgres connection string");
-                EphemeralTestnet::builder()
+                let mut testnet = EphemeralTestnet::builder()
                     .postgres(postgres)
                     // Sign-in approvals travel through the relay
                     .with_http_relay()
                     .build()
                     .await
-                    .expect("Failed to start testnet with docker postgres")
+                    .expect("Failed to start testnet with docker postgres");
+
+                let mirror = testnet
+                    .create_random_homeserver()
+                    .await
+                    .expect("Failed to start the mirror homeserver")
+                    .public_key();
+                let _ = MIRROR_HOMESERVER.set(mirror);
+                testnet
             });
 
             (rt, testnet)
@@ -414,6 +428,9 @@ struct BackedUpUser {
 impl BackedUpUser {
     /// Sign up a user with one private and one public file, then start
     /// backing up its key and wait for the first sync to finish.
+    ///
+    /// The user also has an account on the mirror homeserver, as mirroring
+    /// expects, with nothing in it.
     async fn create() -> Self {
         // The private file is written first, so its event is older than the
         // position the public sync reaches
@@ -427,8 +444,32 @@ impl BackedUpUser {
     /// Sign up a user with the given files, written in order, then start
     /// backing up its key and wait for the first sync to finish.
     async fn create_with_files(files: &[(&str, &str)]) -> Self {
-        let (signer, session) = sign_up_with_files(files).await;
+        Self::create_user(files, true).await
+    }
+
+    /// Like [`Self::create`], for a user that has no account on the mirror.
+    async fn create_without_mirror_account() -> Self {
+        Self::create_user(&[("/pub/public.txt", "public data")], false).await
+    }
+
+    async fn create_user(files: &[(&str, &str)], account_on_mirror: bool) -> Self {
+        let testnet = get_shared_testnet().await;
+        let homeserver_pk = testnet.homeserver_app().public_key();
+        let signer = testnet.sdk().unwrap().signer(Keypair::random());
+        // Signing up publishes the homeserver, so the key's own homeserver goes last
+        if account_on_mirror {
+            signer.signup(mirror_homeserver(), None).await.unwrap();
+        }
+        let session = sign_up(&signer, &homeserver_pk).await;
         let pubky = signer.public_key();
+
+        for (path, content) in files {
+            session
+                .storage()
+                .put(*path, content.to_string())
+                .await
+                .unwrap();
+        }
 
         let data_dir = TempDir::new().unwrap();
         let manager = start_manager(&data_dir).await;
@@ -470,6 +511,56 @@ impl BackedUpUser {
             .join("state")
             .join(filename);
         std::fs::read_to_string(file).ok()?.trim().parse().ok()
+    }
+
+    /// Set a mirror up and approve it with the user's own key, as their signer app would.
+    async fn start_mirror(&self) {
+        let request = self
+            .manager
+            .start_mirror(&self.pubky, mirror_homeserver())
+            .await
+            .unwrap();
+        self.signer
+            .approve_auth(request.authorization_url())
+            .await
+            .unwrap();
+        request.approved().await.unwrap();
+        assert_eq!(self.mirror_status(), mirroring());
+    }
+
+    fn mirror_status(&self) -> MirrorStatus {
+        self.manager.get_key_state(&self.pubky).unwrap().mirror
+    }
+
+    /// The secret of the user's session on the mirror, as stored by the backup.
+    fn stored_mirror_secret(&self) -> Option<String> {
+        let file = self.data_dir.path().join("mirrors").join(self.pubky.z32());
+        let record: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file).ok()?).unwrap();
+        record["session"].as_str().map(str::to_string)
+    }
+
+    /// Sync now and wait until the mirror holds `expected` at `path` (`None` = no file).
+    async fn sync_until_mirrored(&self, path: &str, expected: Option<&str>) {
+        self.manager.force_sync(&self.pubky).await.unwrap();
+        wait_until(&format!("mirror of {path}"), || async {
+            self.mirrored(path).await.as_deref() == expected
+        })
+        .await;
+    }
+
+    /// Read one of the user's public files from the mirror, if it has it.
+    async fn mirrored(&self, path: &str) -> Option<String> {
+        read_from_mirror(&self.pubky, path, None).await
+    }
+
+    /// Read one of the user's private files from the mirror, if it has it.
+    async fn mirrored_private(&self, path: &str) -> Option<String> {
+        let session = mirror_session_for(&self.signer).await;
+        let token = session.as_grant().unwrap().current_bearer().await;
+        let found = read_from_mirror(&self.pubky, path, Some(&token)).await;
+        session.signout().await.map_err(|(e, _)| e).unwrap();
+        found
     }
 
     /// The file the backup stores this user's session secret in.
@@ -523,6 +614,75 @@ async fn sign_up_with_files(files: &[(&str, &str)]) -> (PubkySigner, PubkySessio
             .unwrap();
     }
     (signer, session)
+}
+
+fn mirror_homeserver() -> &'static PublicKey {
+    MIRROR_HOMESERVER
+        .get()
+        .expect("the shared testnet creates the mirror homeserver")
+}
+
+fn mirroring() -> MirrorStatus {
+    MirrorStatus::Mirroring {
+        homeserver: mirror_homeserver().z32(),
+    }
+}
+
+/// Read a file of `user` from the mirror homeserver, as any client would.
+///
+/// Private files need the access token of a session on the mirror.
+async fn read_from_mirror(user: &PublicKey, path: &str, token: Option<&str>) -> Option<String> {
+    let client = get_shared_testnet().await.sdk().unwrap().client().clone();
+    let mut url = url::Url::parse(&format!("https://{}/", mirror_homeserver().z32())).unwrap();
+    url.set_path(path);
+    let mut request = client
+        .request(Method::GET, &url)
+        .header("pubky-host", user.z32());
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.unwrap();
+    response
+        .status()
+        .is_success()
+        .then_some(response.text().await.unwrap())
+}
+
+/// A session for reading everything of the signer's key on the mirror,
+/// approved by the signer, the way the backup opens its own mirror session:
+/// the grant is not tied to a homeserver, so the secret of the session it
+/// opens on the key's own homeserver restores a session on the mirror as well.
+async fn mirror_session_for(signer: &PubkySigner) -> PubkySession {
+    let testnet = get_shared_testnet().await;
+    let pubky_client = testnet.sdk().unwrap();
+    let caps = Capabilities::builder().read("/").unwrap().finish();
+    let flow = PubkyGrantAuthFlow::builder(
+        &caps,
+        AuthFlowKind::signin(),
+        ClientId::new("integration-tests-mirror").unwrap(),
+    )
+    .client(pubky_client.client().clone())
+    .relay(testnet.http_relay().local_link_url())
+    .start()
+    .unwrap();
+    signer
+        .approve_auth(flow.authorization_url().as_str())
+        .await
+        .unwrap();
+    let own_session = flow.await_approval().await.unwrap();
+    let secret = own_session
+        .as_grant()
+        .unwrap()
+        .export_local_secret()
+        .await
+        .unwrap();
+    own_session.signout().await.map_err(|(e, _)| e).unwrap();
+
+    // The stored grant names the homeserver in its second field
+    let mut fields: Vec<&str> = secret.splitn(3, ':').collect();
+    let mirror = mirror_homeserver().z32();
+    fields[1] = &mirror;
+    restore_backup_session(&fields.join(":")).await.unwrap()
 }
 
 /// Start a manager that talks to the shared testnet and stores its data in `data_dir`.
@@ -1021,4 +1181,330 @@ async fn restore_backup_session(secret: &str) -> pubky::Result<PubkySession> {
         .unwrap()
         .restore_session(secret)
         .await
+}
+
+// --- Mirroring to a second homeserver ---
+
+/// Mirroring copies what is backed up to a second homeserver, including
+/// later changes and deletions, without moving the key's identity.
+#[tokio::test]
+#[serial]
+async fn test_mirror_copies_backup_to_second_homeserver() {
+    let user = BackedUpUser::create().await;
+    assert_eq!(user.mirrored("/pub/public.txt").await, None);
+
+    // Everything backed up so far is copied right away
+    user.start_mirror().await;
+    wait_until("mirror of existing data", || async {
+        user.mirrored("/pub/public.txt").await.as_deref() == Some("public data")
+    })
+    .await;
+
+    // Later changes follow, in both directions
+    user.session
+        .storage()
+        .put("/pub/public.txt", "changed")
+        .await
+        .unwrap();
+    user.session
+        .storage()
+        .put("/pub/later.txt", "written later")
+        .await
+        .unwrap();
+    user.sync_until_mirrored("/pub/public.txt", Some("changed"))
+        .await;
+    user.sync_until_mirrored("/pub/later.txt", Some("written later"))
+        .await;
+
+    user.session
+        .storage()
+        .delete("/pub/later.txt")
+        .await
+        .unwrap();
+    user.sync_until_mirrored("/pub/later.txt", None).await;
+
+    // The mirror has caught up with the backup, and the key still lives where it did
+    assert_eq!(
+        user.stored_cursor("mirror_cursor"),
+        user.stored_cursor("cursor")
+    );
+    let testnet = get_shared_testnet().await;
+    let own_homeserver = testnet
+        .sdk()
+        .unwrap()
+        .get_homeserver_of(&user.pubky)
+        .await
+        .unwrap();
+    assert_eq!(
+        own_homeserver.as_ref(),
+        Some(&testnet.homeserver_app().public_key())
+    );
+
+    user.manager.shutdown().await;
+}
+
+/// Private data reaches the mirror once the key is signed in, since that is
+/// when it is backed up.
+#[tokio::test]
+#[serial]
+async fn test_mirror_includes_private_data_once_signed_in() {
+    let user = BackedUpUser::create().await;
+    user.start_mirror().await;
+    user.sync_until_mirrored("/pub/public.txt", Some("public data"))
+        .await;
+    assert_eq!(user.mirrored_private("/priv/secret.txt").await, None);
+
+    user.sign_in().await;
+
+    wait_until("mirror of private data", || async {
+        user.mirrored_private("/priv/secret.txt").await.as_deref() == Some("private data")
+    })
+    .await;
+
+    user.manager.shutdown().await;
+}
+
+/// The mirror is stored, so a restarted manager keeps copying to it.
+#[tokio::test]
+#[serial]
+async fn test_mirror_survives_restart() {
+    let mut user = BackedUpUser::create().await;
+    user.start_mirror().await;
+    user.sync_until_mirrored("/pub/public.txt", Some("public data"))
+        .await;
+    user.manager.shutdown().await;
+
+    user.session
+        .storage()
+        .put("/pub/after-restart.txt", "still mirrored")
+        .await
+        .unwrap();
+
+    user.manager = start_manager(&user.data_dir).await;
+
+    assert_eq!(user.mirror_status(), mirroring());
+    user.sync_until_mirrored("/pub/after-restart.txt", Some("still mirrored"))
+        .await;
+
+    user.manager.shutdown().await;
+}
+
+/// Stopping a mirror ends the copying and the session on the mirror, but
+/// keeps what was copied. A mirror can be set up again for the existing account.
+#[tokio::test]
+#[serial]
+async fn test_stop_mirror_keeps_copied_data_and_ends_session() {
+    let user = BackedUpUser::create().await;
+    user.start_mirror().await;
+    user.sync_until_mirrored("/pub/public.txt", Some("public data"))
+        .await;
+    let secret = user.stored_mirror_secret().unwrap();
+
+    user.manager.stop_mirror(&user.pubky).await.unwrap();
+
+    assert_eq!(user.mirror_status(), MirrorStatus::NotMirrored);
+    assert_eq!(user.stored_mirror_secret(), None);
+    user.session
+        .storage()
+        .put("/pub/after-stop.txt", "not mirrored")
+        .await
+        .unwrap();
+    user.sync_until_backed_up("/pub/after-stop.txt", Some("not mirrored"))
+        .await;
+    assert_eq!(user.mirrored("/pub/after-stop.txt").await, None);
+    assert_eq!(
+        user.mirrored("/pub/public.txt").await.as_deref(),
+        Some("public data")
+    );
+    // The mirror no longer accepts the session
+    wait_until("mirror session to end", || async {
+        restore_backup_session(&secret).await.is_err()
+    })
+    .await;
+
+    // Setting the mirror up again copies everything again
+    user.start_mirror().await;
+    user.sync_until_mirrored("/pub/after-stop.txt", Some("not mirrored"))
+        .await;
+
+    user.manager.shutdown().await;
+}
+
+/// When the mirror stops accepting the session, copying pauses until the
+/// owner approves again, then resumes where it stopped. The backup is unaffected.
+#[tokio::test]
+#[serial]
+async fn test_rejected_mirror_session_pauses_mirroring() {
+    let user = BackedUpUser::create().await;
+    user.start_mirror().await;
+    user.sync_until_mirrored("/pub/public.txt", Some("public data"))
+        .await;
+
+    // End the backup's session behind its back
+    let secret = user.stored_mirror_secret().unwrap();
+    let mirror_session = restore_backup_session(&secret).await.unwrap();
+    mirror_session.signout().await.map_err(|(e, _)| e).unwrap();
+
+    user.session
+        .storage()
+        .put("/pub/while-expired.txt", "written while expired")
+        .await
+        .unwrap();
+    user.manager.force_sync(&user.pubky).await.unwrap();
+
+    user.wait_for_state("mirror session expiry", |state| {
+        state.mirror
+            == MirrorStatus::SessionExpired {
+                homeserver: mirror_homeserver().z32(),
+            }
+    })
+    .await;
+    assert_eq!(user.stored_mirror_secret(), None);
+    user.sync_until_backed_up("/pub/while-expired.txt", Some("written while expired"))
+        .await;
+    assert!(user
+        .manager
+        .get_key_state(&user.pubky)
+        .unwrap()
+        .error
+        .is_none());
+    assert_eq!(user.mirrored("/pub/while-expired.txt").await, None);
+
+    // Approving again resumes where it stopped
+    user.start_mirror().await;
+    user.sync_until_mirrored("/pub/while-expired.txt", Some("written while expired"))
+        .await;
+
+    user.manager.shutdown().await;
+}
+
+/// A mirror that becomes the key's own homeserver is not copied to any more:
+/// every copy would be a new change to copy, without end.
+#[tokio::test]
+#[serial]
+async fn test_mirroring_stops_when_mirror_becomes_own_homeserver() {
+    let mut user = BackedUpUser::create().await;
+    user.start_mirror().await;
+    user.sync_until_mirrored("/pub/public.txt", Some("public data"))
+        .await;
+
+    // The owner moves to the mirror, and the backup is restarted so that it
+    // resolves the key's homeserver afresh rather than from its cache
+    user.manager.shutdown().await;
+    user.signer
+        .pkdns()
+        .publish_homeserver_force(Some(mirror_homeserver()))
+        .await
+        .unwrap();
+    user.manager = start_manager(&user.data_dir).await;
+    user.manager.force_sync(&user.pubky).await.unwrap();
+
+    user.wait_for_state("mirroring to stop", |state| {
+        matches!(&state.mirror, MirrorStatus::Failing { message, .. } if message.contains("own homeserver"))
+    })
+    .await;
+
+    user.manager.shutdown().await;
+}
+
+/// A key without an account on the mirror cannot be mirrored there.
+#[tokio::test]
+#[serial]
+async fn test_mirror_needs_an_account_on_the_mirror() {
+    let user = BackedUpUser::create_without_mirror_account().await;
+
+    let request = user
+        .manager
+        .start_mirror(&user.pubky, mirror_homeserver())
+        .await
+        .unwrap();
+    user.signer
+        .approve_auth(request.authorization_url())
+        .await
+        .unwrap();
+
+    let error = request.approved().await.unwrap_err();
+    assert!(
+        error.to_string().contains("no account"),
+        "Unexpected error: {error}"
+    );
+    assert!(matches!(
+        user.mirror_status(),
+        MirrorStatus::SetupFailed { message, .. } if message.contains("no account")
+    ));
+
+    user.manager.shutdown().await;
+}
+
+/// A mirror request approved by another key sets nothing up.
+#[tokio::test]
+#[serial]
+async fn test_mirror_approved_by_other_key_fails() {
+    let user = BackedUpUser::create().await;
+    let other = BackedUpUser::create().await;
+
+    let request = user
+        .manager
+        .start_mirror(&user.pubky, mirror_homeserver())
+        .await
+        .unwrap();
+    other
+        .signer
+        .approve_auth(request.authorization_url())
+        .await
+        .unwrap();
+
+    let error = request.approved().await.unwrap_err();
+    assert!(
+        error.to_string().contains("different key"),
+        "Unexpected error: {error}"
+    );
+    assert!(matches!(
+        user.mirror_status(),
+        MirrorStatus::SetupFailed { .. }
+    ));
+    assert_eq!(user.stored_mirror_secret(), None);
+
+    user.manager.shutdown().await;
+    other.manager.shutdown().await;
+}
+
+/// A key cannot be mirrored to the homeserver it already lives on.
+#[tokio::test]
+#[serial]
+async fn test_key_cannot_be_mirrored_to_own_homeserver() {
+    let user = BackedUpUser::create().await;
+    let own_homeserver = get_shared_testnet().await.homeserver_app().public_key();
+
+    let result = user
+        .manager
+        .start_mirror(&user.pubky, &own_homeserver)
+        .await;
+
+    assert!(
+        matches!(result, Err(OrchestratorError::MirrorFailed(_))),
+        "Unexpected result: {result:?}"
+    );
+    assert_eq!(user.mirror_status(), MirrorStatus::NotMirrored);
+
+    user.manager.shutdown().await;
+}
+
+/// A cancelled mirror request can no longer be approved.
+#[tokio::test]
+#[serial]
+async fn test_cancelled_mirror_request_cannot_be_approved() {
+    let user = BackedUpUser::create().await;
+    let request = user
+        .manager
+        .start_mirror(&user.pubky, mirror_homeserver())
+        .await
+        .unwrap();
+
+    user.manager.cancel_mirror(&user.pubky).await.unwrap();
+
+    assert_eq!(user.mirror_status(), MirrorStatus::NotMirrored);
+    assert!(request.approved().await.is_err());
+
+    user.manager.shutdown().await;
 }
