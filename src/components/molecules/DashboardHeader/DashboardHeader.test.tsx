@@ -250,4 +250,49 @@ describe("DashboardHeader", () => {
       expect(onSelectKey).toHaveBeenCalledWith("xyz987uvw654rst321");
     });
   });
+
+  describe("backup coverage", () => {
+    it("should show which data is backed up", () => {
+      render(
+        <DashboardHeader {...defaultProps} coverage="public-and-private" />,
+      );
+
+      expect(screen.getByText("Public + private")).toBeInTheDocument();
+    });
+
+    it("should show nothing about coverage when it is not given", () => {
+      render(<DashboardHeader {...defaultProps} />);
+
+      expect(screen.queryByText(/public only/i)).not.toBeInTheDocument();
+      expect(screen.queryByText("Public + private")).not.toBeInTheDocument();
+    });
+
+    it("should mark keys with private data backed up in the key switcher", () => {
+      render(
+        <DashboardHeader
+          {...defaultProps}
+          keys={[
+            {
+              pubky: "private-key",
+              isSelected: true,
+              coverage: "public-and-private",
+            },
+            { pubky: "public-key", isSelected: false, coverage: "public-only" },
+          ]}
+        />,
+      );
+
+      fireEvent.click(screen.getByTitle("Switch key"));
+      const options = screen.getAllByRole("option");
+
+      expect(
+        within(options[0]!).getByTitle("Public and private data are backed up"),
+      ).toBeInTheDocument();
+      expect(
+        within(options[1]!).queryByTitle(
+          "Public and private data are backed up",
+        ),
+      ).not.toBeInTheDocument();
+    });
+  });
 });

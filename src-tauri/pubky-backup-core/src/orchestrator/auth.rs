@@ -19,20 +19,24 @@ use crate::sync::PRIVATE_PATH;
 
 /// A sign-in that is waiting for the key's owner to approve it.
 ///
-/// Returned by [`BackupManager::start_sign_in`](super::BackupManager::start_sign_in).
+/// Returned by [`BackupManager::start_sign_in`](super::BackupManager::start_sign_in),
+/// and as a `SignInRequest<PublicKey>` by
+/// [`BackupManager::start_sign_in_for_new_key`](super::BackupManager::start_sign_in_for_new_key),
+/// whose approval tells which key signed in.
+///
 /// Show [`authorization_url`](Self::authorization_url) to the owner, then either
 /// await [`approved`](Self::approved) or drop the request and follow the key's
 /// [`AuthStatus`](super::AuthStatus) instead. Dropping it does not cancel the sign-in.
 #[derive(Debug)]
-pub struct SignInRequest {
+pub struct SignInRequest<T = ()> {
     authorization_url: String,
-    outcome: oneshot::Receiver<Result<(), OrchestratorError>>,
+    outcome: oneshot::Receiver<Result<T, OrchestratorError>>,
 }
 
-impl SignInRequest {
+impl<T> SignInRequest<T> {
     pub(super) fn new(
         authorization_url: String,
-        outcome: oneshot::Receiver<Result<(), OrchestratorError>>,
+        outcome: oneshot::Receiver<Result<T, OrchestratorError>>,
     ) -> Self {
         Self {
             authorization_url,
@@ -50,8 +54,9 @@ impl SignInRequest {
     /// # Errors
     ///
     /// Returns `OrchestratorError::AuthFailed` if the request expires, is approved
-    /// by a different key, or is cancelled.
-    pub async fn approved(self) -> Result<(), OrchestratorError> {
+    /// by a different key, or is cancelled. A sign-in for a new key also fails
+    /// with the error that kept the key from being added.
+    pub async fn approved(self) -> Result<T, OrchestratorError> {
         self.outcome
             .await
             .unwrap_or_else(|_| Err(sign_in_cancelled()))
@@ -85,6 +90,19 @@ pub(super) fn start_sign_in_flow(
         .map_err(|e| OrchestratorError::AuthFailed(e.to_string()))
 }
 
+/// Wait for a sign-in request to be approved, by any key, and return its session.
+///
+/// # Errors
+///
+/// Returns `OrchestratorError::AuthFailed` if the request expires.
+pub(super) async fn await_any_approval(
+    flow: SignInFlow,
+) -> Result<PubkySession, OrchestratorError> {
+    flow.await_approval()
+        .await
+        .map_err(|e| OrchestratorError::AuthFailed(e.to_string()))
+}
+
 /// Wait for a sign-in request to be approved by `pubky` and return its session.
 ///
 /// # Errors
@@ -95,10 +113,7 @@ pub(super) async fn await_approval(
     flow: SignInFlow,
     pubky: &PublicKey,
 ) -> Result<PubkySession, OrchestratorError> {
-    let session = flow
-        .await_approval()
-        .await
-        .map_err(|e| OrchestratorError::AuthFailed(e.to_string()))?;
+    let session = await_any_approval(flow).await?;
 
     let approved_by = session.public_key();
     if approved_by != *pubky {

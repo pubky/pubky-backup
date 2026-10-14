@@ -3,11 +3,13 @@ export { useAppState } from "./useAppState";
 export { useKeys } from "./useKeys";
 export { useLastPubky } from "./useLastPubky";
 export { useKeyUpdates } from "./useKeyUpdates";
+export { useBackupCoverage } from "./useBackupCoverage";
 
 // Action hooks
 export { useAddKey } from "./useAddKey";
 export { useForceSync } from "./useForceSync";
 export { useSignIn } from "./useSignIn";
+export { useNewKeySignIn, type NewKeySignInState } from "./useNewKeySignIn";
 export { useCreateSnapshot } from "./useCreateSnapshot";
 export { useOpenDataDir } from "./useOpenDataDir";
 export { useSetLastPubky } from "./useSetLastPubky";

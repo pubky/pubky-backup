@@ -278,7 +278,7 @@ describe("KeysPage", () => {
         screen.getByRole("button", { name: /cancel/i }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: /^add$/i }),
+        screen.getByRole("button", { name: /back up public data/i }),
       ).toBeInTheDocument();
     });
 
@@ -305,7 +305,9 @@ describe("KeysPage", () => {
         screen.getByRole("button", { name: /add another pubky/i }),
       );
 
-      expect(screen.getByRole("button", { name: /^add$/i })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /back up public data/i }),
+      ).toBeDisabled();
     });
 
     it("should enable Add button when input has value", () => {
@@ -318,7 +320,9 @@ describe("KeysPage", () => {
         target: { value: "new-pubky-value" },
       });
 
-      expect(screen.getByRole("button", { name: /^add$/i })).not.toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /back up public data/i }),
+      ).not.toBeDisabled();
     });
 
     it("should call addKey service when Add is clicked", async () => {
@@ -332,7 +336,9 @@ describe("KeysPage", () => {
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "my-new-pubky" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(services.addKey).toHaveBeenCalledWith("my-new-pubky");
@@ -350,7 +356,9 @@ describe("KeysPage", () => {
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(
@@ -371,14 +379,16 @@ describe("KeysPage", () => {
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(useUIStore.getState().currentPage).toBe("sync");
       });
     });
 
-    it("should show 'Adding...' text while adding", async () => {
+    it("should disable adding and cancelling while adding", async () => {
       let resolveAdd: (value: string) => void;
       vi.mocked(services.addKey).mockImplementation(
         () =>
@@ -395,9 +405,14 @@ describe("KeysPage", () => {
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
-      expect(screen.getByText("Adding...")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /back up public data/i }),
+      ).toBeDisabled();
+      expect(screen.getByRole("button", { name: /cancel/i })).toBeDisabled();
 
       // Resolve the pending promise to avoid act() warning
       await act(async () => {

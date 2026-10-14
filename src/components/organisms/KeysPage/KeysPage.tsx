@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import * as Atoms from "@/components/atoms";
-import * as Molecules from "@/components/molecules";
 import * as Hooks from "@/hooks";
 import * as Stores from "@/stores";
 import * as Utils from "@/utils";
 import * as Services from "@/services";
 import { cn, Logger } from "@/lib";
+import { AddKeyForm } from "../AddKeyForm";
 
 interface KeyItemProps {
   pubky: string;
@@ -15,9 +15,7 @@ interface KeyItemProps {
 }
 
 function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
-  const isSignedIn = Stores.useUIStore(
-    (s) => s.keyStates[pubky]?.auth.type === "SignedIn",
-  );
+  const coverage = Hooks.useBackupCoverage([pubky])[pubky] ?? "public-only";
 
   return (
     <div
@@ -43,16 +41,7 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
         {Utils.displayPubky(pubky)}
       </span>
       <div className="flex items-center gap-4">
-        <span
-          title={
-            isSignedIn
-              ? "Signed in: public and private data are backed up"
-              : "Not signed in: only public data is backed up"
-          }
-          className="text-xs font-medium text-text-secondary whitespace-nowrap"
-        >
-          {isSignedIn ? "Public + private" : "Public only"}
-        </span>
+        <Atoms.CoverageBadge coverage={coverage} />
         {isSelected && (
           <Atoms.CheckIcon size={16} className="text-text-light" />
         )}
@@ -132,12 +121,8 @@ export function KeysPage() {
     }
   };
 
-  const handleAddPubky = () => {
-    setShowAddInput(true);
-  };
-
-  const handleSubmitNewPubky = async () => {
-    const trimmedValue = newPubkyValue.trim();
+  const handleSubmitNewPubky = async (value: string) => {
+    const trimmedValue = value.trim();
     if (!trimmedValue) return;
 
     try {
@@ -151,10 +136,46 @@ export function KeysPage() {
     }
   };
 
+  const handleSignedIn = useCallback(() => {
+    setShowAddInput(false);
+    Stores.useUIStore.getState().setPage("sync");
+  }, []);
+
   const handleCancelAdd = () => {
     setNewPubkyValue("");
     setShowAddInput(false);
   };
+
+  if (showAddInput) {
+    return (
+      <div className="flex flex-col gap-6 self-stretch">
+        <div className="flex items-start gap-4 text-left">
+          <div className="flex flex-col gap-1 flex-1">
+            <h2 className="text-xl font-bold text-white m-0">Add a pubky</h2>
+            <p className="text-base font-medium text-text-light m-0">
+              It is backed up alongside your other pubkys.
+            </p>
+          </div>
+          <Atoms.Button
+            variant="secondary"
+            onClick={handleCancelAdd}
+            disabled={isAddingKey}
+            className="py-2 px-4 shrink-0"
+          >
+            <span className="text-white text-sm font-medium">Cancel</span>
+          </Atoms.Button>
+        </div>
+        <AddKeyForm
+          onSignedIn={handleSignedIn}
+          pubkyValue={newPubkyValue}
+          onPubkyChange={setNewPubkyValue}
+          onSubmitPubky={(value) => void handleSubmitNewPubky(value)}
+          isAddingPubky={isAddingKey}
+          placeholder="Enter pubky to add..."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 self-stretch">
@@ -196,45 +217,15 @@ export function KeysPage() {
             </div>
           </div>
 
-          {/* Add pubky section */}
-          {showAddInput ? (
-            <div className="flex flex-col gap-2">
-              <Molecules.PubkyInput
-                value={newPubkyValue}
-                onChange={setNewPubkyValue}
-                placeholder="Enter pubky to add..."
-              />
-              <div className="flex gap-2">
-                <Atoms.Button
-                  variant="secondary"
-                  onClick={handleCancelAdd}
-                  className="flex-1"
-                  disabled={isAddingKey}
-                >
-                  <span className="text-white text-sm font-medium">Cancel</span>
-                </Atoms.Button>
-                <Atoms.Button
-                  onClick={() => void handleSubmitNewPubky()}
-                  className="flex-1"
-                  disabled={!newPubkyValue.trim() || isAddingKey}
-                >
-                  <span className="text-sm font-bold text-pubky-purple">
-                    {isAddingKey ? "Adding..." : "Add"}
-                  </span>
-                </Atoms.Button>
-              </div>
-            </div>
-          ) : (
-            <Atoms.Button
-              variant="secondary"
-              onClick={handleAddPubky}
-              className="w-full"
-            >
-              <span className="text-text-light text-sm font-bold">
-                Add another pubky
-              </span>
-            </Atoms.Button>
-          )}
+          <Atoms.Button
+            variant="secondary"
+            onClick={() => setShowAddInput(true)}
+            className="w-full"
+          >
+            <span className="text-text-light text-sm font-bold">
+              Add another pubky
+            </span>
+          </Atoms.Button>
         </>
       )}
     </div>

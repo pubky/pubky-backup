@@ -61,12 +61,12 @@ describe("StartupForm", () => {
       });
     });
 
-    it("should render backup button", async () => {
+    it("should render the public-only backup button", async () => {
       render(<StartupForm />);
 
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /backup/i }),
+          screen.getByRole("button", { name: /back up public data/i }),
         ).toBeInTheDocument();
       });
     });
@@ -117,7 +117,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).toBeDisabled();
+        expect(
+          screen.getByRole("button", { name: /back up public data/i }),
+        ).toBeDisabled();
       });
     });
 
@@ -128,25 +130,27 @@ describe("StartupForm", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /backup/i }),
+          screen.getByRole("button", { name: /back up public data/i }),
         ).not.toBeDisabled();
       });
     });
   });
 
   describe("form submission", () => {
-    it("should call addKey when backup button is clicked", async () => {
+    it("should call addKey when the public-only backup button is clicked", async () => {
       useUIStore.setState({ pubkyInputValue: "my-pubky" });
 
       render(<StartupForm />);
 
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /backup/i }),
+          screen.getByRole("button", { name: /back up public data/i }),
         ).not.toBeDisabled();
       });
 
-      fireEvent.click(screen.getByRole("button", { name: /backup/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(services.addKey).toHaveBeenCalledWith("my-pubky");
@@ -160,11 +164,13 @@ describe("StartupForm", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /backup/i }),
+          screen.getByRole("button", { name: /back up public data/i }),
         ).not.toBeDisabled();
       });
 
-      fireEvent.click(screen.getByRole("button", { name: /backup/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(useUIStore.getState().currentScreen).toBe("dashboard");
@@ -178,11 +184,13 @@ describe("StartupForm", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /backup/i }),
+          screen.getByRole("button", { name: /back up public data/i }),
         ).not.toBeDisabled();
       });
 
-      fireEvent.click(screen.getByRole("button", { name: /backup/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(services.addKey).toHaveBeenCalledWith("pubky-with-spaces");
@@ -193,11 +201,15 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).toBeDisabled();
+        expect(
+          screen.getByRole("button", { name: /back up public data/i }),
+        ).toBeDisabled();
       });
 
       // Button is disabled, so clicking shouldn't do anything
-      fireEvent.click(screen.getByRole("button", { name: /backup/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       expect(services.addKey).not.toHaveBeenCalled();
     });
@@ -208,7 +220,9 @@ describe("StartupForm", () => {
       render(<StartupForm />);
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /backup/i })).toBeDisabled();
+        expect(
+          screen.getByRole("button", { name: /back up public data/i }),
+        ).toBeDisabled();
       });
 
       // Button is disabled
@@ -264,11 +278,13 @@ describe("StartupForm", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /backup/i }),
+          screen.getByRole("button", { name: /back up public data/i }),
         ).not.toBeDisabled();
       });
 
-      fireEvent.click(screen.getByRole("button", { name: /backup/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(services.addKey).toHaveBeenCalled();
@@ -286,11 +302,13 @@ describe("StartupForm", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /backup/i }),
+          screen.getByRole("button", { name: /back up public data/i }),
         ).not.toBeDisabled();
       });
 
-      fireEvent.click(screen.getByRole("button", { name: /backup/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(services.addKey).toHaveBeenCalled();

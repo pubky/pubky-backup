@@ -10,6 +10,8 @@ export {
   forceSyncNow,
   startSignIn,
   cancelSignIn,
+  signInNewKey,
+  cancelSignInNewKey,
   signOut,
   openDataDir,
   createSnapshot,

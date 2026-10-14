@@ -52,13 +52,6 @@ describe("CoverageCard", () => {
     });
   });
 
-  it("should always show public data as backed up", () => {
-    renderWithAuth({ type: "SignedOut" });
-
-    expect(screen.getByText("Public data")).toBeInTheDocument();
-    expect(screen.getByText(/No sign-in needed/i)).toBeInTheDocument();
-  });
-
   it("should treat a key without state yet as signed out", () => {
     render(<CoverageCard pubky={PUBKY} />);
 

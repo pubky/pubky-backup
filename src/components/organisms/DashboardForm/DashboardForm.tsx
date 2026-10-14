@@ -26,14 +26,21 @@ export function DashboardForm() {
     isCreatingSnapshot,
   } = Hooks.useDashboardActions();
 
+  const coverage = Hooks.useBackupCoverage(keys);
+
   return (
     <>
       {/* Header */}
       <Molecules.DashboardHeader
         pubkyDisplay={Utils.displayPubky(pubky)}
         status={statusInfo.badge}
+        coverage={pubky !== null ? coverage[pubky] : undefined}
         onCopy={() => handleCopy(pubky)}
-        keys={keys.map((k) => ({ pubky: k, isSelected: k === pubky }))}
+        keys={keys.map((k) => ({
+          pubky: k,
+          isSelected: k === pubky,
+          coverage: coverage[k],
+        }))}
         onSelectKey={handleSelectKey}
       />
 
@@ -76,7 +83,7 @@ export function DashboardForm() {
         />
       </div>
 
-      {/* What is backed up, and signing in to add private data */}
+      {/* Signing in and out to back up private data */}
       {pubky !== null && <CoverageCard pubky={pubky} />}
 
       {/* Action buttons */}

@@ -17,4 +17,6 @@ export {
   NavSettingsIcon,
   ChevronDownIcon,
   TrashIcon,
+  LockIcon,
+  GlobeIcon,
 } from "./Icons";

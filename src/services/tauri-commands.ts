@@ -3,7 +3,7 @@
  * All commands verified from src-tauri/src/lib.rs
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type { ActivityEntry, KeyState } from "@/stores/uiStore";
 import type { BackendError } from "@/types/backend-errors";
 import { isBackendError } from "@/types/backend-errors";
@@ -151,6 +151,42 @@ export async function startSignIn(pubkyStr: string): Promise<string> {
 export async function cancelSignIn(pubkyStr: string): Promise<void> {
   try {
     await invoke("cancel_sign_in", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
+ * Sign in to whichever key approves the sign-in, and back it up, public and
+ * private data alike. The key is added if it isn't backed up yet.
+ * @param onAuthorizationUrl - Called right away with the link to show to the
+ *   key's owner, to approve in their signer app
+ * @returns The pubky that approved the sign-in, once it is backed up
+ * @throws {BackendError} If the sign-in fails, expires or is cancelled, or the
+ *   key cannot be backed up
+ */
+export async function signInNewKey(
+  onAuthorizationUrl: (url: string) => void,
+): Promise<string> {
+  const channel = new Channel<string>();
+  channel.onmessage = onAuthorizationUrl;
+  try {
+    return await invoke<string>("sign_in_new_key", {
+      onAuthorizationUrl: channel,
+    });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
+ * Cancel the sign-in started by signInNewKey, if it awaits approval.
+ * The pending signInNewKey call then rejects.
+ * @throws {BackendError} If cancelling fails
+ */
+export async function cancelSignInNewKey(): Promise<void> {
+  try {
+    await invoke("cancel_sign_in_new_key");
   } catch (error: unknown) {
     throw normalizeError(error);
   }

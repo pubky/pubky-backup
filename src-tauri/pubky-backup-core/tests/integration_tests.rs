@@ -414,22 +414,8 @@ impl BackedUpUser {
     /// Sign up a user with the given files, written in order, then start
     /// backing up its key and wait for the first sync to finish.
     async fn create_with_files(files: &[(&str, &str)]) -> Self {
-        let testnet = get_shared_testnet().await;
-        let pubky_client = testnet.sdk().unwrap();
-        let homeserver_pk = testnet.homeserver_app().public_key();
-
-        let keypair = Keypair::random();
-        let signer = pubky_client.signer(keypair.clone());
-        let session = signup_with_cookie(&signer, &homeserver_pk).await;
-        let pubky = keypair.public_key();
-
-        for (path, content) in files {
-            session
-                .storage()
-                .put(*path, content.to_string())
-                .await
-                .unwrap();
-        }
+        let (signer, session) = sign_up_with_files(files).await;
+        let pubky = signer.public_key();
 
         let data_dir = TempDir::new().unwrap();
         let manager = start_manager(&data_dir).await;
@@ -510,6 +496,23 @@ impl BackedUpUser {
             .join(path.trim_start_matches('/'));
         std::fs::read_to_string(file).ok()
     }
+}
+
+/// Sign up a user on the shared testnet and write the given files, in order.
+async fn sign_up_with_files(files: &[(&str, &str)]) -> (PubkySigner, PubkySession) {
+    let testnet = get_shared_testnet().await;
+    let homeserver_pk = testnet.homeserver_app().public_key();
+    let signer = testnet.sdk().unwrap().signer(Keypair::random());
+    let session = signup_with_cookie(&signer, &homeserver_pk).await;
+
+    for (path, content) in files {
+        session
+            .storage()
+            .put(*path, content.to_string())
+            .await
+            .unwrap();
+    }
+    (signer, session)
 }
 
 /// Start a manager that talks to the shared testnet and stores its data in `data_dir`.
@@ -752,6 +755,89 @@ async fn test_cancelled_sign_in_cannot_be_approved() {
     assert_eq!(user.auth_status(), AuthStatus::SignedOut);
 
     user.manager.shutdown().await;
+}
+
+/// Approving a sign-in for a new key backs up the key that approved it, private
+/// data included, without its pubky being entered.
+#[tokio::test]
+#[serial]
+async fn test_sign_in_for_new_key_backs_up_approving_key() {
+    let (signer, _session) = sign_up_with_files(&[
+        ("/priv/secret.txt", "private data"),
+        ("/pub/public.txt", "public data"),
+    ])
+    .await;
+    let pubky = signer.public_key();
+    let data_dir = TempDir::new().unwrap();
+    let manager = start_manager(&data_dir).await;
+
+    let request = manager.start_sign_in_for_new_key().await.unwrap();
+    signer
+        .approve_auth(request.authorization_url())
+        .await
+        .unwrap();
+
+    assert_eq!(request.approved().await.unwrap(), pubky);
+    assert_eq!(manager.get_keys(), vec![pubky.clone()]);
+    assert_eq!(
+        manager.get_key_state(&pubky).unwrap().auth,
+        AuthStatus::SignedIn
+    );
+    let private_copy = manager
+        .keys_dir()
+        .join(pubky.z32())
+        .join("data/priv/secret.txt");
+    wait_until("backup of private data", || async {
+        std::fs::read_to_string(&private_copy).ok().as_deref() == Some("private data")
+    })
+    .await;
+
+    manager.shutdown().await;
+}
+
+/// A sign-in for a new key approved by a key that is already backed up signs
+/// that key in, without adding it twice.
+#[tokio::test]
+#[serial]
+async fn test_sign_in_for_new_key_signs_in_existing_key() {
+    let user = BackedUpUser::create().await;
+
+    let request = user.manager.start_sign_in_for_new_key().await.unwrap();
+    user.signer
+        .approve_auth(request.authorization_url())
+        .await
+        .unwrap();
+
+    assert_eq!(request.approved().await.unwrap(), user.pubky);
+    assert_eq!(user.manager.get_keys(), vec![user.pubky.clone()]);
+    assert_eq!(user.auth_status(), AuthStatus::SignedIn);
+    user.sync_until_backed_up("/priv/secret.txt", Some("private data"))
+        .await;
+
+    user.manager.shutdown().await;
+}
+
+/// A cancelled sign-in for a new key adds no key, even if approved late.
+#[tokio::test]
+#[serial]
+async fn test_cancelled_sign_in_for_new_key_adds_no_key() {
+    let (signer, _session) = sign_up_with_files(&[]).await;
+    let data_dir = TempDir::new().unwrap();
+    let manager = start_manager(&data_dir).await;
+    let request = manager.start_sign_in_for_new_key().await.unwrap();
+    let authorization_url = request.authorization_url().to_string();
+
+    manager.cancel_sign_in_for_new_key();
+
+    assert!(request.approved().await.is_err());
+    // A late approval is never picked up, so the signer is left waiting
+    let late_approval = signer.approve_auth(&authorization_url);
+    assert!(tokio::time::timeout(Duration::from_secs(2), late_approval)
+        .await
+        .is_err());
+    assert!(manager.get_keys().is_empty());
+
+    manager.shutdown().await;
 }
 
 /// Signing out stops the backup of private data but keeps what was backed up,

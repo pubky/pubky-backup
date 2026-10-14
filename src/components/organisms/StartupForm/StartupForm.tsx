@@ -1,11 +1,11 @@
 import { useEffect, useCallback } from "react";
 import { useShallow } from "zustand/react/shallow";
 import * as Atoms from "@/components/atoms";
-import * as Molecules from "@/components/molecules";
 import * as Stores from "@/stores";
 import * as Hooks from "@/hooks";
 import * as Utils from "@/utils";
-import { cn, Logger } from "@/lib";
+import { Logger } from "@/lib";
+import { AddKeyForm } from "../AddKeyForm";
 
 export function StartupForm() {
   const { pubkyInputValue, hasAutoLoaded } = Stores.useUIStore(
@@ -19,8 +19,6 @@ export function StartupForm() {
   const { addKey, isPending: isLoading } = Hooks.useAddKey();
   const keys = Hooks.useKeys();
   const { lastPubky } = Hooks.useLastPubky();
-
-  const hasValue = pubkyInputValue.trim().length > 0;
 
   const handleAddKey = useCallback(
     async (value: string) => {
@@ -53,9 +51,9 @@ export function StartupForm() {
     handleAddKey,
   ]);
 
-  const handleSubmit = () => {
-    void handleAddKey(pubkyInputValue);
-  };
+  const handleSignedIn = useCallback(() => {
+    setScreen("dashboard");
+  }, [setScreen]);
 
   // Determine placeholder based on available keys
   const placeholder =
@@ -64,45 +62,24 @@ export function StartupForm() {
   return (
     <main className="flex flex-col items-center justify-start text-center relative">
       <Atoms.Card>
-        <div className="flex flex-col items-stretch gap-8">
+        <div className="flex flex-col items-stretch gap-6">
           {/* Header */}
-          <div className="flex flex-col items-center gap-2 py-4">
+          <div className="flex flex-col items-center gap-2 pt-4">
             <Atoms.PubkyLogo />
             <h1 className="text-xl font-normal text-text-secondary m-0">
               Securely mirror your Pubky data.
             </h1>
           </div>
 
-          {/* Form content */}
-          <div className="flex flex-col gap-4">
-            <Molecules.PubkyInput
-              value={pubkyInputValue}
-              onChange={setPubkyInputValue}
-              suggestions={keys}
-              placeholder={placeholder}
-            />
-
-            <Atoms.Button
-              onClick={handleSubmit}
-              disabled={!hasValue || isLoading}
-              className={cn(
-                !hasValue && "opacity-30",
-                hasValue && !isLoading && "opacity-100",
-                isLoading && "opacity-100 bg-surface-dark border-border",
-              )}
-            >
-              <span className="text-sm font-bold text-pubky-purple">
-                Backup
-              </span>
-              <Atoms.RefreshIcon
-                className={cn(
-                  "w-4 h-4 text-pubky-purple",
-                  isLoading && "animate-spin",
-                )}
-                size={16}
-              />
-            </Atoms.Button>
-          </div>
+          <AddKeyForm
+            onSignedIn={handleSignedIn}
+            pubkyValue={pubkyInputValue}
+            onPubkyChange={setPubkyInputValue}
+            onSubmitPubky={(value) => void handleAddKey(value)}
+            isAddingPubky={isLoading}
+            suggestions={keys}
+            placeholder={placeholder}
+          />
         </div>
       </Atoms.Card>
     </main>

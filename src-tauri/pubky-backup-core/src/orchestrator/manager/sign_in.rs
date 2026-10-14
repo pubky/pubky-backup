@@ -19,6 +19,10 @@ use crate::orchestrator::auth::{self, SignInFlow, SignInRequest};
 use crate::orchestrator::error::OrchestratorError;
 use crate::orchestrator::types::{ActivityType, AuthStatus, KeyUpdate};
 
+mod new_key;
+
+pub(crate) use new_key::PendingNewKeySignIn;
+
 impl ManagerInner {
     /// Mark a signed-in key's session as expired.
     ///
@@ -75,9 +79,7 @@ impl BackupManager {
             return Err(OrchestratorError::AlreadySignedIn(pubky.to_string()));
         }
         if self.config.developer_mode {
-            return Err(OrchestratorError::AuthFailed(
-                "Signing in needs network access, which developer mode disables".to_string(),
-            ));
+            return Err(sign_in_unavailable_in_developer_mode());
         }
 
         let pubky_client = self.inner.read().pubky_client.clone();
@@ -275,6 +277,12 @@ impl BackupManager {
             return Err(e);
         }
 
+        self.after_sign_in(pubky).await;
+        Ok(())
+    }
+
+    /// Log a key's sign-in and start backing up its private data right away.
+    async fn after_sign_in(&self, pubky: &PublicKey) {
         info!("Signed in to key: {}", pubky);
         self.write_activity(
             pubky,
@@ -285,7 +293,6 @@ impl BackupManager {
         if let Err(e) = self.force_sync(pubky).await {
             warn!("Failed to sync {} after sign-in: {}", pubky, e);
         }
-        Ok(())
     }
 
     /// Store a session and mark its key signed in, provided the key is still
@@ -349,6 +356,13 @@ impl BackupManager {
         let pubky_client = self.inner.read().pubky_client.as_ref().clone();
         auth::end_stored_session(secret, pubky.clone(), pubky_client);
     }
+}
+
+/// The error for a sign-in started in developer mode, which makes no network calls.
+fn sign_in_unavailable_in_developer_mode() -> OrchestratorError {
+    OrchestratorError::AuthFailed(
+        "Signing in needs network access, which developer mode disables".to_string(),
+    )
 }
 
 /// The reason to show for a failed sign-in.

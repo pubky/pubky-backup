@@ -92,6 +92,8 @@ let config = BackupManagerConfig {
 | `delete_key(pubky)` | Stop syncing AND delete all backed-up data |
 | `start_sign_in(pubky)` | Start signing in to a key, to back up its private data too |
 | `cancel_sign_in(pubky)` | Cancel a sign-in that is still awaiting approval |
+| `start_sign_in_for_new_key()` | Start a sign-in that backs up, and signs in, whichever key approves it |
+| `cancel_sign_in_for_new_key()` | Cancel that sign-in if it is still awaiting approval |
 | `sign_out(pubky)` | Sign out of a key, going back to backing up public data only |
 | `force_sync(pubky)` | Trigger immediate sync for a specific key |
 | `get_key_state(pubky)` | Get current state of a specific key |
@@ -144,7 +146,19 @@ request.approved().await?;
 
 The request only asks for read access to `/priv`, and the key's secret never leaves the signer app. The session is stored with the key's backup, so the key stays signed in across restarts.
 
-Instead of awaiting `approved()`, you can drop the request and follow `KeyState::auth` in the status updates:
+The owner doesn't have to enter their pubky first. A sign-in for a new key adds whichever key approves it, if it isn't backed up yet, and signs it in:
+
+```rust
+let request = manager.start_sign_in_for_new_key().await?;
+println!("Approve in Pubky Ring: {}", request.authorization_url());
+
+let pubky = request.approved().await?;
+// `pubky` is now backed up, public and private data alike.
+```
+
+Only one such sign-in is pending at a time, and until it is approved there is no key to report on, so follow it through `approved()`. `cancel_sign_in_for_new_key()` cancels it.
+
+Instead of awaiting `approved()` for a key's own sign-in, you can drop the request and follow `KeyState::auth` in the status updates:
 
 | `AuthStatus` | Meaning | Backed up |
 |--------------|---------|-----------|

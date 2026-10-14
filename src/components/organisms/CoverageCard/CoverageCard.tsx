@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import * as Atoms from "@/components/atoms";
+import * as Molecules from "@/components/molecules";
 import * as Hooks from "@/hooks";
 import * as Stores from "@/stores";
 import * as Utils from "@/utils";
@@ -7,7 +8,6 @@ import type { AuthStatus } from "@/stores/uiStore";
 import { cn, Logger } from "@/lib";
 
 const SIGNED_OUT: AuthStatus = { type: "SignedOut" };
-const COPIED_LABEL_DURATION_MS = 2000;
 
 type PrivateAction = "sign-in" | "cancel" | "sign-out";
 
@@ -104,70 +104,8 @@ function CoverageRow({
   );
 }
 
-interface ApprovalPanelProps {
-  authorizationUrl: string;
-  instructions: string;
-  action: ReactNode;
-}
-
-/** The QR code and link the owner approves a sign-in with. */
-function ApprovalPanel({
-  authorizationUrl,
-  instructions,
-  action,
-}: ApprovalPanelProps) {
-  const [isCopied, setIsCopied] = useState(false);
-
-  useEffect(() => {
-    if (!isCopied) return;
-    const timeout = setTimeout(
-      () => setIsCopied(false),
-      COPIED_LABEL_DURATION_MS,
-    );
-    return () => clearTimeout(timeout);
-  }, [isCopied]);
-
-  const handleCopy = () => {
-    navigator.clipboard
-      .writeText(authorizationUrl)
-      .then(() => setIsCopied(true))
-      .catch((error: unknown) => {
-        Logger.error("CoverageCard", "Failed to copy sign-in link", { error });
-        Stores.useUIStore
-          .getState()
-          .showErrorToast("Failed to copy to clipboard");
-      });
-  };
-
-  return (
-    <div className="flex items-center gap-4">
-      <Atoms.QrCode
-        value={authorizationUrl}
-        label="Sign-in QR code"
-        size={128}
-        className="shrink-0"
-      />
-      <div className="flex flex-col items-start gap-3">
-        <span className="text-sm text-text-light">{instructions}</span>
-        <div className="flex gap-2">
-          <Atoms.Button
-            variant="secondary"
-            onClick={handleCopy}
-            className="py-2 px-4"
-          >
-            <span className="text-white text-sm font-medium">
-              {isCopied ? "Link copied" : "Copy link"}
-            </span>
-          </Atoms.Button>
-          {action}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 interface CoverageCardFrameProps {
-  title: string;
+  title?: string;
   children: ReactNode;
 }
 
@@ -175,9 +113,11 @@ function CoverageCardFrame({ title, children }: CoverageCardFrameProps) {
   return (
     // Padding matches the info cards above, which nest two p-3 containers
     <div className="flex flex-col self-stretch gap-3 p-6 bg-surface-light rounded-lg text-left">
-      <span className="text-xs font-medium uppercase tracking-widest text-text-secondary">
-        {title}
-      </span>
+      {title && (
+        <span className="text-xs font-medium uppercase tracking-widest text-text-secondary">
+          {title}
+        </span>
+      )}
       {children}
     </div>
   );
@@ -188,8 +128,9 @@ export interface CoverageCardProps {
 }
 
 /**
- * Shows which parts of a pubky's data are backed up, and lets its owner sign
- * in to add the private part.
+ * Shows whether a pubky's private data is backed up, and lets its owner sign
+ * in to add it or sign out. Public data is always backed up, which the
+ * dashboard header shows.
  */
 export function CoverageCard({ pubky }: CoverageCardProps) {
   const auth = Stores.useUIStore((s) => s.keyStates[pubky]?.auth) ?? SIGNED_OUT;
@@ -238,7 +179,7 @@ export function CoverageCard({ pubky }: CoverageCardProps) {
   if (auth.type === "AwaitingApproval") {
     return (
       <CoverageCardFrame title="Sign in to back up private data">
-        <ApprovalPanel
+        <Molecules.SignInApproval
           authorizationUrl={auth.authorization_url}
           instructions={privateCoverage.description}
           action={actionButton}
@@ -248,12 +189,7 @@ export function CoverageCard({ pubky }: CoverageCardProps) {
   }
 
   return (
-    <CoverageCardFrame title="What is backed up">
-      <CoverageRow
-        title="Public data"
-        description="Always backed up. No sign-in needed."
-        isCovered
-      />
+    <CoverageCardFrame>
       <CoverageRow
         title="Private data"
         description={privateCoverage.description}

@@ -15,6 +15,7 @@ use pubky_backup_core::{
     BackupManagerConfig, KeyState, KeyStatus,
 };
 use tauri::{
+    ipc::Channel,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, WindowEvent,
@@ -316,6 +317,37 @@ async fn start_sign_in(pubky_str: &str) -> Result<String, BackupAppError> {
     Ok(request.authorization_url().to_string())
 }
 
+/// Sign in to whichever key approves the sign-in, backing it up if it isn't yet.
+///
+/// Sends the link to show to the key's owner through `on_authorization_url`
+/// right away, then returns the key once the owner approves.
+#[tauri::command]
+async fn sign_in_new_key(on_authorization_url: Channel<String>) -> Result<String, BackupAppError> {
+    let manager = get_manager().await?;
+    let request = manager
+        .start_sign_in_for_new_key()
+        .await
+        .map_err(BackupAppError::internal)?;
+    on_authorization_url
+        .send(request.authorization_url().to_string())
+        .map_err(BackupAppError::internal)?;
+
+    let pubky = request.approved().await.map_err(BackupAppError::from)?;
+    manager
+        .write_last_pubky(&pubky)
+        .await
+        .map_err(BackupAppError::internal)?;
+    info!("Signed in to and backing up: {}", pubky);
+    Ok(pubky.z32())
+}
+
+/// Cancel the sign-in started by `sign_in_new_key`, if it awaits approval.
+#[tauri::command]
+async fn cancel_sign_in_new_key() -> Result<(), BackupAppError> {
+    get_manager().await?.cancel_sign_in_for_new_key();
+    Ok(())
+}
+
 /// Cancel a sign-in that is still awaiting approval.
 #[tauri::command]
 async fn cancel_sign_in(pubky_str: &str) -> Result<(), BackupAppError> {
@@ -594,6 +626,8 @@ pub fn run() {
             force_sync_now,
             start_sign_in,
             cancel_sign_in,
+            sign_in_new_key,
+            cancel_sign_in_new_key,
             sign_out,
             open_data_dir,
             open_snapshots_dir,

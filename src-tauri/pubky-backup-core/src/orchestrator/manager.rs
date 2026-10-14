@@ -69,6 +69,8 @@ pub(crate) struct ManagerInner {
     keys: HashMap<PublicKey, ManagedKey>,
     /// Shared pubky client for SDK calls
     pubky_client: Arc<Pubky>,
+    /// A sign-in that adds whichever key approves it, while it awaits approval
+    new_key_sign_in: Option<sign_in::PendingNewKeySignIn>,
 }
 
 /// Snapshot of a key's state values needed by the status listener.
@@ -224,6 +226,7 @@ impl BackupManager {
         let inner = Arc::new(RwLock::new(ManagerInner {
             keys: HashMap::new(),
             pubky_client,
+            new_key_sign_in: None,
         }));
 
         let manager = BackupManager {
@@ -598,6 +601,7 @@ impl BackupManager {
 
     /// Gracefully shutdown all backups, awaiting controller tasks.
     pub async fn shutdown(&self) {
+        self.cancel_sign_in_for_new_key();
         let keys: Vec<PublicKey> = self.get_keys();
 
         let mut handles = Vec::new();
