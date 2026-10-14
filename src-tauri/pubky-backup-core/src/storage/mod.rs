@@ -45,4 +45,4 @@ mod migration;
 
 pub use app::{get_data_directory, AppStorage};
 pub use error::StorageError;
-pub use keys::{KeyStorage, KeysStorage};
+pub use keys::{DataScope, KeyStorage, KeysStorage};

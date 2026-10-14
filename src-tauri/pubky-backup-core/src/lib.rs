@@ -112,11 +112,11 @@ pub use orchestrator::{
 };
 
 // Re-export main types from storage module
-pub use storage::{get_data_directory, AppStorage, StorageError};
+pub use storage::{get_data_directory, AppStorage, DataScope, StorageError};
 
 // Re-export main types from sync module
 pub use sync::{
-    BackupController, ControllerCommand, ControllerStatus, SyncError,
+    BackupController, ControllerCommand, ControllerStatus, SessionSecret, SyncError,
     DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS,
 };
 

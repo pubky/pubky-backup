@@ -303,18 +303,14 @@ async fn delete_key(pubky_str: &str) -> Result<(), BackupAppError> {
 
 /// Start signing in to a key, so that its private data is backed up as well.
 ///
-/// Returns the link to show to the key's owner. The outcome arrives with the
-/// key's state in a `key-update` event.
+/// The link to show to the key's owner, and later the outcome, arrive with the
+/// key's state in `key-update` events.
 #[tauri::command]
-async fn start_sign_in(pubky_str: &str) -> Result<String, BackupAppError> {
+async fn start_sign_in(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = parse_pubky_for_command(pubky_str)?;
-    let request = get_manager()
-        .await?
-        .start_sign_in(&pubky)
-        .await
-        .map_err(BackupAppError::internal)?;
+    get_manager().await?.start_sign_in(&pubky).await?;
     debug!("Sign-in started for: {}", pubky);
-    Ok(request.authorization_url().to_string())
+    Ok(())
 }
 
 /// Sign in to whichever key approves the sign-in, backing it up if it isn't yet.
@@ -324,15 +320,12 @@ async fn start_sign_in(pubky_str: &str) -> Result<String, BackupAppError> {
 #[tauri::command]
 async fn sign_in_new_key(on_authorization_url: Channel<String>) -> Result<String, BackupAppError> {
     let manager = get_manager().await?;
-    let request = manager
-        .start_sign_in_for_new_key()
-        .await
-        .map_err(BackupAppError::internal)?;
+    let request = manager.start_sign_in_for_new_key().await?;
     on_authorization_url
         .send(request.authorization_url().to_string())
         .map_err(BackupAppError::internal)?;
 
-    let pubky = request.approved().await.map_err(BackupAppError::from)?;
+    let pubky = request.approved().await?;
     manager
         .write_last_pubky(&pubky)
         .await
@@ -352,22 +345,15 @@ async fn cancel_sign_in_new_key() -> Result<(), BackupAppError> {
 #[tauri::command]
 async fn cancel_sign_in(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = parse_pubky_for_command(pubky_str)?;
-    get_manager()
-        .await?
-        .cancel_sign_in(&pubky)
-        .await
-        .map_err(BackupAppError::internal)
+    get_manager().await?.cancel_sign_in(&pubky).await?;
+    Ok(())
 }
 
 /// Sign out of a key, so that only its public data is backed up.
 #[tauri::command]
 async fn sign_out(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = parse_pubky_for_command(pubky_str)?;
-    get_manager()
-        .await?
-        .sign_out(&pubky)
-        .await
-        .map_err(BackupAppError::internal)?;
+    get_manager().await?.sign_out(&pubky).await?;
     debug!("Signed out of: {}", pubky);
     Ok(())
 }

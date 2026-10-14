@@ -3,8 +3,31 @@
 //! Sessions use the SDK's cookie authentication. The SDK deprecates it in
 //! favour of grants, but cookie auth is what we use.
 
+use std::fmt;
+
 use pubky::errors::RequestError;
 use pubky::{Pubky, PubkySession, StatusCode};
+
+/// The secret a session is stored as, as passed between the sync layer and
+/// whoever manages the session. Its `Debug` output hides the secret.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SessionSecret(String);
+
+impl SessionSecret {
+    pub(crate) fn new(secret: String) -> Self {
+        Self(secret)
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SessionSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SessionSecret(..)")
+    }
+}
 
 /// Restore a session from the secret it was stored as.
 ///

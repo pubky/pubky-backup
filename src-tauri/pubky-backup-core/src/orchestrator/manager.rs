@@ -27,13 +27,15 @@ use super::session;
 use super::status::{current_unix_timestamp, next_sync_time, spawn_status_listener};
 use super::sync_interval::SyncInterval;
 use super::types::{
-    ActivityEntry, ActivityType, BackupManagerConfig, KeyError, KeyErrorCode, KeyState, KeyStatus,
-    KeyUpdate,
+    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyErrorCode, KeyState,
+    KeyStatus, KeyUpdate,
 };
 use crate::storage::AppStorage;
 use crate::sync::{BackupController, ControllerCommand, ControllerStatus};
 
 mod sign_in;
+
+use sign_in::PendingSignIn;
 
 /// Maximum number of keys that can be backed up simultaneously.
 ///
@@ -56,12 +58,25 @@ const TESTNET_HTTP_RELAY: &str = "http://localhost:15412/link/";
 struct ManagedKey {
     /// Sender for control messages to the backup controller (mpsc - single receiver)
     control_tx: mpsc::Sender<ControllerCommand>,
-    /// Current state of the key
-    state: KeyState,
+    /// State as the key's controller last reported it. Its `auth` is unused:
+    /// controllers don't know the sign-in status, which is kept in `auth`.
+    sync_state: KeyState,
+    /// Whether the key is signed in
+    auth: AuthStatus,
     /// Handle to the controller task
     task_handle: JoinHandle<()>,
-    /// Handle to the task waiting for a pending sign-in to be approved
-    sign_in_task: Option<JoinHandle<()>>,
+    /// A sign-in of this key that awaits approval
+    pending_sign_in: Option<PendingSignIn>,
+}
+
+impl ManagedKey {
+    /// The key's state, as reported to subscribers.
+    fn state(&self) -> KeyState {
+        KeyState {
+            auth: self.auth.clone(),
+            ..self.sync_state.clone()
+        }
+    }
 }
 
 pub(crate) struct ManagerInner {
@@ -70,7 +85,9 @@ pub(crate) struct ManagerInner {
     /// Shared pubky client for SDK calls
     pubky_client: Arc<Pubky>,
     /// A sign-in that adds whichever key approves it, while it awaits approval
-    new_key_sign_in: Option<sign_in::PendingNewKeySignIn>,
+    new_key_sign_in: Option<PendingSignIn>,
+    /// Set by [`BackupManager::shutdown`], after which no key is added
+    is_shut_down: bool,
 }
 
 /// Snapshot of a key's state values needed by the status listener.
@@ -85,26 +102,23 @@ impl ManagerInner {
     /// Get a snapshot of a key's current state, or `None` if the key is not tracked.
     pub(crate) fn key_snapshot(&self, pubky: &PublicKey) -> Option<KeySnapshot> {
         self.keys.get(pubky).map(|m| KeySnapshot {
-            data_size: m.state.data_size,
-            last_sync: m.state.last_sync,
-            next_sync: m.state.next_sync,
-            status: m.state.status.clone(),
+            data_size: m.sync_state.data_size,
+            last_sync: m.sync_state.last_sync,
+            next_sync: m.sync_state.next_sync,
+            status: m.sync_state.status.clone(),
         })
     }
 
     /// Apply a state derived from a controller status update and return the
     /// state the key now has, or `None` if the key is not tracked.
-    ///
-    /// Controllers don't know a key's sign-in status, so the current one is kept.
     pub(crate) fn apply_controller_state(
         &mut self,
         pubky: &PublicKey,
-        mut state: KeyState,
+        state: KeyState,
     ) -> Option<KeyState> {
         let managed = self.keys.get_mut(pubky)?;
-        state.auth = managed.state.auth.clone();
-        managed.state = state.clone();
-        Some(state)
+        managed.sync_state = state;
+        Some(managed.state())
     }
 }
 
@@ -227,6 +241,7 @@ impl BackupManager {
             keys: HashMap::new(),
             pubky_client,
             new_key_sign_in: None,
+            is_shut_down: false,
         }));
 
         let manager = BackupManager {
@@ -315,8 +330,8 @@ impl BackupManager {
                 .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?
         };
 
-        if let Some(sign_in_task) = &managed_key.sign_in_task {
-            sign_in_task.abort();
+        if let Some(pending) = managed_key.pending_sign_in {
+            pending.cancel();
         }
 
         if managed_key
@@ -458,7 +473,7 @@ impl BackupManager {
     /// Returns `None` if the key is not being backed up.
     pub fn get_key_state(&self, pubky: &PublicKey) -> Option<KeyState> {
         let inner = self.inner.read();
-        inner.keys.get(pubky).map(|k| k.state.clone())
+        inner.keys.get(pubky).map(ManagedKey::state)
     }
 
     /// Get current state of all managed keys.
@@ -469,7 +484,7 @@ impl BackupManager {
         inner
             .keys
             .iter()
-            .map(|(pubky, managed)| (pubky.z32(), managed.state.clone()))
+            .map(|(pubky, managed)| (pubky.z32(), managed.state()))
             .collect()
     }
 
@@ -485,7 +500,7 @@ impl BackupManager {
         inner
             .keys
             .values()
-            .any(|k| matches!(k.state.status, KeyStatus::Syncing { .. }))
+            .any(|k| matches!(k.sync_state.status, KeyStatus::Syncing { .. }))
     }
 
     /// Check if any key has an error.
@@ -494,7 +509,7 @@ impl BackupManager {
         inner
             .keys
             .values()
-            .any(|k| matches!(k.state.status, KeyStatus::Error))
+            .any(|k| matches!(k.sync_state.status, KeyStatus::Error))
     }
 
     /// Check if any key is running (not stopped).
@@ -503,7 +518,7 @@ impl BackupManager {
         inner
             .keys
             .values()
-            .any(|k| !matches!(k.state.status, KeyStatus::Stopped))
+            .any(|k| !matches!(k.sync_state.status, KeyStatus::Stopped))
     }
 
     /// Create a snapshot (zip) for a key.
@@ -601,6 +616,9 @@ impl BackupManager {
 
     /// Gracefully shutdown all backups, awaiting controller tasks.
     pub async fn shutdown(&self) {
+        // Keys added from here on, e.g. by a sign-in that was just approved,
+        // would otherwise outlive the shutdown
+        self.inner.write().is_shut_down = true;
         self.cancel_sign_in_for_new_key();
         let keys: Vec<PublicKey> = self.get_keys();
 
@@ -696,30 +714,46 @@ impl BackupManager {
         }
     }
 
-    /// Register a key in the manager: broadcast its state and insert into the keys map.
+    /// Register a key in the manager: insert it into the keys map and broadcast
+    /// its state. Its sign-in status comes from its stored session.
+    ///
+    /// # Errors
+    ///
+    /// Returns `OrchestratorError::Internal`, and stops the key's controller, if
+    /// the manager has shut down.
     fn register_key(
         &self,
         pubky: PublicKey,
-        state: KeyState,
+        sync_state: KeyState,
         control_tx: mpsc::Sender<ControllerCommand>,
         task_handle: JoinHandle<()>,
-    ) {
+    ) -> Result<(), OrchestratorError> {
+        let managed = ManagedKey {
+            control_tx,
+            sync_state,
+            auth: self.stored_auth_status(&pubky),
+            task_handle,
+            pending_sign_in: None,
+        };
+        let state = managed.state();
+
+        {
+            let mut inner = self.inner.write();
+            if inner.is_shut_down {
+                managed.task_handle.abort();
+                return Err(OrchestratorError::Internal(
+                    "The backup manager has shut down".to_string(),
+                ));
+            }
+            inner.keys.insert(pubky.clone(), managed);
+        }
+
         let receivers = self.update_tx.send(KeyUpdate {
             pubky: pubky.clone(),
-            state: state.clone(),
+            state,
         });
         debug!("Broadcast state for {} (receivers: {:?})", pubky, receivers);
-
-        let mut inner = self.inner.write();
-        inner.keys.insert(
-            pubky,
-            ManagedKey {
-                control_tx,
-                state,
-                task_handle,
-                sign_in_task: None,
-            },
-        );
+        Ok(())
     }
 
     /// Start the backup controller for a key.
@@ -742,7 +776,6 @@ impl BackupManager {
             status: KeyStatus::Starting,
             data_size: initial_size,
             next_sync: Some(next_sync_time(sync_interval_secs)),
-            auth: self.stored_auth_status(&pubky),
             ..Default::default()
         };
 
@@ -774,9 +807,7 @@ impl BackupManager {
             controller.run().await;
         });
 
-        self.register_key(pubky, initial_state, control_tx, task_handle);
-
-        Ok(())
+        self.register_key(pubky, initial_state, control_tx, task_handle)
     }
 
     /// Resume all keys that have stored data on disk
@@ -846,12 +877,13 @@ impl BackupManager {
             status: KeyStatus::Error,
             data_size: self.storage.calculate_pubky_size(&pubky).await,
             error: Some(error),
-            auth: self.stored_auth_status(&pubky),
             ..Default::default()
         };
 
         let task_handle = tokio::spawn(async {});
-        self.register_key(pubky, error_state, control_tx, task_handle);
+        if let Err(e) = self.register_key(pubky.clone(), error_state, control_tx, task_handle) {
+            warn!("Failed to register errored key {}: {}", pubky, e);
+        }
     }
 }
 

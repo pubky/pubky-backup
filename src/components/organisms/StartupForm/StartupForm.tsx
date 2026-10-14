@@ -1,59 +1,16 @@
-import { useEffect, useCallback } from "react";
-import { useShallow } from "zustand/react/shallow";
+import { useCallback } from "react";
 import * as Atoms from "@/components/atoms";
 import * as Stores from "@/stores";
 import * as Hooks from "@/hooks";
-import * as Utils from "@/utils";
-import { Logger } from "@/lib";
 import { AddKeyForm } from "../AddKeyForm";
 
 export function StartupForm() {
-  const { pubkyInputValue, hasAutoLoaded } = Stores.useUIStore(
-    useShallow((s) => ({
-      pubkyInputValue: s.pubkyInputValue,
-      hasAutoLoaded: s.hasAutoLoaded,
-    })),
-  );
-  const { setPubkyInputValue, setScreen, setHasAutoLoaded } =
-    Stores.useUIStore.getState();
-  const { addKey, isPending: isLoading } = Hooks.useAddKey();
   const keys = Hooks.useKeys();
-  const { lastPubky } = Hooks.useLastPubky();
+  const { isResuming } = Hooks.useResumeLastPubky();
 
-  const handleAddKey = useCallback(
-    async (value: string) => {
-      const trimmedValue = value.trim();
-      if (!trimmedValue) return;
-
-      try {
-        await addKey({ pubkyValue: trimmedValue });
-        setScreen("dashboard");
-      } catch (error: unknown) {
-        Logger.error("StartupForm", "Add key error", { error });
-        Utils.handleBackendError(error);
-      }
-    },
-    [addKey, setScreen],
-  );
-
-  // Auto-load last pubky on mount (only once per app session)
-  useEffect(() => {
-    if (lastPubky && !hasAutoLoaded) {
-      setHasAutoLoaded(true);
-      setPubkyInputValue(lastPubky);
-      void handleAddKey(lastPubky);
-    }
-  }, [
-    lastPubky,
-    hasAutoLoaded,
-    setHasAutoLoaded,
-    setPubkyInputValue,
-    handleAddKey,
-  ]);
-
-  const handleSignedIn = useCallback(() => {
-    setScreen("dashboard");
-  }, [setScreen]);
+  const handleAdded = useCallback(() => {
+    Stores.useUIStore.getState().setScreen("dashboard");
+  }, []);
 
   // Determine placeholder based on available keys
   const placeholder =
@@ -71,15 +28,18 @@ export function StartupForm() {
             </h1>
           </div>
 
-          <AddKeyForm
-            onSignedIn={handleSignedIn}
-            pubkyValue={pubkyInputValue}
-            onPubkyChange={setPubkyInputValue}
-            onSubmitPubky={(value) => void handleAddKey(value)}
-            isAddingPubky={isLoading}
-            suggestions={keys}
-            placeholder={placeholder}
-          />
+          {isResuming ? (
+            <div className="flex items-center justify-center gap-3 py-8 text-text-secondary">
+              <Atoms.Spinner />
+              <span className="text-sm">Opening your backup...</span>
+            </div>
+          ) : (
+            <AddKeyForm
+              onAdded={handleAdded}
+              suggestions={keys}
+              placeholder={placeholder}
+            />
+          )}
         </div>
       </Atoms.Card>
     </main>

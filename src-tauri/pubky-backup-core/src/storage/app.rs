@@ -5,7 +5,7 @@
 use super::common::Storage;
 use super::config::ConfigStorage;
 use super::error::StorageError;
-use super::keys::{KeyStorage, KeysStorage};
+use super::keys::{DataScope, KeyStorage, KeysStorage};
 use super::migration::remove_legacy_data;
 use crate::orchestrator::types::ActivityEntry;
 use log::{error, info, warn};
@@ -225,61 +225,38 @@ impl AppStorage {
         key_storage.read_data(resource).await
     }
 
-    /// Write cursor to track backup progress for a specific pubky.
+    /// Write the cursor tracking backup progress of one scope of a pubky's data.
     ///
-    /// The cursor tracks the last processed event from the homeserver's event stream.
-    ///
-    /// # Arguments
-    ///
-    /// * `pubky` - The public key to track progress for
-    /// * `cursor_value` - The cursor value (event ID) from the last processed event
+    /// The cursor is the last processed event from the homeserver's event stream.
     pub async fn write_cursor(
         &self,
         pubky: &PublicKey,
+        scope: DataScope,
         cursor_value: u64,
     ) -> Result<(), StorageError> {
-        let key_storage = self.key_storage(pubky)?;
-        key_storage.write_cursor(cursor_value).await
+        self.key_storage(pubky)?
+            .write_cursor(scope, cursor_value)
+            .await
     }
 
-    /// Read the backup progress cursor for a specific pubky.
-    ///
-    /// # Arguments
-    ///
-    /// * `pubky` - The public key to read the cursor for
-    ///
-    /// # Returns
-    ///
-    /// The cursor value, or `None` if no cursor exists yet
-    pub async fn read_cursor(&self, pubky: &PublicKey) -> Result<Option<u64>, StorageError> {
-        let key_storage = self.key_storage(pubky)?;
-        key_storage.read_cursor().await
-    }
-
-    /// Write the cursor tracking backup progress of a pubky's private data.
-    ///
-    /// Private data is synced separately from public data, so it has its own cursor.
-    pub async fn write_private_cursor(
+    /// Read the cursor tracking backup progress of one scope of a pubky's data,
+    /// or `None` if that scope has not been synced yet.
+    pub async fn read_cursor(
         &self,
         pubky: &PublicKey,
-        cursor_value: u64,
-    ) -> Result<(), StorageError> {
-        let key_storage = self.key_storage(pubky)?;
-        key_storage.write_private_cursor(cursor_value).await
-    }
-
-    /// Read the cursor tracking backup progress of a pubky's private data.
-    ///
-    /// Returns `None` if no private data has been synced yet.
-    pub async fn read_private_cursor(
-        &self,
-        pubky: &PublicKey,
+        scope: DataScope,
     ) -> Result<Option<u64>, StorageError> {
-        let key_storage = self.key_storage(pubky)?;
-        key_storage.read_private_cursor().await
+        self.key_storage(pubky)?.read_cursor(scope).await
     }
 
-    /// Store the session secret of a signed-in pubky.
+    /// Store the session secret of a signed-in pubky, for a [`BackupController`]
+    /// to sync its private data with.
+    ///
+    /// Not for pubkys a [`BackupManager`] backs up: sign them in through the
+    /// manager instead, which keeps their sign-in status in step with this secret.
+    ///
+    /// [`BackupController`]: crate::BackupController
+    /// [`BackupManager`]: crate::BackupManager
     pub fn write_session_secret(
         &self,
         pubky: &PublicKey,
@@ -295,12 +272,15 @@ impl AppStorage {
 
     /// Remove the stored session secret of a pubky and return it, or `None` if
     /// it is not signed in.
-    pub fn take_session_secret(&self, pubky: &PublicKey) -> Result<Option<String>, StorageError> {
+    pub(crate) fn take_session_secret(
+        &self,
+        pubky: &PublicKey,
+    ) -> Result<Option<String>, StorageError> {
         self.key_storage(pubky)?.take_session_secret()
     }
 
     /// Delete the stored session secret of a pubky. Does nothing if there is none.
-    pub fn delete_session_secret(&self, pubky: &PublicKey) -> Result<(), StorageError> {
+    pub(crate) fn delete_session_secret(&self, pubky: &PublicKey) -> Result<(), StorageError> {
         self.key_storage(pubky)?.delete_session_secret()
     }
 
@@ -591,10 +571,16 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Write cursor
-        storage.write_cursor(&pubky, 123).await.unwrap();
+        storage
+            .write_cursor(&pubky, DataScope::Public, 123)
+            .await
+            .unwrap();
 
         // Read cursor back
-        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        let cursor = storage
+            .read_cursor(&pubky, DataScope::Public)
+            .await
+            .unwrap();
         assert_eq!(cursor, Some(123));
     }
 
@@ -604,11 +590,17 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Read cursor before writing - should return None
-        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        let cursor = storage
+            .read_cursor(&pubky, DataScope::Public)
+            .await
+            .unwrap();
         assert_eq!(cursor, None);
 
         // Should be able to read it again
-        let cursor2 = storage.read_cursor(&pubky).await.unwrap();
+        let cursor2 = storage
+            .read_cursor(&pubky, DataScope::Public)
+            .await
+            .unwrap();
         assert_eq!(cursor2, None);
     }
 

@@ -16,7 +16,7 @@
 use pubky::{Keypair, PubkyResource, PubkySession, PubkySigner, PublicKey};
 use pubky_backup_core::{
     AppStorage, AuthStatus, BackupController, BackupManager, BackupManagerConfig,
-    ControllerCommand, ControllerStatus, KeyState, KeyStatus, OrchestratorError,
+    ControllerCommand, ControllerStatus, DataScope, KeyState, KeyStatus, OrchestratorError,
 };
 use pubky_testnet::{docker_postgres::DockerPostgres, EphemeralTestnet};
 use serial_test::serial;
@@ -191,7 +191,10 @@ async fn test_backup_sync_put_delete_and_cursor() {
     );
 
     // === Part 3: Test cursor persistence ===
-    let cursor1 = storage.read_cursor(&user_pk).await.unwrap();
+    let cursor1 = storage
+        .read_cursor(&user_pk, DataScope::Public)
+        .await
+        .unwrap();
     assert!(cursor1.is_some(), "Cursor should be saved after first sync");
 
     // Write more data
@@ -205,7 +208,10 @@ async fn test_backup_sync_put_delete_and_cursor() {
     run_controller_until_idle(user_pk.clone(), storage.clone(), pubky_client.clone()).await;
 
     // Cursor should have advanced
-    let cursor2 = storage.read_cursor(&user_pk).await.unwrap();
+    let cursor2 = storage
+        .read_cursor(&user_pk, DataScope::Public)
+        .await
+        .unwrap();
     assert!(cursor2.is_some());
     assert!(
         cursor2 > cursor1,
@@ -932,6 +938,42 @@ async fn test_rejected_session_falls_back_to_public_backup() {
     user.sign_in().await;
     user.sync_until_backed_up("/priv/unreadable.txt", Some("written after rejection"))
         .await;
+
+    user.manager.shutdown().await;
+}
+
+/// A failure while syncing private data, other than a rejected session, leaves
+/// the backup of public data and the key's status untouched.
+#[tokio::test]
+#[serial]
+async fn test_private_sync_failure_does_not_fail_public_backup() {
+    let user = BackedUpUser::create().await;
+    user.sign_in().await;
+    user.sync_until_backed_up("/priv/secret.txt", Some("private data"))
+        .await;
+
+    // Make the private cursor unreadable, so every private sync fails
+    let private_cursor = user
+        .manager
+        .keys_dir()
+        .join(user.pubky.z32())
+        .join("state/private_cursor");
+    std::fs::remove_file(&private_cursor).unwrap();
+    std::fs::create_dir(&private_cursor).unwrap();
+
+    user.session
+        .storage()
+        .put("/pub/later.txt", "public after failure")
+        .await
+        .unwrap();
+    user.sync_until_backed_up("/pub/later.txt", Some("public after failure"))
+        .await;
+    user.wait_for_state("an idle sync", |state| state.status == KeyStatus::Idle)
+        .await;
+
+    let state = user.manager.get_key_state(&user.pubky).unwrap();
+    assert!(state.error.is_none());
+    assert_eq!(state.auth, AuthStatus::SignedIn);
 
     user.manager.shutdown().await;
 }

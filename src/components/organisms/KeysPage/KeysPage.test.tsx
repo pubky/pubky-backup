@@ -16,6 +16,8 @@ vi.mock("@/services", () => ({
   addKey: vi.fn(),
   setLastPubky: vi.fn(),
   removeKey: vi.fn(),
+  signInNewKey: vi.fn(),
+  cancelSignInNewKey: vi.fn(),
 }));
 
 describe("KeysPage", () => {
@@ -388,7 +390,7 @@ describe("KeysPage", () => {
       });
     });
 
-    it("should disable adding and cancelling while adding", async () => {
+    it("should disable adding while adding", async () => {
       let resolveAdd: (value: string) => void;
       vi.mocked(services.addKey).mockImplementation(
         () =>
@@ -412,12 +414,32 @@ describe("KeysPage", () => {
       expect(
         screen.getByRole("button", { name: /back up public data/i }),
       ).toBeDisabled();
-      expect(screen.getByRole("button", { name: /cancel/i })).toBeDisabled();
 
       // Resolve the pending promise to avoid act() warning
       await act(async () => {
         resolveAdd!("done");
       });
+    });
+
+    it("should close the add view and show the pubky a sign-in added", async () => {
+      vi.mocked(services.signInNewKey).mockResolvedValue("signed-in-pubky");
+      useUIStore.setState({ currentPage: "keys" });
+
+      render(<KeysPage />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: /sign in with pubky ring/i }),
+      );
+
+      await waitFor(() => {
+        expect(useUIStore.getState().currentPage).toBe("sync");
+      });
+      expect(useUIStore.getState().lastPubky).toBe("signed-in-pubky");
+      expect(
+        screen.queryByPlaceholderText(/enter pubky to add/i),
+      ).not.toBeInTheDocument();
     });
   });
 });

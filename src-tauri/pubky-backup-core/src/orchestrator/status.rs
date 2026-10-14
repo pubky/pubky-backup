@@ -75,7 +75,8 @@ impl StatusHandler {
                 }
             }
             ControllerStatus::Ended { .. } => self.base_state(KeyStatus::Stopped),
-            // Only private data stopped syncing, so the sync status itself is unchanged
+            // Not a change of sync status: the listener handles it with the
+            // key's sign-in status instead
             ControllerStatus::SessionRejected { .. } => {
                 self.base_state(self.previous_status.clone())
             }
@@ -141,11 +142,6 @@ impl StatusHandler {
                 message: message.clone(),
                 timestamp: now,
             }),
-            ControllerStatus::SessionRejected { .. } => Some(ActivityEntry {
-                activity_type: ActivityType::SessionExpired,
-                message: "Session expired — sign in again to back up private data".to_string(),
-                timestamp: now,
-            }),
             _ => None,
         }
     }
@@ -187,6 +183,22 @@ pub(crate) fn spawn_status_listener(
     tokio::spawn(async move {
         loop {
             match status_rx.recv().await {
+                Ok(ControllerStatus::SessionRejected { pubky, secret }) => {
+                    let expired = inner.write().expire_session(&storage, &pubky, &secret);
+                    let Some(state) = expired else {
+                        continue;
+                    };
+                    let entry = ActivityEntry {
+                        activity_type: ActivityType::SessionExpired,
+                        message: "Session expired — sign in again to back up private data"
+                            .to_string(),
+                        timestamp: current_unix_timestamp(),
+                    };
+                    if let Err(e) = storage.write_activity(&pubky, &entry).await {
+                        warn!("Failed to write activity for {}: {}", pubky, e);
+                    }
+                    let _ = update_tx.send(KeyUpdate { pubky, state });
+                }
                 Ok(status) => {
                     let pubky = status.pubky().clone();
 
@@ -210,14 +222,8 @@ pub(crate) fn spawn_status_listener(
 
                     let new_state = handler.handle(&status).await;
 
-                    let applied = {
-                        let mut inner_write = inner.write();
-                        if matches!(status, ControllerStatus::SessionRejected { .. }) {
-                            inner_write.expire_session(&pubky);
-                        }
-                        inner_write.apply_controller_state(&pubky, new_state)
-                    };
                     // Skip the broadcast if the key was removed while handling the update
+                    let applied = inner.write().apply_controller_state(&pubky, new_state);
                     let Some(new_state) = applied else {
                         continue;
                     };
@@ -487,29 +493,5 @@ mod tests {
         assert!(matches!(state.status, KeyStatus::Starting));
         assert_eq!(state.data_size, 1234);
         assert!(state.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_session_rejected_keeps_sync_status_and_writes_activity() {
-        let (_dir, storage, pubky) = setup();
-
-        let prev = KeyStatus::Syncing {
-            events_processed: 3,
-        };
-        let state = handler(&pubky, &storage, 100, Some(500), prev.clone())
-            .handle(&ControllerStatus::SessionRejected {
-                pubky: pubky.clone(),
-            })
-            .await;
-
-        // Public data keeps syncing, so this is not a sync error
-        assert_eq!(state.status, prev);
-        assert!(state.error.is_none());
-        assert_eq!(state.data_size, 100);
-        assert_eq!(state.last_sync, Some(500));
-
-        let entries = storage.read_activity(&pubky, 10).await;
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].activity_type, ActivityType::SessionExpired);
     }
 }

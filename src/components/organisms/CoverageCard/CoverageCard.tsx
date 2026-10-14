@@ -7,8 +7,6 @@ import * as Utils from "@/utils";
 import type { AuthStatus } from "@/stores/uiStore";
 import { cn, Logger } from "@/lib";
 
-const SIGNED_OUT: AuthStatus = { type: "SignedOut" };
-
 type PrivateAction = "sign-in" | "cancel" | "sign-out";
 
 interface PrivateCoverage {
@@ -133,7 +131,8 @@ export interface CoverageCardProps {
  * dashboard header shows.
  */
 export function CoverageCard({ pubky }: CoverageCardProps) {
-  const auth = Stores.useUIStore((s) => s.keyStates[pubky]?.auth) ?? SIGNED_OUT;
+  const auth =
+    Stores.useUIStore((s) => s.keyStates[pubky]?.auth) ?? Utils.SIGNED_OUT;
   const { startSignIn, cancelSignIn, signOut, isPending } = Hooks.useSignIn();
 
   const privateCoverage = describePrivateCoverage(auth);

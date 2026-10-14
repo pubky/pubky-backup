@@ -4,36 +4,116 @@
 //! [`auth`](crate::orchestrator::auth). This module keeps each key's
 //! [`AuthStatus`] and stored session in step with them.
 //!
-//! A key's status and its stored session only change together, under the
-//! manager's state lock (see [`BackupManager::update_auth`]). Otherwise a
-//! sign-in approved in the same instant as it is cancelled could leave a
-//! session stored, and private data syncing, for a key that shows as signed out.
+//! A key's status, its pending sign-in and its stored session only change
+//! together, under the manager's state lock (see [`BackupManager::update_key`]).
+//! Otherwise a sign-in approved in the same instant as it is cancelled could
+//! leave a session stored, and private data syncing, for a key that shows as
+//! signed out.
+//!
+//! A pending sign-in waits for its approval in a background task. Once the
+//! approval arrives, the task claims the sign-in, which takes it out of the
+//! manager: from then on it can no longer be cancelled or replaced, so it is
+//! never cut off half done.
+
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use log::{info, warn};
 use pubky::{PubkySession, PublicKey};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use super::{BackupManager, ManagerInner};
+use super::{BackupManager, ManagedKey, ManagerInner};
 use crate::orchestrator::auth::{self, SignInFlow, SignInRequest};
 use crate::orchestrator::error::OrchestratorError;
-use crate::orchestrator::types::{ActivityType, AuthStatus, KeyUpdate};
+use crate::orchestrator::types::{ActivityType, AuthStatus, KeyState, KeyUpdate};
+use crate::storage::AppStorage;
+use crate::sync::SessionSecret;
 
 mod new_key;
 
-pub(crate) use new_key::PendingNewKeySignIn;
+/// Source of the ids that tell sign-ins apart.
+static NEXT_SIGN_IN_ID: AtomicU64 = AtomicU64::new(0);
+
+/// A sign-in that awaits approval in a background task.
+pub(crate) struct PendingSignIn {
+    /// Tells this sign-in apart from the ones that replace it
+    id: u64,
+    /// The task waiting for the approval
+    task: JoinHandle<()>,
+}
+
+impl PendingSignIn {
+    fn next_id() -> u64 {
+        NEXT_SIGN_IN_ID.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Stop waiting for the approval.
+    pub(super) fn cancel(self) {
+        self.task.abort();
+    }
+}
+
+/// Put `next` in place of the pending sign-in in `slot`, cancelling that one.
+///
+/// Returns whether there was one to cancel.
+fn replace_pending_sign_in(slot: &mut Option<PendingSignIn>, next: Option<PendingSignIn>) -> bool {
+    let replaced = std::mem::replace(slot, next);
+    let had_one = replaced.is_some();
+    if let Some(replaced) = replaced {
+        replaced.cancel();
+    }
+    had_one
+}
+
+/// What a sign-in is for, which decides where it is kept while pending.
+#[derive(Clone, Copy)]
+enum SignInTarget<'a> {
+    /// A key that is backed up, which keeps its own pending sign-in
+    Key(&'a PublicKey),
+    /// Whichever key approves it, kept by the manager
+    NewKey,
+}
 
 impl ManagerInner {
-    /// Mark a signed-in key's session as expired.
+    /// Where the pending sign-in for `target` is kept, or `None` if its key is
+    /// not tracked.
+    fn pending_sign_in(&mut self, target: SignInTarget<'_>) -> Option<&mut Option<PendingSignIn>> {
+        match target {
+            SignInTarget::Key(pubky) => self.keys.get_mut(pubky).map(|k| &mut k.pending_sign_in),
+            SignInTarget::NewKey => Some(&mut self.new_key_sign_in),
+        }
+    }
+
+    /// Mark a key's session as expired after the homeserver rejected it, and
+    /// forget the stored session.
     ///
-    /// Leaves other sign-in statuses alone, so a late rejection of an old
-    /// session doesn't interrupt a new sign-in.
-    pub(crate) fn expire_session(&mut self, pubky: &PublicKey) {
-        if let Some(managed) = self.keys.get_mut(pubky) {
-            if managed.state.auth == AuthStatus::SignedIn {
-                managed.state.auth = AuthStatus::SessionExpired;
+    /// Does nothing if `rejected` is no longer the key's stored session: the key
+    /// may have signed out, or signed in again, since. Returns the key's new
+    /// state if its status changed.
+    pub(crate) fn expire_session(
+        &mut self,
+        storage: &AppStorage,
+        pubky: &PublicKey,
+        rejected: &SessionSecret,
+    ) -> Option<KeyState> {
+        let managed = self.keys.get_mut(pubky)?;
+        match storage.read_session_secret(pubky) {
+            Ok(Some(stored)) if stored == rejected.as_str() => {}
+            Ok(_) => return None,
+            Err(e) => {
+                warn!("Failed to read session of {}: {}", pubky, e);
+                return None;
             }
         }
+
+        if let Err(e) = storage.delete_session_secret(pubky) {
+            warn!("Failed to delete rejected session of {}: {}", pubky, e);
+        }
+        if managed.auth != AuthStatus::SignedIn {
+            return None;
+        }
+        managed.auth = AuthStatus::SessionExpired;
+        Some(managed.state())
     }
 }
 
@@ -78,39 +158,62 @@ impl BackupManager {
         if self.auth_status(pubky)? == AuthStatus::SignedIn {
             return Err(OrchestratorError::AlreadySignedIn(pubky.to_string()));
         }
-        if self.config.developer_mode {
-            return Err(sign_in_unavailable_in_developer_mode());
-        }
-
-        let pubky_client = self.inner.read().pubky_client.clone();
-        let flow = auth::start_sign_in_flow(&pubky_client, self.config.http_relay.as_ref())?;
+        let flow = self.start_sign_in_flow()?;
         let authorization_url = flow.authorization_url().to_string();
-        let pending = AuthStatus::AwaitingApproval {
-            authorization_url: authorization_url.clone(),
+
+        let (outcome_tx, outcome_rx) = oneshot::channel();
+        let id = PendingSignIn::next_id();
+        let manager = self.clone();
+        let key = pubky.clone();
+        let wait_for_approval = async move {
+            let outcome = manager.finish_sign_in(&key, id, flow).await;
+            // Nobody is listening if the caller follows the key's status instead
+            let _ = outcome_tx.send(outcome);
         };
 
-        self.update_auth(pubky, |auth| *auth = pending.clone());
-        let outcome = self.spawn_sign_in_task(pubky, flow, pending);
+        self.update_key(pubky, |managed| {
+            // Checked again here, as the key may have signed in meanwhile
+            if managed.auth == AuthStatus::SignedIn {
+                return Err(OrchestratorError::AlreadySignedIn(pubky.to_string()));
+            }
+            managed.auth = AuthStatus::AwaitingApproval {
+                authorization_url: authorization_url.clone(),
+            };
+            let task = tokio::spawn(wait_for_approval);
+            replace_pending_sign_in(
+                &mut managed.pending_sign_in,
+                Some(PendingSignIn { id, task }),
+            );
+            Ok(())
+        })
+        .unwrap_or_else(|| Err(OrchestratorError::KeyNotFound(pubky.to_string())))?;
 
         info!("Started sign-in for key: {}", pubky);
-        Ok(SignInRequest::new(authorization_url, outcome))
+        Ok(SignInRequest::new(authorization_url, outcome_rx))
     }
 
     /// Cancel a sign-in that is still awaiting approval.
     ///
-    /// Does nothing if the key has no pending sign-in.
+    /// Does nothing if the key has no pending sign-in, including one whose
+    /// approval has just arrived and is being completed.
     ///
     /// # Errors
     ///
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn cancel_sign_in(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        let auth = self.auth_status(pubky)?;
-        if !matches!(auth, AuthStatus::AwaitingApproval { .. }) {
-            return Ok(());
-        }
+        let cancelled = self
+            .update_key(pubky, |managed| {
+                let cancelled = replace_pending_sign_in(&mut managed.pending_sign_in, None);
+                if cancelled {
+                    managed.auth = AuthStatus::SignedOut;
+                }
+                cancelled
+            })
+            .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?;
 
-        self.end_session(pubky)?;
-        info!("Cancelled sign-in for key: {}", pubky);
+        if cancelled {
+            info!("Cancelled sign-in for key: {}", pubky);
+        }
         Ok(())
     }
 
@@ -123,18 +226,26 @@ impl BackupManager {
     ///
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn sign_out(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        self.auth_status(pubky)?;
+        let forgotten = self
+            .update_key(pubky, |managed| {
+                replace_pending_sign_in(&mut managed.pending_sign_in, None);
+                let secret = self.storage.take_session_secret(pubky)?;
+                managed.auth = AuthStatus::SignedOut;
+                Ok::<_, OrchestratorError>(secret)
+            })
+            .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))??;
 
-        let was_signed_in = self.end_session(pubky)?;
-        if was_signed_in {
-            self.write_activity(
-                pubky,
-                ActivityType::SignedOut,
-                "Signed out — only public data is backed up".to_string(),
-            )
-            .await;
-            info!("Signed out of key: {}", pubky);
-        }
+        let Some(secret) = forgotten else {
+            return Ok(());
+        };
+        self.end_session_on_homeserver(secret, pubky);
+        self.write_activity(
+            pubky,
+            ActivityType::SignedOut,
+            "Signed out — only public data is backed up".to_string(),
+        )
+        .await;
+        info!("Signed out of key: {}", pubky);
         Ok(())
     }
 
@@ -165,31 +276,149 @@ impl BackupManager {
         }
     }
 
+    /// Start a sign-in request with the signer app, asking for read access to
+    /// private data.
+    fn start_sign_in_flow(&self) -> Result<SignInFlow, OrchestratorError> {
+        if self.config.developer_mode {
+            return Err(OrchestratorError::AuthFailed(
+                "Signing in needs network access, which developer mode disables".to_string(),
+            ));
+        }
+        let pubky_client = self.inner.read().pubky_client.clone();
+        auth::start_sign_in_flow(&pubky_client, self.config.http_relay.as_ref())
+    }
+
+    /// Wait for a key's sign-in to be approved, then sign the key in.
+    async fn finish_sign_in(
+        &self,
+        pubky: &PublicKey,
+        id: u64,
+        flow: SignInFlow,
+    ) -> Result<(), OrchestratorError> {
+        let approval = auth::await_approval(flow, pubky).await;
+        if !self.claim_sign_in(SignInTarget::Key(pubky), id) {
+            if let Ok(session) = approval {
+                auth::end_session(session);
+            }
+            return Err(auth::sign_in_cancelled());
+        }
+
+        match approval {
+            Ok(session) => self.complete_sign_in(pubky, session).await,
+            Err(e) => {
+                warn!("Sign-in failed for {}: {}", pubky, e);
+                self.update_key(pubky, |managed| {
+                    managed.auth = AuthStatus::SignInFailed {
+                        message: failure_reason(&e),
+                    };
+                });
+                Err(e)
+            }
+        }
+    }
+
+    /// Take the pending sign-in with this `id` out of the manager, so that it
+    /// can no longer be cancelled or replaced.
+    ///
+    /// Returns `false` if it already was cancelled or replaced, or its key removed.
+    fn claim_sign_in(&self, target: SignInTarget<'_>, id: u64) -> bool {
+        let mut inner = self.inner.write();
+        let Some(slot) = inner.pending_sign_in(target) else {
+            return false;
+        };
+        if !slot.as_ref().is_some_and(|pending| pending.id == id) {
+            return false;
+        }
+        // Dropping the handle leaves the claiming task running
+        *slot = None;
+        true
+    }
+
+    /// Sign a backed-up key in with an approved session, then start backing up
+    /// its private data.
+    async fn complete_sign_in(
+        &self,
+        pubky: &PublicKey,
+        session: PubkySession,
+    ) -> Result<(), OrchestratorError> {
+        if let Err(e) = self.store_session(pubky, &session) {
+            // Don't leave a session nobody will use open on the homeserver
+            auth::end_session(session);
+            return Err(e);
+        }
+
+        info!("Signed in to key: {}", pubky);
+        self.write_activity(
+            pubky,
+            ActivityType::SignedIn,
+            "Signed in — private data is backed up too".to_string(),
+        )
+        .await;
+        if let Err(e) = self.force_sync(pubky).await {
+            warn!("Failed to sync {} after sign-in: {}", pubky, e);
+        }
+        Ok(())
+    }
+
+    /// Store a key's session and mark the key signed in.
+    ///
+    /// The session replaces any sign-in the key had, including one still
+    /// awaiting approval, and the replaced session is ended.
+    fn store_session(
+        &self,
+        pubky: &PublicKey,
+        session: &PubkySession,
+    ) -> Result<(), OrchestratorError> {
+        let secret = auth::session_secret(session)?;
+
+        let replaced = self
+            .update_key(pubky, |managed| {
+                replace_pending_sign_in(&mut managed.pending_sign_in, None);
+                let replaced = self.storage.read_session_secret(pubky)?;
+                if let Err(e) = self.storage.write_session_secret(pubky, &secret) {
+                    managed.auth = AuthStatus::SignInFailed {
+                        message: e.to_string(),
+                    };
+                    return Err(e.into());
+                }
+                managed.auth = AuthStatus::SignedIn;
+                Ok::<_, OrchestratorError>(replaced)
+            })
+            .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))??;
+
+        if let Some(replaced) = replaced.filter(|replaced| *replaced != secret) {
+            self.end_session_on_homeserver(replaced, pubky);
+        }
+        Ok(())
+    }
+
     /// Get a key's sign-in status.
     fn auth_status(&self, pubky: &PublicKey) -> Result<AuthStatus, OrchestratorError> {
-        self.get_key_state(pubky)
-            .map(|state| state.auth)
+        self.inner
+            .read()
+            .keys
+            .get(pubky)
+            .map(|managed| managed.auth.clone())
             .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))
     }
 
-    /// Run `update` on a key's sign-in status under the state lock, then
-    /// broadcast the key's state if the status changed.
+    /// Run `update` on a tracked key under the state lock, then broadcast the
+    /// key's state if its sign-in status changed.
     ///
     /// Changes to the stored session belong inside `update`, so that they can't
     /// interleave with another change of status. `update` must not use the
     /// manager's state itself. Returns `None` if the key is not tracked.
-    fn update_auth<R>(
+    fn update_key<R>(
         &self,
         pubky: &PublicKey,
-        update: impl FnOnce(&mut AuthStatus) -> R,
+        update: impl FnOnce(&mut ManagedKey) -> R,
     ) -> Option<R> {
         let (result, changed_state) = {
             let mut inner = self.inner.write();
-            let managed_key = inner.keys.get_mut(pubky)?;
-            let previous = managed_key.state.auth.clone();
-            let result = update(&mut managed_key.state.auth);
-            let changed_state =
-                (managed_key.state.auth != previous).then(|| managed_key.state.clone());
+            let managed = inner.keys.get_mut(pubky)?;
+            let previous = managed.auth.clone();
+            let result = update(managed);
+            let changed_state = (managed.auth != previous).then(|| managed.state());
             (result, changed_state)
         };
 
@@ -202,151 +431,6 @@ impl BackupManager {
         Some(result)
     }
 
-    /// Wait for a sign-in to be approved in the background.
-    ///
-    /// Returns a receiver for the outcome, for callers that want to await it
-    /// rather than follow the key's sign-in status.
-    fn spawn_sign_in_task(
-        &self,
-        pubky: &PublicKey,
-        flow: SignInFlow,
-        pending: AuthStatus,
-    ) -> oneshot::Receiver<Result<(), OrchestratorError>> {
-        let (outcome_tx, outcome_rx) = oneshot::channel();
-        let manager = self.clone();
-        let key = pubky.clone();
-
-        let sign_in_task = tokio::spawn(async move {
-            let approval = auth::await_approval(flow, &key).await;
-            let outcome = manager.finish_sign_in(&key, &pending, approval).await;
-            // Nobody is listening if the caller follows the key's status instead
-            let _ = outcome_tx.send(outcome);
-        });
-        self.replace_sign_in_task(pubky, Some(sign_in_task));
-
-        outcome_rx
-    }
-
-    /// Replace the task waiting for a key's sign-in approval, cancelling the previous one.
-    fn replace_sign_in_task(&self, pubky: &PublicKey, sign_in_task: Option<JoinHandle<()>>) {
-        let mut inner = self.inner.write();
-        match inner.keys.get_mut(pubky) {
-            Some(managed_key) => {
-                let previous = std::mem::replace(&mut managed_key.sign_in_task, sign_in_task);
-                if let Some(previous) = previous {
-                    previous.abort();
-                }
-            }
-            // The key was removed in the meantime, so nobody is waiting for the outcome
-            None => {
-                if let Some(sign_in_task) = sign_in_task {
-                    sign_in_task.abort();
-                }
-            }
-        }
-    }
-
-    /// Record the outcome of the sign-in a key was `pending` on and, on success,
-    /// start backing up its private data.
-    async fn finish_sign_in(
-        &self,
-        pubky: &PublicKey,
-        pending: &AuthStatus,
-        approval: Result<PubkySession, OrchestratorError>,
-    ) -> Result<(), OrchestratorError> {
-        let session = match approval {
-            Ok(session) => session,
-            Err(e) => {
-                warn!("Sign-in failed for {}: {}", pubky, e);
-                self.update_auth(pubky, |auth| {
-                    if auth == pending {
-                        *auth = AuthStatus::SignInFailed {
-                            message: failure_reason(&e),
-                        };
-                    }
-                });
-                return Err(e);
-            }
-        };
-
-        let signed_in = auth::session_secret(&session)
-            .and_then(|secret| self.sign_in_if_pending(pubky, pending, &secret));
-        if let Err(e) = signed_in {
-            // Don't leave a session nobody will use open on the homeserver
-            auth::end_session(session);
-            return Err(e);
-        }
-
-        self.after_sign_in(pubky).await;
-        Ok(())
-    }
-
-    /// Log a key's sign-in and start backing up its private data right away.
-    async fn after_sign_in(&self, pubky: &PublicKey) {
-        info!("Signed in to key: {}", pubky);
-        self.write_activity(
-            pubky,
-            ActivityType::SignedIn,
-            "Signed in — private data is backed up too".to_string(),
-        )
-        .await;
-        if let Err(e) = self.force_sync(pubky).await {
-            warn!("Failed to sync {} after sign-in: {}", pubky, e);
-        }
-    }
-
-    /// Store a session and mark its key signed in, provided the key is still
-    /// `pending` on the sign-in that produced the session.
-    ///
-    /// It no longer is if that sign-in was cancelled or replaced, or the key
-    /// removed, just as the approval arrived.
-    fn sign_in_if_pending(
-        &self,
-        pubky: &PublicKey,
-        pending: &AuthStatus,
-        secret: &str,
-    ) -> Result<(), OrchestratorError> {
-        self.update_auth(pubky, |auth| {
-            if auth != pending {
-                return Err(auth::sign_in_cancelled());
-            }
-            if let Err(e) = self.storage.write_session_secret(pubky, secret) {
-                *auth = AuthStatus::SignInFailed {
-                    message: e.to_string(),
-                };
-                return Err(e.into());
-            }
-            *auth = AuthStatus::SignedIn;
-            Ok(())
-        })
-        .unwrap_or_else(|| Err(auth::sign_in_cancelled()))
-    }
-
-    /// Cancel a pending sign-in, forget the key's session and end it on its
-    /// homeserver, leaving the key signed out.
-    ///
-    /// Returns whether the key had a session.
-    fn end_session(&self, pubky: &PublicKey) -> Result<bool, OrchestratorError> {
-        self.replace_sign_in_task(pubky, None);
-
-        let forgotten = self
-            .update_auth(pubky, |auth| {
-                let secret = self.storage.take_session_secret(pubky)?;
-                *auth = AuthStatus::SignedOut;
-                Ok::<_, OrchestratorError>(secret)
-            })
-            .transpose()?
-            .flatten();
-
-        match forgotten {
-            Some(secret) => {
-                self.end_session_on_homeserver(secret, pubky);
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-
     /// End a session that was already forgotten locally on its homeserver.
     fn end_session_on_homeserver(&self, secret: String, pubky: &PublicKey) {
         // Developer mode makes no network calls
@@ -356,13 +440,6 @@ impl BackupManager {
         let pubky_client = self.inner.read().pubky_client.as_ref().clone();
         auth::end_stored_session(secret, pubky.clone(), pubky_client);
     }
-}
-
-/// The error for a sign-in started in developer mode, which makes no network calls.
-fn sign_in_unavailable_in_developer_mode() -> OrchestratorError {
-    OrchestratorError::AuthFailed(
-        "Signing in needs network access, which developer mode disables".to_string(),
-    )
 }
 
 /// The reason to show for a failed sign-in.
@@ -377,7 +454,6 @@ fn failure_reason(error: &OrchestratorError) -> String {
 mod tests {
     use super::super::tests::{setup, setup_with_dir, test_pubky};
     use super::*;
-    use crate::orchestrator::types::KeyState;
     use tempfile::TempDir;
 
     /// Add the test key with a session already stored, as if it had signed in.
@@ -391,15 +467,29 @@ mod tests {
         pubky
     }
 
-    /// Add the test key and put it in the state of awaiting a sign-in approval.
-    async fn add_key_awaiting_approval(manager: &BackupManager) -> (PublicKey, AuthStatus) {
+    /// Add the test key and put it in the state of awaiting a sign-in approval,
+    /// with a task that never finishes. Returns the key and the sign-in's id.
+    async fn add_key_awaiting_approval(manager: &BackupManager) -> (PublicKey, u64) {
         let pubky = test_pubky();
         manager.add_key(pubky.clone()).await.unwrap();
-        let pending = AuthStatus::AwaitingApproval {
-            authorization_url: "pubkyauth://example".to_string(),
-        };
-        manager.update_auth(&pubky, |auth| *auth = pending.clone());
-        (pubky, pending)
+        let id = register_pending_sign_in(manager, &pubky);
+        (pubky, id)
+    }
+
+    /// Register a pending sign-in for a tracked key, as `start_sign_in` would.
+    fn register_pending_sign_in(manager: &BackupManager, pubky: &PublicKey) -> u64 {
+        let id = PendingSignIn::next_id();
+        manager.update_key(pubky, |managed| {
+            managed.auth = AuthStatus::AwaitingApproval {
+                authorization_url: format!("pubkyauth://example/{id}"),
+            };
+            let task = tokio::spawn(std::future::pending());
+            replace_pending_sign_in(
+                &mut managed.pending_sign_in,
+                Some(PendingSignIn { id, task }),
+            );
+        });
+        id
     }
 
     fn stored_secret(manager: &BackupManager, pubky: &PublicKey) -> Option<String> {
@@ -475,92 +565,58 @@ mod tests {
         ));
     }
 
-    // --- Finishing a sign-in ---
+    // --- Claiming an approved sign-in ---
 
     #[tokio::test]
-    async fn test_approved_sign_in_stores_session_and_signs_in() {
+    async fn test_pending_sign_in_can_be_claimed_once() {
         let (_dir, manager) = setup().await;
-        let (pubky, pending) = add_key_awaiting_approval(&manager).await;
-        let mut rx = manager.subscribe();
+        let (pubky, id) = add_key_awaiting_approval(&manager).await;
 
-        manager
-            .sign_in_if_pending(&pubky, &pending, "secret")
-            .unwrap();
-
-        assert_eq!(manager.auth_status(&pubky).unwrap(), AuthStatus::SignedIn);
-        assert_eq!(stored_secret(&manager, &pubky).as_deref(), Some("secret"));
-        // Subscribers are told about the change
-        assert_eq!(rx.try_recv().unwrap().state.auth, AuthStatus::SignedIn);
+        assert!(manager.claim_sign_in(SignInTarget::Key(&pubky), id));
+        assert!(!manager.claim_sign_in(SignInTarget::Key(&pubky), id));
     }
 
     #[tokio::test]
-    async fn test_approval_arriving_after_cancel_is_discarded() {
+    async fn test_cancelled_sign_in_cannot_be_claimed() {
         let (_dir, manager) = setup().await;
-        let (pubky, pending) = add_key_awaiting_approval(&manager).await;
+        let (pubky, id) = add_key_awaiting_approval(&manager).await;
+
         manager.cancel_sign_in(&pubky).await.unwrap();
 
-        let result = manager.sign_in_if_pending(&pubky, &pending, "secret");
-
-        assert!(matches!(result, Err(OrchestratorError::AuthFailed(_))));
-        assert_eq!(manager.auth_status(&pubky).unwrap(), AuthStatus::SignedOut);
-        assert_eq!(stored_secret(&manager, &pubky), None);
+        assert!(!manager.claim_sign_in(SignInTarget::Key(&pubky), id));
     }
 
     #[tokio::test]
-    async fn test_approval_of_replaced_sign_in_is_discarded() {
+    async fn test_replaced_sign_in_cannot_be_claimed() {
         let (_dir, manager) = setup().await;
         let (pubky, replaced) = add_key_awaiting_approval(&manager).await;
-        let current = AuthStatus::AwaitingApproval {
-            authorization_url: "pubkyauth://newer".to_string(),
-        };
-        manager.update_auth(&pubky, |auth| *auth = current.clone());
+        let current = register_pending_sign_in(&manager, &pubky);
 
-        let result = manager.sign_in_if_pending(&pubky, &replaced, "secret");
-
-        assert!(result.is_err());
-        assert_eq!(manager.auth_status(&pubky).unwrap(), current);
-        assert_eq!(stored_secret(&manager, &pubky), None);
+        assert!(!manager.claim_sign_in(SignInTarget::Key(&pubky), replaced));
+        assert!(manager.claim_sign_in(SignInTarget::Key(&pubky), current));
     }
 
     #[tokio::test]
-    async fn test_approval_arriving_after_key_removal_is_discarded() {
+    async fn test_sign_in_of_removed_key_cannot_be_claimed() {
         let (_dir, manager) = setup().await;
-        let (pubky, pending) = add_key_awaiting_approval(&manager).await;
+        let (pubky, id) = add_key_awaiting_approval(&manager).await;
+
         manager.remove_key(&pubky).await.unwrap();
 
-        let result = manager.sign_in_if_pending(&pubky, &pending, "secret");
-
-        assert!(result.is_err());
-        assert_eq!(stored_secret(&manager, &pubky), None);
+        assert!(!manager.claim_sign_in(SignInTarget::Key(&pubky), id));
     }
 
     #[tokio::test]
-    async fn test_failed_sign_in_reports_reason() {
+    async fn test_cancel_after_approval_is_claimed_does_nothing() {
         let (_dir, manager) = setup().await;
-        let (pubky, pending) = add_key_awaiting_approval(&manager).await;
-        let error = OrchestratorError::AuthFailed("request expired".to_string());
+        let (pubky, id) = add_key_awaiting_approval(&manager).await;
+        assert!(manager.claim_sign_in(SignInTarget::Key(&pubky), id));
+        let completing = manager.auth_status(&pubky).unwrap();
 
-        let outcome = manager.finish_sign_in(&pubky, &pending, Err(error)).await;
-
-        assert!(outcome.is_err());
-        assert_eq!(
-            manager.auth_status(&pubky).unwrap(),
-            AuthStatus::SignInFailed {
-                message: "request expired".to_string()
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn test_failure_of_cancelled_sign_in_is_not_reported() {
-        let (_dir, manager) = setup().await;
-        let (pubky, pending) = add_key_awaiting_approval(&manager).await;
         manager.cancel_sign_in(&pubky).await.unwrap();
-        let error = OrchestratorError::AuthFailed("request expired".to_string());
 
-        let _ = manager.finish_sign_in(&pubky, &pending, Err(error)).await;
-
-        assert_eq!(manager.auth_status(&pubky).unwrap(), AuthStatus::SignedOut);
+        // The sign-in being completed is left to finish
+        assert_eq!(manager.auth_status(&pubky).unwrap(), completing);
     }
 
     // --- Cancelling and signing out ---
@@ -568,11 +624,14 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_sign_in_returns_pending_key_to_signed_out() {
         let (_dir, manager) = setup().await;
-        let (pubky, _pending) = add_key_awaiting_approval(&manager).await;
+        let (pubky, _id) = add_key_awaiting_approval(&manager).await;
+        let mut rx = manager.subscribe();
 
         manager.cancel_sign_in(&pubky).await.unwrap();
 
         assert_eq!(manager.auth_status(&pubky).unwrap(), AuthStatus::SignedOut);
+        // Subscribers are told about the change
+        assert_eq!(rx.try_recv().unwrap().state.auth, AuthStatus::SignedOut);
     }
 
     #[tokio::test]
@@ -608,6 +667,17 @@ mod tests {
             signed_out_broadcast |= update.state.auth == AuthStatus::SignedOut;
         }
         assert!(signed_out_broadcast);
+    }
+
+    #[tokio::test]
+    async fn test_sign_out_cancels_pending_sign_in() {
+        let (_dir, manager) = setup().await;
+        let (pubky, id) = add_key_awaiting_approval(&manager).await;
+
+        manager.sign_out(&pubky).await.unwrap();
+
+        assert_eq!(manager.auth_status(&pubky).unwrap(), AuthStatus::SignedOut);
+        assert!(!manager.claim_sign_in(SignInTarget::Key(&pubky), id));
     }
 
     #[tokio::test]
@@ -656,23 +726,35 @@ mod tests {
     async fn test_rejected_session_expires_signed_in_key() {
         let (_dir, manager) = setup().await;
         let pubky = add_signed_in_key(&manager).await;
+        let rejected = SessionSecret::new("secret".to_string());
 
-        manager.inner.write().expire_session(&pubky);
+        let state = manager
+            .inner
+            .write()
+            .expire_session(&manager.storage, &pubky, &rejected);
 
+        assert_eq!(state.unwrap().auth, AuthStatus::SessionExpired);
         assert_eq!(
             manager.auth_status(&pubky).unwrap(),
             AuthStatus::SessionExpired
         );
+        assert_eq!(stored_secret(&manager, &pubky), None);
     }
 
     #[tokio::test]
-    async fn test_rejected_session_does_not_interrupt_new_sign_in() {
+    async fn test_rejection_of_replaced_session_is_ignored() {
         let (_dir, manager) = setup().await;
-        let (pubky, pending) = add_key_awaiting_approval(&manager).await;
+        let pubky = add_signed_in_key(&manager).await;
+        // The key signed in again while a sync was using an older session
+        let rejected = SessionSecret::new("older".to_string());
 
-        // A late rejection of the previous session arrives while signing in again
-        manager.inner.write().expire_session(&pubky);
+        let state = manager
+            .inner
+            .write()
+            .expire_session(&manager.storage, &pubky, &rejected);
 
-        assert_eq!(manager.auth_status(&pubky).unwrap(), pending);
+        assert!(state.is_none());
+        assert_eq!(manager.auth_status(&pubky).unwrap(), AuthStatus::SignedIn);
+        assert_eq!(stored_secret(&manager, &pubky).as_deref(), Some("secret"));
     }
 }

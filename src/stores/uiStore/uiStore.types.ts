@@ -29,7 +29,6 @@ export interface ToastState {
 export type KeyErrorCode =
   | "HomeserverUnreachable"
   | "HomeserverNotFound"
-  | "NoDataFound"
   | "StorageFull"
   | "NetworkError"
   | "Timeout"
@@ -77,7 +76,6 @@ export interface UIState {
   currentScreen: Screen;
   currentPage: Page;
   statusMessageMode: StatusMessageMode;
-  pubkyInputValue: string;
   hasAutoLoaded: boolean;
   toast: ToastState;
   // App state from backend
@@ -91,7 +89,6 @@ export interface UIActions {
   setScreen: (screen: Screen) => void;
   setPage: (page: Page) => void;
   setStatusMessageMode: (mode: StatusMessageMode) => void;
-  setPubkyInputValue: (value: string) => void;
   setHasAutoLoaded: (value: boolean) => void;
   showToast: (pubkyText: string) => void;
   showErrorToast: (message: string) => void;
@@ -111,7 +108,6 @@ export const uiInitialState: UIState = {
   currentScreen: "startup",
   currentPage: "sync",
   statusMessageMode: "sync",
-  pubkyInputValue: "",
   hasAutoLoaded: false,
   toast: {
     visible: false,
@@ -129,7 +125,6 @@ export enum UIActionTypes {
   SET_SCREEN = "SET_SCREEN",
   SET_PAGE = "SET_PAGE",
   SET_STATUS_MESSAGE_MODE = "SET_STATUS_MESSAGE_MODE",
-  SET_PUBKY_INPUT_VALUE = "SET_PUBKY_INPUT_VALUE",
   SET_HAS_AUTO_LOADED = "SET_HAS_AUTO_LOADED",
   SHOW_TOAST = "SHOW_TOAST",
   SHOW_ERROR_TOAST = "SHOW_ERROR_TOAST",

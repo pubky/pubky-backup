@@ -13,14 +13,6 @@ import { stripPubkyPrefix } from "@/utils/pubky";
  * @example
  * ```tsx
  * const { lastPubky, isLoading } = useLastPubky();
- *
- * useEffect(() => {
- *   if (lastPubky && !hasAutoLoaded) {
- *     setHasAutoLoaded(true);
- *     setPubkyInputValue(lastPubky);
- *     handleInitialize(lastPubky);
- *   }
- * }, [lastPubky, hasAutoLoaded]);
  * ```
  */
 export function useLastPubky() {

@@ -28,8 +28,4 @@ pub enum EventsError {
     /// Failed to fetch or subscribe to event stream
     #[error("Failed to fetch events: {0}")]
     FetchFailed(String),
-
-    /// The homeserver rejected the session used to subscribe to private events
-    #[error("The homeserver rejected the session")]
-    SessionRejected,
 }

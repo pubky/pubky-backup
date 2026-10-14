@@ -15,9 +15,9 @@ describe("useSignIn", () => {
   });
 
   it("should call startSignIn and toggle isPending", async () => {
-    let resolvePromise: (url: string) => void;
+    let resolvePromise: () => void;
     vi.mocked(services.startSignIn).mockReturnValue(
-      new Promise<string>((resolve) => {
+      new Promise<void>((resolve) => {
         resolvePromise = resolve;
       }),
     );
@@ -33,7 +33,7 @@ describe("useSignIn", () => {
     expect(result.current.isPending).toBe(true);
 
     await act(async () => {
-      resolvePromise!("pubkyauth://example");
+      resolvePromise!();
       await signInPromise;
     });
 

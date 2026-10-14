@@ -4,9 +4,11 @@ export { useKeys } from "./useKeys";
 export { useLastPubky } from "./useLastPubky";
 export { useKeyUpdates } from "./useKeyUpdates";
 export { useBackupCoverage } from "./useBackupCoverage";
+export { useBackupCoverageByKey } from "./useBackupCoverageByKey";
 
 // Action hooks
 export { useAddKey } from "./useAddKey";
+export { useResumeLastPubky } from "./useResumeLastPubky";
 export { useForceSync } from "./useForceSync";
 export { useSignIn } from "./useSignIn";
 export { useNewKeySignIn, type NewKeySignInState } from "./useNewKeySignIn";

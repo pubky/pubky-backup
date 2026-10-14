@@ -1,36 +1,29 @@
-import { useShallow } from "zustand/react/shallow";
 import { useUIStore } from "@/stores/uiStore";
-import type { AuthStatus } from "@/stores/uiStore";
-import { backupCoverage, type BackupCoverage } from "@/utils/coverage";
-
-const SIGNED_OUT: AuthStatus = { type: "SignedOut" };
+import {
+  backupCoverage,
+  SIGNED_OUT,
+  type BackupCoverage,
+} from "@/utils/coverage";
 
 /**
  * useBackupCoverage
  *
- * Which of each pubky's data is backed up: public only, or private data too.
- * A pubky without a known state counts as signed out.
+ * Which of a pubky's data is backed up: public only, or private data too.
+ * A pubky without a known state yet, or no pubky, counts as signed out.
  *
- * @param pubkys - The pubkys to look up
- * @returns The coverage of each pubky, keyed by pubky
+ * @param pubky - The pubky to look up, if any
+ * @returns The pubky's backup coverage
  *
  * @example
  * ```tsx
- * const coverage = useBackupCoverage([pubky]);
- * return <CoverageBadge coverage={coverage[pubky]} />;
+ * const coverage = useBackupCoverage(pubky);
+ * return <CoverageBadge coverage={coverage} />;
  * ```
  */
-export function useBackupCoverage(
-  pubkys: string[],
-): Record<string, BackupCoverage> {
-  return useUIStore(
-    useShallow((s) =>
-      Object.fromEntries(
-        pubkys.map((pubky) => [
-          pubky,
-          backupCoverage(s.keyStates[pubky]?.auth ?? SIGNED_OUT),
-        ]),
-      ),
+export function useBackupCoverage(pubky: string | null): BackupCoverage {
+  return useUIStore((s) =>
+    backupCoverage(
+      (pubky !== null ? s.keyStates[pubky]?.auth : undefined) ?? SIGNED_OUT,
     ),
   );
 }

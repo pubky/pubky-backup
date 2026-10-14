@@ -1,25 +1,34 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
-import { AddKeyForm, type AddKeyFormProps } from "./AddKeyForm";
+import {
+  render,
+  screen,
+  fireEvent,
+  act,
+  waitFor,
+} from "@testing-library/react";
+import { AddKeyForm } from "./AddKeyForm";
 import { useUIStore } from "@/stores/uiStore";
 import * as services from "@/services";
 
 vi.mock("@/services", () => ({
+  addKey: vi.fn(),
   signInNewKey: vi.fn(),
   cancelSignInNewKey: vi.fn(),
 }));
 
 const AUTHORIZATION_URL = "pubkyauth://example?secret=abc";
 
-function renderForm(props: Partial<AddKeyFormProps> = {}) {
-  const defaults: AddKeyFormProps = {
-    onSignedIn: vi.fn(),
-    pubkyValue: "",
-    onPubkyChange: vi.fn(),
-    onSubmitPubky: vi.fn(),
-    isAddingPubky: false,
-  };
-  return render(<AddKeyForm {...defaults} {...props} />);
+const clickSignIn = () =>
+  fireEvent.click(
+    screen.getByRole("button", { name: /sign in with pubky ring/i }),
+  );
+
+/** Make signInNewKey show the link, then wait for an approval that never comes. */
+function mockSignInAwaitingApproval() {
+  vi.mocked(services.signInNewKey).mockImplementation((onUrl) => {
+    onUrl(AUTHORIZATION_URL);
+    return new Promise(() => {});
+  });
 }
 
 describe("AddKeyForm", () => {
@@ -30,7 +39,7 @@ describe("AddKeyForm", () => {
   });
 
   it("should offer signing in and entering a pubky", () => {
-    renderForm();
+    render(<AddKeyForm onAdded={vi.fn()} />);
 
     expect(
       screen.getByRole("button", { name: /sign in with pubky ring/i }),
@@ -39,95 +48,115 @@ describe("AddKeyForm", () => {
     expect(screen.getByText("Public data only")).toBeInTheDocument();
   });
 
-  it("should show the QR code once the sign-in link arrives", async () => {
-    vi.mocked(services.signInNewKey).mockImplementation((onUrl) => {
-      onUrl(AUTHORIZATION_URL);
-      return new Promise(() => {});
-    });
-    renderForm();
+  describe("signing in", () => {
+    it("should show the QR code once the sign-in link arrives", async () => {
+      mockSignInAwaitingApproval();
+      render(<AddKeyForm onAdded={vi.fn()} />);
 
-    await act(async () => {
-      fireEvent.click(
+      await act(async () => clickSignIn());
+
+      expect(screen.getByTitle("Sign-in QR code")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy link" }),
+      ).toBeInTheDocument();
+    });
+
+    it("should cancel a sign-in awaiting approval", async () => {
+      mockSignInAwaitingApproval();
+      render(<AddKeyForm onAdded={vi.fn()} />);
+      await act(async () => clickSignIn());
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(services.cancelSignInNewKey).toHaveBeenCalledTimes(1);
+      expect(
         screen.getByRole("button", { name: /sign in with pubky ring/i }),
-      );
+      ).toBeInTheDocument();
     });
 
-    expect(screen.getByTitle("Sign-in QR code")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Copy link" }),
-    ).toBeInTheDocument();
+    it("should report the pubky that signed in", async () => {
+      vi.mocked(services.signInNewKey).mockResolvedValue("signed-in-pubky");
+      const onAdded = vi.fn();
+      render(<AddKeyForm onAdded={onAdded} />);
+
+      await act(async () => clickSignIn());
+
+      expect(onAdded).toHaveBeenCalledWith("signed-in-pubky");
+    });
+
+    it("should show a failed sign-in and offer to try again", async () => {
+      vi.mocked(services.signInNewKey).mockRejectedValue({
+        type: "Internal",
+        message: "request expired",
+      });
+      render(<AddKeyForm onAdded={vi.fn()} />);
+
+      await act(async () => clickSignIn());
+
+      expect(screen.getByRole("alert")).toHaveTextContent("request expired");
+      expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    });
   });
 
-  it("should cancel a sign-in awaiting approval", async () => {
-    vi.mocked(services.signInNewKey).mockImplementation((onUrl) => {
-      onUrl(AUTHORIZATION_URL);
-      return new Promise(() => {});
+  describe("entering a pubky", () => {
+    const enterPubky = (value: string) =>
+      fireEvent.change(screen.getByPlaceholderText(/paste a pubky/i), {
+        target: { value },
+      });
+    const backUpButton = () =>
+      screen.getByRole("button", { name: /back up public data/i });
+
+    it("should only allow backing up once a pubky is entered", () => {
+      render(<AddKeyForm onAdded={vi.fn()} />);
+      expect(backUpButton()).toBeDisabled();
+
+      enterPubky("some-pubky");
+
+      expect(backUpButton()).toBeEnabled();
     });
-    renderForm();
-    await act(async () => {
-      fireEvent.click(
+
+    it("should back up the trimmed pubky and report it", async () => {
+      vi.mocked(services.addKey).mockResolvedValue("pubkysome-pubky");
+      const onAdded = vi.fn();
+      render(<AddKeyForm onAdded={onAdded} />);
+
+      enterPubky("  some-pubky  ");
+      fireEvent.click(backUpButton());
+
+      await waitFor(() => {
+        expect(onAdded).toHaveBeenCalledWith("some-pubky");
+      });
+      expect(services.addKey).toHaveBeenCalledWith("some-pubky");
+    });
+
+    it("should show an error and stay open if the pubky can't be added", async () => {
+      vi.mocked(services.addKey).mockRejectedValue({
+        type: "InvalidPubkyFormat",
+        message: "bad pubky",
+      });
+      const onAdded = vi.fn();
+      render(<AddKeyForm onAdded={onAdded} />);
+
+      enterPubky("bad");
+      fireEvent.click(backUpButton());
+
+      await waitFor(() => {
+        expect(useUIStore.getState().toast.visible).toBe(true);
+      });
+      expect(onAdded).not.toHaveBeenCalled();
+    });
+
+    it("should disable both ways of adding while a pubky is being added", () => {
+      vi.mocked(services.addKey).mockReturnValue(new Promise(() => {}));
+      render(<AddKeyForm onAdded={vi.fn()} />);
+
+      enterPubky("some-pubky");
+      fireEvent.click(backUpButton());
+
+      expect(backUpButton()).toBeDisabled();
+      expect(
         screen.getByRole("button", { name: /sign in with pubky ring/i }),
-      );
+      ).toBeDisabled();
     });
-
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-    expect(services.cancelSignInNewKey).toHaveBeenCalledTimes(1);
-    expect(
-      screen.getByRole("button", { name: /sign in with pubky ring/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("should report the pubky that signed in", async () => {
-    vi.mocked(services.signInNewKey).mockResolvedValue("signed-in-pubky");
-    const onSignedIn = vi.fn();
-    renderForm({ onSignedIn });
-
-    await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", { name: /sign in with pubky ring/i }),
-      );
-    });
-
-    expect(onSignedIn).toHaveBeenCalledWith("signed-in-pubky");
-  });
-
-  it("should show a failed sign-in and offer to try again", async () => {
-    vi.mocked(services.signInNewKey).mockRejectedValue({
-      type: "Internal",
-      message: "request expired",
-    });
-    renderForm();
-
-    await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", { name: /sign in with pubky ring/i }),
-      );
-    });
-
-    expect(screen.getByRole("alert")).toHaveTextContent("request expired");
-    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
-  });
-
-  it("should submit the entered pubky for a public-only backup", () => {
-    const onSubmitPubky = vi.fn();
-    renderForm({ pubkyValue: "some-pubky", onSubmitPubky });
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /back up public data/i }),
-    );
-
-    expect(onSubmitPubky).toHaveBeenCalledWith("some-pubky");
-  });
-
-  it("should disable both ways of adding while a pubky is being added", () => {
-    renderForm({ pubkyValue: "some-pubky", isAddingPubky: true });
-
-    expect(
-      screen.getByRole("button", { name: /back up public data/i }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: /sign in with pubky ring/i }),
-    ).toBeDisabled();
   });
 });

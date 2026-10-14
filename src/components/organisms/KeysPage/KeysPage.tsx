@@ -15,7 +15,7 @@ interface KeyItemProps {
 }
 
 function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
-  const coverage = Hooks.useBackupCoverage([pubky])[pubky] ?? "public-only";
+  const coverage = Hooks.useBackupCoverage(pubky);
 
   return (
     <div
@@ -63,14 +63,12 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
 
 export function KeysPage() {
   const [showAddInput, setShowAddInput] = useState(false);
-  const [newPubkyValue, setNewPubkyValue] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
   const keys = Hooks.useKeys();
   const lastPubky = Stores.useUIStore((s) => s.lastPubky);
   const setNavDisabled = Stores.useUIStore((s) => s.setNavDisabled);
   const { setLastPubky } = Hooks.useSetLastPubky();
-  const { addKey, isPending: isAddingKey } = Hooks.useAddKey();
   const { setPage } = Stores.useUIStore.getState();
 
   // lastPubky is already normalized (z32 without prefix) from the backend
@@ -121,30 +119,10 @@ export function KeysPage() {
     }
   };
 
-  const handleSubmitNewPubky = async (value: string) => {
-    const trimmedValue = value.trim();
-    if (!trimmedValue) return;
-
-    try {
-      await addKey({ pubkyValue: trimmedValue });
-      setNewPubkyValue("");
-      setShowAddInput(false);
-      setPage("sync");
-    } catch (error: unknown) {
-      Logger.error("KeysPage", "Failed to add new pubky", { error });
-      Utils.handleBackendError(error);
-    }
-  };
-
-  const handleSignedIn = useCallback(() => {
+  const handleAdded = useCallback(() => {
     setShowAddInput(false);
     Stores.useUIStore.getState().setPage("sync");
   }, []);
-
-  const handleCancelAdd = () => {
-    setNewPubkyValue("");
-    setShowAddInput(false);
-  };
 
   if (showAddInput) {
     return (
@@ -158,21 +136,13 @@ export function KeysPage() {
           </div>
           <Atoms.Button
             variant="secondary"
-            onClick={handleCancelAdd}
-            disabled={isAddingKey}
+            onClick={() => setShowAddInput(false)}
             className="py-2 px-4 shrink-0"
           >
             <span className="text-white text-sm font-medium">Cancel</span>
           </Atoms.Button>
         </div>
-        <AddKeyForm
-          onSignedIn={handleSignedIn}
-          pubkyValue={newPubkyValue}
-          onPubkyChange={setNewPubkyValue}
-          onSubmitPubky={(value) => void handleSubmitNewPubky(value)}
-          isAddingPubky={isAddingKey}
-          placeholder="Enter pubky to add..."
-        />
+        <AddKeyForm onAdded={handleAdded} placeholder="Enter pubky to add..." />
       </div>
     );
   }

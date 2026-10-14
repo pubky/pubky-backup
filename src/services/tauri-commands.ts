@@ -130,14 +130,14 @@ export async function forceSyncNow(pubkyStr: string): Promise<void> {
 
 /**
  * Start signing in to a key, so that its private data is backed up as well.
- * The outcome arrives with the key's state in a key-update event.
+ * The link to show to the key's owner, and later the outcome, arrive with the
+ * key's state in key-update events.
  * @param pubkyStr - The pubky key to sign in to
- * @returns The link to show to the key's owner, to approve in their signer app
  * @throws {BackendError} If the sign-in cannot be started
  */
-export async function startSignIn(pubkyStr: string): Promise<string> {
+export async function startSignIn(pubkyStr: string): Promise<void> {
   try {
-    return await invoke<string>("start_sign_in", { pubkyStr });
+    await invoke("start_sign_in", { pubkyStr });
   } catch (error: unknown) {
     throw normalizeError(error);
   }

@@ -69,7 +69,7 @@ describe("CoverageCard", () => {
     });
 
     it("should start a sign-in when Sign in is clicked", async () => {
-      vi.mocked(services.startSignIn).mockResolvedValue(AUTHORIZATION_URL);
+      vi.mocked(services.startSignIn).mockResolvedValue(undefined);
       renderWithAuth({ type: "SignedOut" });
 
       fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -116,7 +116,7 @@ describe("CoverageCard", () => {
       expect(
         screen.getByText("Sign in to back up private data"),
       ).toBeInTheDocument();
-      expect(screen.queryByText("Public data")).not.toBeInTheDocument();
+      expect(screen.queryByText("Private data")).not.toBeInTheDocument();
     });
 
     it("should copy the sign-in link", async () => {
@@ -166,7 +166,7 @@ describe("CoverageCard", () => {
 
   describe("session expired", () => {
     it("should ask to sign in again", async () => {
-      vi.mocked(services.startSignIn).mockResolvedValue(AUTHORIZATION_URL);
+      vi.mocked(services.startSignIn).mockResolvedValue(undefined);
       renderWithAuth({ type: "SessionExpired" });
 
       expect(screen.getByText(/your session expired/i)).toBeInTheDocument();
@@ -180,7 +180,7 @@ describe("CoverageCard", () => {
 
   describe("sign-in failed", () => {
     it("should show the reason and offer to try again", async () => {
-      vi.mocked(services.startSignIn).mockResolvedValue(AUTHORIZATION_URL);
+      vi.mocked(services.startSignIn).mockResolvedValue(undefined);
       renderWithAuth({
         type: "SignInFailed",
         message: "The sign-in was approved by a different key",

@@ -137,6 +137,23 @@ describe("useNewKeySignIn", () => {
     expect(services.cancelSignInNewKey).toHaveBeenCalledTimes(1);
   });
 
+  it("should cancel a sign-in given up on before its link arrived", () => {
+    const pending = mockPendingSignIn();
+    const { result } = renderHook(() => useNewKeySignIn(vi.fn()));
+
+    act(() => {
+      void result.current.start();
+    });
+    // Cancelled while the backend was still starting it, so nothing to cancel yet
+    act(() => result.current.cancel());
+    expect(services.cancelSignInNewKey).toHaveBeenCalledTimes(1);
+
+    act(() => pending.showLink(AUTHORIZATION_URL));
+
+    expect(services.cancelSignInNewKey).toHaveBeenCalledTimes(2);
+    expect(result.current.state).toEqual({ type: "Idle" });
+  });
+
   it("should not cancel anything on unmount when no sign-in is in progress", () => {
     const { unmount } = renderHook(() => useNewKeySignIn(vi.fn()));
 

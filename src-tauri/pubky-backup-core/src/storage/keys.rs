@@ -27,6 +27,26 @@ const PRIVATE_CURSOR_FILENAME: &str = "private_cursor";
 const SESSION_FILENAME: &str = "session";
 const ACTIVITY_LOG_FILENAME: &str = "activity.log";
 const INACTIVE_FILENAME: &str = "inactive";
+/// A part of a key's data that is synced separately, with its own cursor.
+///
+/// Losing access to private data then never holds back the backup of public data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataScope {
+    /// Public data (`/pub`), readable by anyone.
+    Public,
+    /// Private data (`/priv`), readable only with the owner's session.
+    Private,
+}
+
+impl DataScope {
+    fn cursor_filename(self) -> &'static str {
+        match self {
+            Self::Public => CURSOR_FILENAME,
+            Self::Private => PRIVATE_CURSOR_FILENAME,
+        }
+    }
+}
+
 /// Storage for a single Pubky key's backup data.
 ///
 /// Located at: `~/.pubky-backup/keys/<pubky>/`
@@ -64,32 +84,24 @@ impl KeyStorage {
         })
     }
 
-    /// Write cursor to track backup progress of public data.
+    /// Write the cursor tracking backup progress of one scope of the key's data.
     ///
     /// Uses atomic write-then-rename to prevent torn writes on crashes.
-    pub async fn write_cursor(&self, cursor_value: u64) -> Result<(), StorageError> {
-        self.write_cursor_file(CURSOR_FILENAME, cursor_value).await
-    }
-
-    /// Read existing cursor for public data.
-    ///
-    /// Handles migration from old string-stored cursors by parsing the string as u64.
-    /// The cursor value from the API was always u64, just previously stored as String.
-    pub async fn read_cursor(&self) -> Result<Option<u64>, StorageError> {
-        self.read_cursor_file(CURSOR_FILENAME).await
-    }
-
-    /// Write cursor to track backup progress of private data.
-    ///
-    /// Private data is synced separately from public data, so it has its own cursor.
-    pub async fn write_private_cursor(&self, cursor_value: u64) -> Result<(), StorageError> {
-        self.write_cursor_file(PRIVATE_CURSOR_FILENAME, cursor_value)
+    pub async fn write_cursor(
+        &self,
+        scope: DataScope,
+        cursor_value: u64,
+    ) -> Result<(), StorageError> {
+        self.write_cursor_file(scope.cursor_filename(), cursor_value)
             .await
     }
 
-    /// Read existing cursor for private data.
-    pub async fn read_private_cursor(&self) -> Result<Option<u64>, StorageError> {
-        self.read_cursor_file(PRIVATE_CURSOR_FILENAME).await
+    /// Read the cursor tracking backup progress of one scope of the key's data.
+    ///
+    /// Handles migration from old string-stored cursors by parsing the string as u64.
+    /// The cursor value from the API was always u64, just previously stored as String.
+    pub async fn read_cursor(&self, scope: DataScope) -> Result<Option<u64>, StorageError> {
+        self.read_cursor_file(scope.cursor_filename()).await
     }
 
     async fn write_cursor_file(
@@ -566,10 +578,10 @@ mod tests {
         let (storage, _temp_dir) = create_test_key_storage();
 
         // Write cursor
-        storage.write_cursor(123).await.unwrap();
+        storage.write_cursor(DataScope::Public, 123).await.unwrap();
 
         // Read cursor back
-        let cursor = storage.read_cursor().await.unwrap();
+        let cursor = storage.read_cursor(DataScope::Public).await.unwrap();
         assert_eq!(cursor, Some(123));
     }
 
@@ -578,7 +590,7 @@ mod tests {
         let (storage, _temp_dir) = create_test_key_storage();
 
         // Read cursor before writing - should return None
-        let cursor = storage.read_cursor().await.unwrap();
+        let cursor = storage.read_cursor(DataScope::Public).await.unwrap();
         assert_eq!(cursor, None);
     }
 
@@ -588,12 +600,12 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Write cursor multiple times
-        storage.write_cursor(1).await.unwrap();
-        storage.write_cursor(2).await.unwrap();
-        storage.write_cursor(3).await.unwrap();
+        storage.write_cursor(DataScope::Public, 1).await.unwrap();
+        storage.write_cursor(DataScope::Public, 2).await.unwrap();
+        storage.write_cursor(DataScope::Public, 3).await.unwrap();
 
         // Verify the cursor has the latest value
-        let cursor = storage.read_cursor().await.unwrap();
+        let cursor = storage.read_cursor(DataScope::Public).await.unwrap();
         assert_eq!(cursor, Some(3));
 
         // Verify no temp file is left behind
@@ -921,13 +933,19 @@ mod tests {
     async fn test_private_cursor_is_independent_of_public_cursor() {
         let (storage, _temp_dir) = create_test_key_storage();
 
-        assert_eq!(storage.read_private_cursor().await.unwrap(), None);
+        assert_eq!(storage.read_cursor(DataScope::Private).await.unwrap(), None);
 
-        storage.write_cursor(10).await.unwrap();
-        storage.write_private_cursor(20).await.unwrap();
+        storage.write_cursor(DataScope::Public, 10).await.unwrap();
+        storage.write_cursor(DataScope::Private, 20).await.unwrap();
 
-        assert_eq!(storage.read_cursor().await.unwrap(), Some(10));
-        assert_eq!(storage.read_private_cursor().await.unwrap(), Some(20));
+        assert_eq!(
+            storage.read_cursor(DataScope::Public).await.unwrap(),
+            Some(10)
+        );
+        assert_eq!(
+            storage.read_cursor(DataScope::Private).await.unwrap(),
+            Some(20)
+        );
     }
 
     #[test]

@@ -1,17 +1,13 @@
+import { useState } from "react";
 import * as Atoms from "@/components/atoms";
 import * as Molecules from "@/components/molecules";
 import * as Hooks from "@/hooks";
-import { cn } from "@/lib";
+import * as Utils from "@/utils";
+import { cn, Logger } from "@/lib";
 
 export interface AddKeyFormProps {
-  /** Called with the pubky once a sign-in has added it */
-  onSignedIn: (pubky: string) => void;
-  pubkyValue: string;
-  onPubkyChange: (value: string) => void;
-  /** Back up the entered pubky's public data */
-  onSubmitPubky: (value: string) => void;
-  /** Whether the entered pubky is being added */
-  isAddingPubky: boolean;
+  /** Called with the pubky once it is added, either way */
+  onAdded: (pubky: string) => void;
   suggestions?: string[];
   placeholder?: string;
 }
@@ -22,16 +18,22 @@ export interface AddKeyFormProps {
  * public data only.
  */
 export function AddKeyForm({
-  onSignedIn,
-  pubkyValue,
-  onPubkyChange,
-  onSubmitPubky,
-  isAddingPubky,
+  onAdded,
   suggestions,
   placeholder = "Paste a pubky...",
 }: AddKeyFormProps) {
-  const signIn = Hooks.useNewKeySignIn(onSignedIn);
+  const [pubkyValue, setPubkyValue] = useState("");
+  const { addKey, isPending: isAddingPubky } = Hooks.useAddKey();
   const hasValue = pubkyValue.trim().length > 0;
+
+  const handleSubmitPubky = async () => {
+    try {
+      onAdded(await addKey({ pubkyValue: pubkyValue.trim() }));
+    } catch (error: unknown) {
+      Logger.error("AddKeyForm", "Failed to add pubky", { error });
+      Utils.handleBackendError(error);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6 text-left">
@@ -47,7 +49,7 @@ export function AddKeyForm({
             never leaves Pubky Ring.
           </p>
         </div>
-        <SignInSection signIn={signIn} disabled={isAddingPubky} />
+        <SignInSection onSignedIn={onAdded} disabled={isAddingPubky} />
       </section>
 
       <div className="flex items-center gap-3" aria-hidden>
@@ -71,13 +73,13 @@ export function AddKeyForm({
         </div>
         <Molecules.PubkyInput
           value={pubkyValue}
-          onChange={onPubkyChange}
+          onChange={setPubkyValue}
           suggestions={suggestions}
           placeholder={placeholder}
         />
         <Atoms.Button
           variant="secondary"
-          onClick={() => onSubmitPubky(pubkyValue)}
+          onClick={() => void handleSubmitPubky()}
           disabled={!hasValue || isAddingPubky}
         >
           <span className="text-sm font-bold text-white">
@@ -97,13 +99,13 @@ export function AddKeyForm({
 }
 
 interface SignInSectionProps {
-  signIn: ReturnType<typeof Hooks.useNewKeySignIn>;
+  onSignedIn: (pubky: string) => void;
   disabled: boolean;
 }
 
 /** The sign-in button, or the QR code to approve the sign-in with. */
-function SignInSection({ signIn, disabled }: SignInSectionProps) {
-  const { state, start, cancel } = signIn;
+function SignInSection({ onSignedIn, disabled }: SignInSectionProps) {
+  const { state, start, cancel } = Hooks.useNewKeySignIn(onSignedIn);
 
   if (state.type === "AwaitingApproval") {
     return (

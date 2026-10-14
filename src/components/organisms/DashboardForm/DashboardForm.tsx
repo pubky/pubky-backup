@@ -26,7 +26,8 @@ export function DashboardForm() {
     isCreatingSnapshot,
   } = Hooks.useDashboardActions();
 
-  const coverage = Hooks.useBackupCoverage(keys);
+  const coverage = Hooks.useBackupCoverage(pubky);
+  const coverageByKey = Hooks.useBackupCoverageByKey(keys);
 
   return (
     <>
@@ -34,12 +35,12 @@ export function DashboardForm() {
       <Molecules.DashboardHeader
         pubkyDisplay={Utils.displayPubky(pubky)}
         status={statusInfo.badge}
-        coverage={pubky !== null ? coverage[pubky] : undefined}
+        coverage={pubky !== null ? coverage : undefined}
         onCopy={() => handleCopy(pubky)}
         keys={keys.map((k) => ({
           pubky: k,
           isSelected: k === pubky,
-          coverage: coverage[k],
+          coverage: coverageByKey[k],
         }))}
         onSelectKey={handleSelectKey}
       />

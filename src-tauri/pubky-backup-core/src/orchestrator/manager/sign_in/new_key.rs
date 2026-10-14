@@ -4,28 +4,14 @@
 //! owner can start backing up their key, public and private data alike, just by
 //! approving a sign-in in their signer app, without typing out their pubky.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use log::{info, warn};
-use pubky::{PubkySession, PublicKey};
+use pubky::PublicKey;
 use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
 
-use super::{sign_in_unavailable_in_developer_mode, BackupManager};
+use super::{replace_pending_sign_in, BackupManager, PendingSignIn, SignInTarget};
 use crate::orchestrator::auth::{self, SignInFlow, SignInRequest};
 use crate::orchestrator::error::OrchestratorError;
-use crate::orchestrator::types::{AuthStatus, KeyStatus};
-
-/// Source of the ids that tell new-key sign-ins apart.
-static NEXT_SIGN_IN_ID: AtomicU64 = AtomicU64::new(0);
-
-/// A sign-in for a new key that is awaiting approval.
-pub(crate) struct PendingNewKeySignIn {
-    /// Tells this sign-in apart from ones that replaced it
-    id: u64,
-    /// The task waiting for the approval
-    task: JoinHandle<()>,
-}
+use crate::orchestrator::types::KeyStatus;
 
 impl BackupManager {
     /// Start a sign-in that backs up whichever key approves it, public and
@@ -62,33 +48,24 @@ impl BackupManager {
     pub async fn start_sign_in_for_new_key(
         &self,
     ) -> Result<SignInRequest<PublicKey>, OrchestratorError> {
-        if self.config.developer_mode {
-            return Err(sign_in_unavailable_in_developer_mode());
-        }
-
-        let pubky_client = self.inner.read().pubky_client.clone();
-        let flow = auth::start_sign_in_flow(&pubky_client, self.config.http_relay.as_ref())?;
+        let flow = self.start_sign_in_flow()?;
         let authorization_url = flow.authorization_url().to_string();
 
         let (outcome_tx, outcome_rx) = oneshot::channel();
-        let id = NEXT_SIGN_IN_ID.fetch_add(1, Ordering::Relaxed);
+        let id = PendingSignIn::next_id();
         let manager = self.clone();
+        let wait_for_approval = async move {
+            let outcome = manager.finish_sign_in_for_new_key(id, flow).await;
+            // Nobody is listening if the caller dropped the request
+            let _ = outcome_tx.send(outcome);
+        };
 
-        let replaced = {
+        {
             // Spawning under the lock keeps the task from claiming its approval
             // before it is registered
             let mut inner = self.inner.write();
-            let task = tokio::spawn(async move {
-                let outcome = manager.finish_sign_in_for_new_key(id, flow).await;
-                // Nobody is listening if the caller dropped the request
-                let _ = outcome_tx.send(outcome);
-            });
-            inner
-                .new_key_sign_in
-                .replace(PendingNewKeySignIn { id, task })
-        };
-        if let Some(replaced) = replaced {
-            replaced.task.abort();
+            let task = tokio::spawn(wait_for_approval);
+            replace_pending_sign_in(&mut inner.new_key_sign_in, Some(PendingSignIn { id, task }));
         }
 
         info!("Started sign-in for a new key");
@@ -98,9 +75,8 @@ impl BackupManager {
     /// Cancel the sign-in started by [`BackupManager::start_sign_in_for_new_key`],
     /// if it is still awaiting approval.
     pub fn cancel_sign_in_for_new_key(&self) {
-        let pending = self.inner.write().new_key_sign_in.take();
-        if let Some(pending) = pending {
-            pending.task.abort();
+        let cancelled = replace_pending_sign_in(&mut self.inner.write().new_key_sign_in, None);
+        if cancelled {
             info!("Cancelled sign-in for a new key");
         }
     }
@@ -113,10 +89,7 @@ impl BackupManager {
         flow: SignInFlow,
     ) -> Result<PublicKey, OrchestratorError> {
         let approval = auth::await_any_approval(flow).await;
-
-        // Past this point the sign-in can't be cancelled, so it can't be cut
-        // off with its key half added
-        if !self.claim_sign_in_for_new_key(id) {
+        if !self.claim_sign_in(SignInTarget::NewKey, id) {
             if let Ok(session) = approval {
                 auth::end_session(session);
             }
@@ -125,70 +98,28 @@ impl BackupManager {
 
         let session = approval.inspect_err(|e| warn!("Sign-in for a new key failed: {}", e))?;
         let pubky = session.public_key();
-        if let Err(e) = self.sign_in_with_session(&pubky, &session).await {
+        if let Err(e) = self.ensure_backed_up(&pubky).await {
             warn!("Failed to back up {} after sign-in: {}", pubky, e);
             // Don't leave a session nobody will use open on the homeserver
             auth::end_session(session);
             return Err(e);
         }
 
-        self.after_sign_in(&pubky).await;
+        self.complete_sign_in(&pubky, session).await?;
         Ok(pubky)
     }
 
-    /// Take the new-key sign-in with this `id` out of the manager, so that it can
-    /// no longer be cancelled or replaced.
-    ///
-    /// Returns `false` if it already was.
-    fn claim_sign_in_for_new_key(&self, id: u64) -> bool {
-        let mut inner = self.inner.write();
-        let is_pending = inner
-            .new_key_sign_in
-            .as_ref()
-            .is_some_and(|pending| pending.id == id);
-        if is_pending {
-            inner.new_key_sign_in = None;
-        }
-        is_pending
-    }
-
-    /// Back up `pubky` if it isn't yet, then sign it in with `session`.
-    ///
-    /// The session replaces any sign-in the key had, including one still
-    /// awaiting approval.
-    async fn sign_in_with_session(
-        &self,
-        pubky: &PublicKey,
-        session: &PubkySession,
-    ) -> Result<(), OrchestratorError> {
-        let secret = auth::session_secret(session)?;
-
+    /// Back up `pubky` if it isn't yet, or retry it if it is in error.
+    async fn ensure_backed_up(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
         match self.get_key_state(pubky) {
             None => match self.add_key(pubky.clone()).await {
                 // Added in the meantime by someone else
-                Ok(()) | Err(OrchestratorError::KeyAlreadyExists(_)) => {}
-                Err(e) => return Err(e),
+                Ok(()) | Err(OrchestratorError::KeyAlreadyExists(_)) => Ok(()),
+                Err(e) => Err(e),
             },
-            Some(state) if state.status == KeyStatus::Error => {
-                self.retry_errored_key(pubky).await?;
-            }
-            Some(_) => {}
+            Some(state) if state.status == KeyStatus::Error => self.retry_errored_key(pubky).await,
+            Some(_) => Ok(()),
         }
-
-        self.replace_sign_in_task(pubky, None);
-        let replaced = self
-            .update_auth(pubky, |auth| {
-                let replaced = self.storage.read_session_secret(pubky)?;
-                self.storage.write_session_secret(pubky, &secret)?;
-                *auth = AuthStatus::SignedIn;
-                Ok::<_, OrchestratorError>(replaced)
-            })
-            .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))??;
-
-        if let Some(replaced) = replaced.filter(|replaced| *replaced != secret) {
-            self.end_session_on_homeserver(replaced, pubky);
-        }
-        Ok(())
     }
 }
 
@@ -199,9 +130,12 @@ mod tests {
 
     /// Register a pending new-key sign-in whose task never finishes.
     fn register_pending_sign_in(manager: &BackupManager) -> u64 {
-        let id = NEXT_SIGN_IN_ID.fetch_add(1, Ordering::Relaxed);
+        let id = PendingSignIn::next_id();
         let task = tokio::spawn(std::future::pending());
-        manager.inner.write().new_key_sign_in = Some(PendingNewKeySignIn { id, task });
+        replace_pending_sign_in(
+            &mut manager.inner.write().new_key_sign_in,
+            Some(PendingSignIn { id, task }),
+        );
         id
     }
 
@@ -220,8 +154,8 @@ mod tests {
         let (_dir, manager) = setup().await;
         let id = register_pending_sign_in(&manager);
 
-        assert!(manager.claim_sign_in_for_new_key(id));
-        assert!(!manager.claim_sign_in_for_new_key(id));
+        assert!(manager.claim_sign_in(SignInTarget::NewKey, id));
+        assert!(!manager.claim_sign_in(SignInTarget::NewKey, id));
     }
 
     #[tokio::test]
@@ -231,7 +165,7 @@ mod tests {
 
         manager.cancel_sign_in_for_new_key();
 
-        assert!(!manager.claim_sign_in_for_new_key(id));
+        assert!(!manager.claim_sign_in(SignInTarget::NewKey, id));
     }
 
     #[tokio::test]
@@ -240,8 +174,8 @@ mod tests {
         let replaced = register_pending_sign_in(&manager);
         let current = register_pending_sign_in(&manager);
 
-        assert!(!manager.claim_sign_in_for_new_key(replaced));
-        assert!(manager.claim_sign_in_for_new_key(current));
+        assert!(!manager.claim_sign_in(SignInTarget::NewKey, replaced));
+        assert!(manager.claim_sign_in(SignInTarget::NewKey, current));
     }
 
     #[tokio::test]
@@ -251,5 +185,18 @@ mod tests {
         manager.cancel_sign_in_for_new_key();
 
         assert!(manager.inner.read().new_key_sign_in.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_no_key_is_added_after_shutdown() {
+        let (_dir, manager) = setup().await;
+        manager.shutdown().await;
+
+        let result = manager
+            .add_key(super::super::super::tests::test_pubky())
+            .await;
+
+        assert!(result.is_err());
+        assert!(manager.get_keys().is_empty());
     }
 }

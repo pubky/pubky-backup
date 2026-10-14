@@ -11,10 +11,9 @@
 //! - Handling 404 responses gracefully
 //! - Returning empty data in developer mode (no network calls)
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use log::{debug, info};
-use pubky::{Pubky, PubkyResource};
+use pubky::errors::RequestError;
+use pubky::{Pubky, PubkyResource, StatusCode};
 
 use super::error::SyncError;
 use super::scope::SyncScope;
@@ -53,32 +52,27 @@ pub(super) async fn fetch_resource_data(
     }
 
     let public_storage = pubky_client.public_storage();
-    // The retry helper only carries error messages, so note a rejection on the side
-    let session_rejected = AtomicBool::new(false);
-    let response = match retry_with_backoff(|| async {
-        let result = match scope {
+    let fetched = retry_with_backoff(|| async {
+        match scope {
             SyncScope::Public => public_storage.get(resource).await,
             SyncScope::Private(session) => session.storage().get(&resource.path).await,
-        };
-        result.map_err(|e| {
-            if matches!(scope, SyncScope::Private(_)) && is_session_rejection(&e) {
-                session_rejected.store(true, Ordering::Relaxed);
-            }
-            format!("{}", e)
-        })
+        }
     })
-    .await
-    {
+    .await;
+
+    let response = match fetched {
         Ok(response) => response,
-        Err(_) if session_rejected.load(Ordering::Relaxed) => {
+        Err(e) if matches!(scope, SyncScope::Private(_)) && is_session_rejection(&e) => {
             return Err(SyncError::SessionRejected);
         }
+        // The resource was deleted between its event and the fetch
+        Err(pubky::Error::Request(RequestError::Server { status, .. }))
+            if matches!(status, StatusCode::NOT_FOUND | StatusCode::GONE) =>
+        {
+            info!("{} response: Returning empty data for {}", status, resource);
+            return Ok(Vec::new());
+        }
         Err(e) => {
-            // Handle 404s gracefully - resource was deleted between event and fetch
-            if e.contains("404") || e.to_lowercase().contains("not found") {
-                info!("404 response: Returning empty data for {}", resource);
-                return Ok(Vec::new());
-            }
             return Err(SyncError::Internal(format!(
                 "Failed to fetch data for {}: {}",
                 resource, e

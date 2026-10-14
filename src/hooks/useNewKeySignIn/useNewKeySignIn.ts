@@ -14,6 +14,12 @@ export type NewKeySignInState =
 
 const IDLE: NewKeySignInState = { type: "Idle" };
 
+function cancelBackendSignIn() {
+  cancelSignInNewKey().catch((error: unknown) => {
+    Logger.error("useNewKeySignIn", "Failed to cancel sign-in", { error });
+  });
+}
+
 /**
  * useNewKeySignIn
  *
@@ -55,6 +61,10 @@ export function useNewKeySignIn(onSignedIn: (pubky: string) => void) {
         await signInNewKey((url) => {
           if (isCurrent()) {
             setState({ type: "AwaitingApproval", authorization_url: url });
+          } else if (currentAttemptRef.current === 0) {
+            // Given up on before the backend had started it, so the cancel
+            // found nothing to cancel: cancel it now that it has started
+            cancelBackendSignIn();
           }
         }),
       );
@@ -80,10 +90,7 @@ export function useNewKeySignIn(onSignedIn: (pubky: string) => void) {
     const wasInProgress = currentAttemptRef.current !== 0;
     currentAttemptRef.current = 0;
     setState(IDLE);
-    if (!wasInProgress) return;
-    cancelSignInNewKey().catch((error: unknown) => {
-      Logger.error("useNewKeySignIn", "Failed to cancel sign-in", { error });
-    });
+    if (wasInProgress) cancelBackendSignIn();
   }, []);
 
   // Don't leave a sign-in pending once nobody can see its QR code

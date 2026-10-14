@@ -130,8 +130,6 @@ pub enum KeyErrorCode {
     HomeserverUnreachable,
     /// Could not discover homeserver for the pubky
     HomeserverNotFound,
-    /// No data found for this pubky
-    NoDataFound,
     /// Local storage is full
     StorageFull,
     /// Network connectivity issue
