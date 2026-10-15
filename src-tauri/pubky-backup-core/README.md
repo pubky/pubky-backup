@@ -66,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Configuration
 
 ```rust
+use pubky::ClientId;
 use pubky_backup_core::BackupManagerConfig;
 use std::path::PathBuf;
 
@@ -76,6 +77,8 @@ let config = BackupManagerConfig {
     validation_timeout_secs: 30,
     // Enable developer mode / offline mode (default: false)
     developer_mode: false,
+    // Name shown to users among the apps they granted access to (default: "pubky-backup")
+    client_id: ClientId::new("my-backup-cli")?,
     // Remaining options: sync_interval_secs, http_relay
     ..Default::default()
 };
@@ -145,7 +148,9 @@ request.approved().await?;
 // Private data is now backed up alongside public data.
 ```
 
-The request only asks for read access to `/priv`, and the key's secret never leaves the signer app. The session is stored in the app data directory (`~/.pubky-backup/sessions/`, readable by its owner only), so the key stays signed in across restarts. It stays there when the backup location moves, so it is never copied into a synced or removable folder along with the backup.
+The request only asks for read access to `/priv`, and the key's secret never leaves the signer app. If the owner approves without that access, the sign-in fails.
+
+The approval is a grant to this app, named by `BackupManagerConfig::client_id`. The backup renews its short-lived access tokens itself, without the signer app, for as long as the grant lasts (the SDK's signer issues grants for two years). When it expires, or the owner revokes it from their signer app, the key's status becomes `SessionExpired` and the owner signs in again. The session is stored in the app data directory (`~/.pubky-backup/sessions/`, readable by its owner only), so the key stays signed in across restarts. It stays there when the backup location moves, so it is never copied into a synced or removable folder along with the backup.
 
 The owner doesn't have to enter their pubky first. A sign-in for a new key adds whichever key approves it, if it isn't backed up yet, and signs it in:
 

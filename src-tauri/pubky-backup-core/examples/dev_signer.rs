@@ -15,11 +15,10 @@
 //!
 //! The key file holds the user's secret key unencrypted, so only use it for
 //! throwaway test users.
-#![allow(deprecated)] // Cookie auth is deprecated by the SDK, but it is what we use
 
 use std::path::Path;
 
-use pubky::{Keypair, Pubky, PublicKey};
+use pubky::{ClientId, Keypair, Pubky, PublicKey};
 use pubky_backup_core::is_testnet_mode;
 
 const USAGE: &str = "Usage:
@@ -53,9 +52,10 @@ async fn signup(homeserver: &str, key_file: &Path) -> Result<(), Box<dyn std::er
     let keypair = Keypair::random();
     keypair.write_secret_key_file(key_file)?;
 
-    let session = pubky_client()?
-        .signer(keypair.clone())
-        .signup_cookie(&homeserver, None)
+    let signer = pubky_client()?.signer(keypair.clone());
+    signer.signup(&homeserver, None).await?;
+    let session = signer
+        .signin(ClientId::new("pubky-backup-dev-signer")?)
         .await?;
     let storage = session.storage();
     storage

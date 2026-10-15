@@ -909,7 +909,7 @@ mod tests {
             validation_timeout_secs: 30,
             developer_mode: true,
             sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
-            http_relay: None,
+            ..Default::default()
         }
     }
 
@@ -1468,7 +1468,7 @@ mod tests {
             validation_timeout_secs: 30,
             developer_mode: true,
             sync_interval_secs: 900,
-            http_relay: None,
+            ..Default::default()
         };
         let manager = BackupManager::new(config).await.unwrap();
 

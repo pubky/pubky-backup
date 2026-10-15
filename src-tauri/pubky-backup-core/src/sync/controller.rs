@@ -28,7 +28,7 @@ use super::error::SyncError;
 use super::events::{self, EventStream, EVENT_BATCH_SIZE};
 use super::fetcher;
 use super::scope::SyncScope;
-use super::session::{is_session_rejection, restore_session, SessionSecret};
+use super::session::{is_session_rejection, SessionSecret};
 use crate::is_developer_mode;
 use crate::storage::{AppStorage, DataScope};
 #[cfg(test)]
@@ -214,6 +214,10 @@ struct SyncCycle {
 
 /// A session together with the stored secret it was restored from, so a
 /// changed or removed secret is noticed.
+///
+/// Only the most recently restored session of a grant stays usable: each
+/// restore exchanges the grant for a new access token, replacing the previous
+/// one. So the controller restores once and keeps the session.
 #[derive(Clone)]
 struct RestoredSession {
     secret: String,
@@ -591,7 +595,7 @@ impl BackupController {
             return Ok(Some(restored.clone()));
         }
 
-        match restore_session(&secret, &self.pubky_client).await {
+        match self.pubky_client.restore_session(&secret).await {
             Ok(session) => {
                 info!("Restored session for key: {}", self.pubky);
                 let restored = RestoredSession { secret, session };

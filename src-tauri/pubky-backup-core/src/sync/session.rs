@@ -1,12 +1,13 @@
 //! Sessions of signed-in keys, used to sync their private data.
 //!
-//! Sessions use the SDK's cookie authentication. The SDK deprecates it in
-//! favour of grants, but cookie auth is what we use.
+//! Sessions are grant-backed. The stored secret holds the grant and this app's
+//! key for it, from which a session gets fresh access tokens by itself until the
+//! grant expires or is revoked.
 
 use std::fmt;
 
 use pubky::errors::RequestError;
-use pubky::{Pubky, PubkySession, StatusCode};
+use pubky::StatusCode;
 
 /// The secret a session is stored as, as passed between the sync layer and
 /// whoever manages the session. Its `Debug` output hides the secret.
@@ -27,25 +28,6 @@ impl fmt::Debug for SessionSecret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("SessionSecret(..)")
     }
-}
-
-/// Restore a session from the secret it was stored as.
-///
-/// Validates the session with the homeserver, so this makes a network call.
-#[allow(deprecated)]
-pub(crate) async fn restore_session(
-    secret: &str,
-    pubky_client: &Pubky,
-) -> Result<PubkySession, pubky::Error> {
-    PubkySession::import_secret(secret, Some(pubky_client.client().clone())).await
-}
-
-/// Export the secret a session can later be restored from with [`restore_session`].
-///
-/// Returns `None` if the session is not cookie-backed.
-#[allow(deprecated)]
-pub(crate) fn export_session_secret(session: &PubkySession) -> Option<String> {
-    session.as_cookie()?.export_secret()
 }
 
 /// Whether an SDK error means the homeserver will not accept the session,
