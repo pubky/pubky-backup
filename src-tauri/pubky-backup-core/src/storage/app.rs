@@ -7,6 +7,7 @@ use super::config::ConfigStorage;
 use super::error::StorageError;
 use super::keys::{DataScope, KeyStorage, KeysStorage};
 use super::migration::remove_legacy_data;
+use super::sessions::SessionStorage;
 use crate::orchestrator::types::ActivityEntry;
 use log::{error, info, warn};
 use pubky::{PubkyResource, PublicKey};
@@ -43,10 +44,11 @@ pub fn get_data_directory() -> Result<PathBuf, StorageError> {
     }
 }
 
-/// Storage for application-level data (config, global logs).
+/// Storage for application-level data (config, global logs, sessions).
 struct AppDataStorage {
     config: ConfigStorage,
     logs_storage: Storage,
+    sessions: SessionStorage,
 }
 
 impl AppDataStorage {
@@ -56,6 +58,7 @@ impl AppDataStorage {
         Ok(AppDataStorage {
             config: ConfigStorage::new(data_dir)?,
             logs_storage: Storage::new(&logs_dir)?,
+            sessions: SessionStorage::new(data_dir)?,
         })
     }
 
@@ -98,6 +101,8 @@ impl AppDataStorage {
 /// ├── config.json                # App-level configuration
 /// ├── logs/                      # App-level logs
 /// │   └── error.log              # Global error log
+/// ├── sessions/                  # Session secrets of signed-in keys, which
+/// │   └── <pubky>                # stay here when the keys directory moves
 /// └── keys/                      # Per-key data
 ///     └── <pubky>/
 ///         ├── state/             # Backup state/metadata
@@ -262,12 +267,12 @@ impl AppStorage {
         pubky: &PublicKey,
         secret: &str,
     ) -> Result<(), StorageError> {
-        self.key_storage(pubky)?.write_session_secret(secret)
+        self.app_data.sessions.write(pubky, secret)
     }
 
     /// Read the stored session secret of a pubky, or `None` if it is not signed in.
     pub fn read_session_secret(&self, pubky: &PublicKey) -> Result<Option<String>, StorageError> {
-        self.key_storage(pubky)?.read_session_secret()
+        self.app_data.sessions.read(pubky)
     }
 
     /// Remove the stored session secret of a pubky and return it, or `None` if
@@ -276,12 +281,12 @@ impl AppStorage {
         &self,
         pubky: &PublicKey,
     ) -> Result<Option<String>, StorageError> {
-        self.key_storage(pubky)?.take_session_secret()
+        self.app_data.sessions.take(pubky)
     }
 
     /// Delete the stored session secret of a pubky. Does nothing if there is none.
     pub(crate) fn delete_session_secret(&self, pubky: &PublicKey) -> Result<(), StorageError> {
-        self.key_storage(pubky)?.delete_session_secret()
+        self.app_data.sessions.delete(pubky)
     }
 
     /// Write an error to the global error log file.
@@ -916,6 +921,30 @@ mod tests {
         // Config should be updated
         let stored_location = storage.read_keys_location().unwrap();
         assert_eq!(stored_location, new_keys_dir);
+    }
+
+    #[tokio::test]
+    async fn test_move_keys_leaves_sessions_in_app_data() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        storage.write_session_secret(&pubky, "secret").unwrap();
+
+        let new_keys_dir = storage.move_keys(&temp_dir.path().join("moved")).unwrap();
+
+        // The secret must not travel to the new, possibly synced, location
+        let moved_files: Vec<_> = walkdir::WalkDir::new(&new_keys_dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+            .collect();
+        assert!(moved_files
+            .iter()
+            .all(|entry| std::fs::read_to_string(entry.path()).ok().as_deref() != Some("secret")));
+        assert_eq!(
+            storage.read_session_secret(&pubky).unwrap().as_deref(),
+            Some("secret")
+        );
     }
 
     #[tokio::test]

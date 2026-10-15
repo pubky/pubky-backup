@@ -30,7 +30,8 @@ Provides high-level management of multiple pubky backups running concurrently:
 Manages all file system operations for backup data and application state:
 
 - **Application storage**: Global state like the list of backed-up keys
-- **Per-key storage**: Individual backup data, cursors, sessions, and error logs
+- **Per-key storage**: Individual backup data, cursors, and error logs
+- **Sessions**: Session secrets of signed-in keys, kept in the app data directory rather than with the backup
 - **Migration**: Upgrading from legacy storage formats
 - **Snapshots**: Point-in-time backup archives (zip)
 
@@ -144,7 +145,7 @@ request.approved().await?;
 // Private data is now backed up alongside public data.
 ```
 
-The request only asks for read access to `/priv`, and the key's secret never leaves the signer app. The session is stored with the key's backup, so the key stays signed in across restarts.
+The request only asks for read access to `/priv`, and the key's secret never leaves the signer app. The session is stored in the app data directory (`~/.pubky-backup/sessions/`, readable by its owner only), so the key stays signed in across restarts. It stays there when the backup location moves, so it is never copied into a synced or removable folder along with the backup.
 
 The owner doesn't have to enter their pubky first. A sign-in for a new key adds whichever key approves it, if it isn't backed up yet, and signs it in:
 

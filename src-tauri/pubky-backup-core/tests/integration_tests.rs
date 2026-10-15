@@ -467,10 +467,7 @@ impl BackedUpUser {
 
     /// The file the backup stores this user's session secret in.
     fn session_secret_file(&self) -> std::path::PathBuf {
-        self.manager
-            .keys_dir()
-            .join(self.pubky.z32())
-            .join("state/session")
+        self.data_dir.path().join("sessions").join(self.pubky.z32())
     }
 
     /// Wait until the key's state satisfies `predicate`, or panic after 30 seconds.

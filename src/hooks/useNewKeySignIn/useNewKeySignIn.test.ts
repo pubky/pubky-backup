@@ -154,6 +154,27 @@ describe("useNewKeySignIn", () => {
     expect(result.current.state).toEqual({ type: "Idle" });
   });
 
+  it("should not let a link arriving at an old instance cancel a newer sign-in", () => {
+    const old = mockPendingSignIn();
+    mockPendingSignIn();
+    const first = renderHook(() => useNewKeySignIn(vi.fn()));
+    act(() => {
+      void first.result.current.start();
+    });
+    // Left, and opened again, before the first sign-in's link arrived
+    first.unmount();
+    const second = renderHook(() => useNewKeySignIn(vi.fn()));
+    act(() => {
+      void second.result.current.start();
+    });
+    expect(services.cancelSignInNewKey).toHaveBeenCalledTimes(1);
+
+    act(() => old.showLink(AUTHORIZATION_URL));
+
+    expect(services.cancelSignInNewKey).toHaveBeenCalledTimes(1);
+    expect(second.result.current.state).toEqual({ type: "Starting" });
+  });
+
   it("should not cancel anything on unmount when no sign-in is in progress", () => {
     const { unmount } = renderHook(() => useNewKeySignIn(vi.fn()));
 

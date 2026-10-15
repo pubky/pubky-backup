@@ -14,6 +14,13 @@ export type NewKeySignInState =
 
 const IDLE: NewKeySignInState = { type: "Idle" };
 
+/**
+ * The most recent attempt started by any instance of the hook. The backend
+ * keeps one sign-in for a new key at a time, the latest one, so only that
+ * attempt may cancel it.
+ */
+let latestAttempt = 0;
+
 function cancelBackendSignIn() {
   cancelSignInNewKey().catch((error: unknown) => {
     Logger.error("useNewKeySignIn", "Failed to cancel sign-in", { error });
@@ -45,13 +52,12 @@ function cancelBackendSignIn() {
 export function useNewKeySignIn(onSignedIn: (pubky: string) => void) {
   const [state, setState] = useState<NewKeySignInState>(IDLE);
   const setLastPubky = useUIStore((s) => s.setLastPubky);
-  // Each attempt gets a number, so outcomes of cancelled or replaced attempts
-  // are ignored. Zero means none is in progress.
-  const nextAttemptRef = useRef(1);
+  // The attempt whose outcome this instance shows, so outcomes of cancelled or
+  // replaced attempts are ignored. Zero means none is in progress.
   const currentAttemptRef = useRef(0);
 
   const start = useCallback(async () => {
-    const attempt = nextAttemptRef.current++;
+    const attempt = ++latestAttempt;
     currentAttemptRef.current = attempt;
     const isCurrent = () => currentAttemptRef.current === attempt;
     setState({ type: "Starting" });
@@ -61,9 +67,10 @@ export function useNewKeySignIn(onSignedIn: (pubky: string) => void) {
         await signInNewKey((url) => {
           if (isCurrent()) {
             setState({ type: "AwaitingApproval", authorization_url: url });
-          } else if (currentAttemptRef.current === 0) {
+          } else if (attempt === latestAttempt) {
             // Given up on before the backend had started it, so the cancel
-            // found nothing to cancel: cancel it now that it has started
+            // found nothing to cancel: cancel it now that it has started.
+            // A newer attempt, from any instance, has replaced it instead.
             cancelBackendSignIn();
           }
         }),
@@ -87,10 +94,10 @@ export function useNewKeySignIn(onSignedIn: (pubky: string) => void) {
   }, [onSignedIn, setLastPubky]);
 
   const cancel = useCallback(() => {
-    const wasInProgress = currentAttemptRef.current !== 0;
+    const attempt = currentAttemptRef.current;
     currentAttemptRef.current = 0;
     setState(IDLE);
-    if (wasInProgress) cancelBackendSignIn();
+    if (attempt !== 0 && attempt === latestAttempt) cancelBackendSignIn();
   }, []);
 
   // Don't leave a sign-in pending once nobody can see its QR code

@@ -42,6 +42,7 @@ pub(crate) mod config;
 pub mod error;
 mod keys;
 mod migration;
+mod sessions;
 
 pub use app::{get_data_directory, AppStorage};
 pub use error::StorageError;
