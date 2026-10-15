@@ -285,7 +285,11 @@ impl BackupManager {
             ));
         }
         let pubky_client = self.inner.read().pubky_client.clone();
-        auth::start_sign_in_flow(&pubky_client, self.config.http_relay.as_ref())
+        auth::start_sign_in_flow(
+            &pubky_client,
+            &self.config.client_id,
+            self.config.http_relay.as_ref(),
+        )
     }
 
     /// Wait for a key's sign-in to be approved, then sign the key in.
@@ -341,7 +345,7 @@ impl BackupManager {
         pubky: &PublicKey,
         session: PubkySession,
     ) -> Result<(), OrchestratorError> {
-        if let Err(e) = self.store_session(pubky, &session) {
+        if let Err(e) = self.store_approved_session(pubky, &session).await {
             // Don't leave a session nobody will use open on the homeserver
             auth::end_session(session);
             return Err(e);
@@ -360,22 +364,26 @@ impl BackupManager {
         Ok(())
     }
 
-    /// Store a key's session and mark the key signed in.
-    ///
-    /// The session replaces any sign-in the key had, including one still
-    /// awaiting approval, and the replaced session is ended.
-    fn store_session(
+    /// Store the secret of a key's approved session and mark the key signed in.
+    async fn store_approved_session(
         &self,
         pubky: &PublicKey,
         session: &PubkySession,
     ) -> Result<(), OrchestratorError> {
-        let secret = auth::session_secret(session)?;
+        let secret = auth::session_secret(session).await?;
+        self.store_session(pubky, &secret)
+    }
 
+    /// Store a key's session secret and mark the key signed in.
+    ///
+    /// The session replaces any sign-in the key had, including one still
+    /// awaiting approval, and the replaced session is ended.
+    fn store_session(&self, pubky: &PublicKey, secret: &str) -> Result<(), OrchestratorError> {
         let replaced = self
             .update_key(pubky, |managed| {
                 replace_pending_sign_in(&mut managed.pending_sign_in, None);
                 let replaced = self.storage.read_session_secret(pubky)?;
-                if let Err(e) = self.storage.write_session_secret(pubky, &secret) {
+                if let Err(e) = self.storage.write_session_secret(pubky, secret) {
                     managed.auth = AuthStatus::SignInFailed {
                         message: e.to_string(),
                     };
@@ -386,7 +394,7 @@ impl BackupManager {
             })
             .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))??;
 
-        if let Some(replaced) = replaced.filter(|replaced| *replaced != secret) {
+        if let Some(replaced) = replaced.filter(|replaced| replaced != secret) {
             self.end_session_on_homeserver(replaced, pubky);
         }
         Ok(())

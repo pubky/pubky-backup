@@ -4,17 +4,20 @@
 //! owner approves the request in their signer app (e.g. Pubky Ring), so the
 //! key's secret never reaches this library.
 //!
-//! Sessions use the SDK's cookie authentication. The SDK deprecates it in
-//! favour of grants, but cookie auth is what we use.
-#![allow(deprecated)]
+//! The owner's approval is a grant to this app. The backup exchanges it for
+//! short-lived access tokens by itself, without the signer app, until the grant
+//! expires or the owner revokes it.
 
 use log::warn;
-use pubky::{AuthFlowKind, Capabilities, Pubky, PubkyCookieAuthFlow, PubkySession, PublicKey};
+use pubky::{
+    AuthFlowKind, Capabilities, ClientId, Pubky, PubkyGrantAuthFlow, PubkySession, PublicKey,
+    StoragePath,
+};
+use pubky_common::capabilities::Action;
 use tokio::sync::oneshot;
 use url::Url;
 
 use super::error::OrchestratorError;
-use crate::sync::session::{export_session_secret, restore_session};
 use crate::sync::PRIVATE_PATH;
 
 /// A sign-in that is waiting for the key's owner to approve it.
@@ -64,14 +67,16 @@ impl<T> SignInRequest<T> {
 }
 
 /// A started sign-in request that is listening for its approval.
-pub(super) type SignInFlow = PubkyCookieAuthFlow;
+pub(super) type SignInFlow = PubkyGrantAuthFlow;
 
 /// Start a sign-in request asking for read access to private data.
 ///
 /// The returned flow carries the link to show to the signer app and starts
-/// listening for the approval right away.
+/// listening for the approval right away. `client_id` names this app to the
+/// owner, who sees it among the apps they granted access to.
 pub(super) fn start_sign_in_flow(
     pubky_client: &Pubky,
+    client_id: &ClientId,
     http_relay: Option<&Url>,
 ) -> Result<SignInFlow, OrchestratorError> {
     let capabilities = Capabilities::builder()
@@ -79,8 +84,9 @@ pub(super) fn start_sign_in_flow(
         .map_err(|e| OrchestratorError::AuthFailed(e.to_string()))?
         .finish();
 
-    let mut builder = PubkyCookieAuthFlow::builder(&capabilities, AuthFlowKind::signin())
-        .client(pubky_client.client().clone());
+    let mut builder =
+        PubkyGrantAuthFlow::builder(&capabilities, AuthFlowKind::signin(), client_id.clone())
+            .client(pubky_client.client().clone());
     if let Some(relay) = http_relay {
         builder = builder.relay(relay.clone());
     }
@@ -94,13 +100,34 @@ pub(super) fn start_sign_in_flow(
 ///
 /// # Errors
 ///
-/// Returns `OrchestratorError::AuthFailed` if the request expires.
+/// Returns `OrchestratorError::AuthFailed` if the request expires, or if the
+/// owner approved it without the read access to private data it asked for.
 pub(super) async fn await_any_approval(
     flow: SignInFlow,
 ) -> Result<PubkySession, OrchestratorError> {
-    flow.await_approval()
+    let session = flow
+        .await_approval()
         .await
-        .map_err(|e| OrchestratorError::AuthFailed(e.to_string()))
+        .map_err(|e| OrchestratorError::AuthFailed(e.to_string()))?;
+
+    // Signer apps may approve fewer capabilities than were asked for
+    if !grants_private_read(&session) {
+        end_session(session);
+        return Err(OrchestratorError::AuthFailed(
+            "Read access to private data was not approved".to_string(),
+        ));
+    }
+    Ok(session)
+}
+
+/// Whether a session can read the key's private data.
+fn grants_private_read(session: &PubkySession) -> bool {
+    let private: StoragePath = PRIVATE_PATH
+        .parse()
+        .expect("the private data path is a valid storage path");
+    session.info().capabilities().iter().any(|capability| {
+        capability.scope_covers_path(&private) && capability.actions().contains(&Action::Read)
+    })
 }
 
 /// Wait for a sign-in request to be approved by `pubky` and return its session.
@@ -128,10 +155,14 @@ pub(super) async fn await_approval(
     Ok(session)
 }
 
-/// The secret a session is stored as.
-pub(super) fn session_secret(session: &PubkySession) -> Result<String, OrchestratorError> {
-    export_session_secret(session)
-        .ok_or_else(|| OrchestratorError::AuthFailed("The session cannot be stored".to_string()))
+/// The secret a session is stored as, which restores it with
+/// [`Pubky::restore_session`].
+pub(super) async fn session_secret(session: &PubkySession) -> Result<String, OrchestratorError> {
+    let secret = match session.as_grant() {
+        Some(grant) => grant.export_local_secret().await,
+        None => None,
+    };
+    secret.ok_or_else(|| OrchestratorError::AuthFailed("The session cannot be stored".to_string()))
 }
 
 /// The error for a sign-in that was cancelled before it could complete.
@@ -156,7 +187,7 @@ pub(super) fn end_session(session: PubkySession) {
 /// End a session that is only known by its stored secret, like [`end_session`].
 pub(super) fn end_stored_session(secret: String, pubky: PublicKey, pubky_client: Pubky) {
     tokio::spawn(async move {
-        match restore_session(&secret, &pubky_client).await {
+        match pubky_client.restore_session(&secret).await {
             Ok(session) => end_session(session),
             Err(e) => warn!(
                 "Failed to end session of {} on its homeserver: {}",

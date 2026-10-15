@@ -2,7 +2,7 @@
 //!
 //! This module contains configuration and state types used by the [`BackupManager`](super::BackupManager).
 
-use pubky::PublicKey;
+use pubky::{ClientId, PublicKey};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use url::Url;
@@ -21,7 +21,13 @@ pub struct BackupManagerConfig {
     /// HTTP relay that delivers sign-in approvals from the user's signer app
     /// (default: the Pubky SDK's public relay)
     pub http_relay: Option<Url>,
+    /// Name this app gives itself when asking to sign in, which the user sees
+    /// among the apps they granted access to (default: `pubky-backup`)
+    pub client_id: ClientId,
 }
+
+/// The default [`BackupManagerConfig::client_id`].
+const DEFAULT_CLIENT_ID: &str = "pubky-backup";
 
 impl Default for BackupManagerConfig {
     fn default() -> Self {
@@ -31,6 +37,8 @@ impl Default for BackupManagerConfig {
             developer_mode: false,
             sync_interval_secs: crate::sync::DEFAULT_SYNC_INTERVAL_SECONDS,
             http_relay: None,
+            client_id: ClientId::new(DEFAULT_CLIENT_ID)
+                .expect("the default client ID is a valid client ID"),
         }
     }
 }
@@ -202,4 +210,16 @@ where
     S: serde::Serializer,
 {
     serializer.serialize_str(&pubky.z32())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_has_the_default_client_id() {
+        let config = BackupManagerConfig::default();
+
+        assert_eq!(config.client_id.as_str(), DEFAULT_CLIENT_ID);
+    }
 }

@@ -13,7 +13,7 @@
 //! A single testnet instance is shared across all tests to minimize startup overhead.
 //! Tests are serialized using `serial_test` to ensure proper sequencing.
 
-use pubky::{Keypair, PubkyResource, PubkySession, PubkySigner, PublicKey};
+use pubky::{Capabilities, ClientId, Keypair, PubkyResource, PubkySession, PubkySigner, PublicKey};
 use pubky_backup_core::{
     AppStorage, AuthStatus, BackupController, BackupManager, BackupManagerConfig,
     ControllerCommand, ControllerStatus, DataScope, KeyState, KeyStatus, OrchestratorError,
@@ -78,12 +78,14 @@ async fn get_shared_testnet() -> &'static EphemeralTestnet {
     .expect("Failed to get testnet")
 }
 
-/// Helper to create an account on the homeserver, returning a cookie session.
-///
-/// The SDK deprecates cookie auth in favour of grants, but cookie auth is what we use.
-#[allow(deprecated)]
-async fn signup_with_cookie(signer: &PubkySigner, homeserver_pk: &PublicKey) -> PubkySession {
-    signer.signup_cookie(homeserver_pk, None).await.unwrap()
+/// Helper to create an account on the homeserver and sign in to it with full
+/// access, as the user's own apps would, to write the data that gets backed up.
+async fn sign_up(signer: &PubkySigner, homeserver_pk: &PublicKey) -> PubkySession {
+    signer.signup(homeserver_pk, None).await.unwrap();
+    signer
+        .signin(ClientId::new("integration-tests").unwrap())
+        .await
+        .unwrap()
 }
 
 /// Helper to run a controller until it reaches Idle state (sync complete).
@@ -147,7 +149,7 @@ async fn test_backup_sync_put_delete_and_cursor() {
     // Create a user for this test
     let keypair = Keypair::random();
     let signer = pubky_client.signer(keypair.clone());
-    let session = signup_with_cookie(&signer, &homeserver_pk).await;
+    let session = sign_up(&signer, &homeserver_pk).await;
     let user_pk = keypair.public_key();
 
     // === Part 1: Write test data ===
@@ -258,7 +260,7 @@ async fn test_backup_controller_run_loop() {
 
     let keypair = Keypair::random();
     let signer = pubky_client.signer(keypair.clone());
-    let session = signup_with_cookie(&signer, &homeserver_pk).await;
+    let session = sign_up(&signer, &homeserver_pk).await;
     let user_pk = keypair.public_key();
 
     // Write some data
@@ -346,8 +348,8 @@ async fn test_multiple_users_isolation() {
     let signer1 = pubky_client.signer(keypair1.clone());
     let signer2 = pubky_client.signer(keypair2.clone());
 
-    let session1 = signup_with_cookie(&signer1, &homeserver_pk).await;
-    let session2 = signup_with_cookie(&signer2, &homeserver_pk).await;
+    let session1 = sign_up(&signer1, &homeserver_pk).await;
+    let session2 = sign_up(&signer2, &homeserver_pk).await;
 
     let user1_pk = keypair1.public_key();
     let user2_pk = keypair2.public_key();
@@ -506,7 +508,7 @@ async fn sign_up_with_files(files: &[(&str, &str)]) -> (PubkySigner, PubkySessio
     let testnet = get_shared_testnet().await;
     let homeserver_pk = testnet.homeserver_app().public_key();
     let signer = testnet.sdk().unwrap().signer(Keypair::random());
-    let session = signup_with_cookie(&signer, &homeserver_pk).await;
+    let session = sign_up(&signer, &homeserver_pk).await;
 
     for (path, content) in files {
         session
@@ -737,6 +739,35 @@ async fn test_sign_in_approved_by_other_key_fails() {
     other.manager.shutdown().await;
 }
 
+/// A sign-in approved without read access to private data fails, rather than
+/// leaving a key that shows as signed in but can't back up its private data.
+#[tokio::test]
+#[serial]
+async fn test_sign_in_without_private_read_access_fails() {
+    let user = BackedUpUser::create().await;
+    let request = user.manager.start_sign_in(&user.pubky).await.unwrap();
+
+    // Signer apps may approve fewer capabilities than were asked for, here none
+    let nothing = Capabilities::builder().finish();
+    user.signer
+        .approve_auth_with_capabilities(request.authorization_url(), &nothing)
+        .await
+        .unwrap();
+
+    let error = request.approved().await.unwrap_err();
+    assert!(
+        error.to_string().contains("not approved"),
+        "Unexpected error: {error}"
+    );
+    assert!(matches!(
+        user.auth_status(),
+        AuthStatus::SignInFailed { .. }
+    ));
+    assert!(!user.session_secret_file().exists());
+
+    user.manager.shutdown().await;
+}
+
 /// A cancelled sign-in can no longer be approved.
 #[tokio::test]
 #[serial]
@@ -880,7 +911,7 @@ async fn test_sign_out_stops_private_backup() {
 
     // The homeserver no longer accepts the session
     wait_until("session to end on the homeserver", || async {
-        restore_cookie_session(&session_secret).await.is_err()
+        restore_backup_session(&session_secret).await.is_err()
     })
     .await;
 
@@ -899,7 +930,7 @@ async fn test_rejected_session_falls_back_to_public_backup() {
 
     // End the backup's session behind its back
     let session_secret = std::fs::read_to_string(user.session_secret_file()).unwrap();
-    let backup_session = restore_cookie_session(&session_secret).await.unwrap();
+    let backup_session = restore_backup_session(&session_secret).await.unwrap();
     backup_session.signout().await.map_err(|(e, _)| e).unwrap();
 
     user.session
@@ -975,9 +1006,14 @@ async fn test_private_sync_failure_does_not_fail_public_backup() {
     user.manager.shutdown().await;
 }
 
-/// Restore a cookie session from its stored secret, as the backup does.
-#[allow(deprecated)]
-async fn restore_cookie_session(secret: &str) -> pubky::Result<PubkySession> {
-    let client = get_shared_testnet().await.sdk().unwrap().client().clone();
-    PubkySession::import_secret(secret, Some(client)).await
+/// Restore a session from its stored secret, as the backup does.
+///
+/// This takes the session over: the backup's own copy of it stops working.
+async fn restore_backup_session(secret: &str) -> pubky::Result<PubkySession> {
+    get_shared_testnet()
+        .await
+        .sdk()
+        .unwrap()
+        .restore_session(secret)
+        .await
 }
