@@ -11,10 +11,11 @@ use std::sync::{Arc, OnceLock};
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_developer_mode, parse_pubky, ActivityEntry, AppStorage, BackupManager, BackupManagerConfig,
-    KeyState, KeyStatus,
+    is_developer_mode, is_testnet_mode, parse_pubky, ActivityEntry, AppStorage, BackupManager,
+    BackupManagerConfig, KeyState, KeyStatus,
 };
 use tauri::{
+    ipc::Channel,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, WindowEvent,
@@ -58,6 +59,17 @@ fn create_config() -> BackupManagerConfig {
     }
 }
 
+/// Create a BackupManager for mainnet, or for a local testnet in testnet mode.
+async fn create_manager() -> Result<BackupManager, BackupAppError> {
+    let config = create_config();
+    let manager = if is_testnet_mode() {
+        BackupManager::testnet(config).await
+    } else {
+        BackupManager::new(config).await
+    };
+    manager.map_err(BackupAppError::internal)
+}
+
 /// Ensure a BackupManager exists inside the global slot.
 ///
 /// The write-mutex serialises creation so only one caller builds the
@@ -76,9 +88,7 @@ async fn ensure_manager() -> Result<(), BackupAppError> {
         return Ok(());
     }
 
-    let manager = BackupManager::new(create_config())
-        .await
-        .map_err(BackupAppError::internal)?;
+    let manager = create_manager().await?;
 
     spawn_event_listener(&manager).await;
     let _ = MANAGER.set(ArcSwap::from_pointee(manager));
@@ -291,6 +301,63 @@ async fn delete_key(pubky_str: &str) -> Result<(), BackupAppError> {
     Ok(())
 }
 
+/// Start signing in to a key, so that its private data is backed up as well.
+///
+/// The link to show to the key's owner, and later the outcome, arrive with the
+/// key's state in `key-update` events.
+#[tauri::command]
+async fn start_sign_in(pubky_str: &str) -> Result<(), BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager().await?.start_sign_in(&pubky).await?;
+    debug!("Sign-in started for: {}", pubky);
+    Ok(())
+}
+
+/// Sign in to whichever key approves the sign-in, backing it up if it isn't yet.
+///
+/// Sends the link to show to the key's owner through `on_authorization_url`
+/// right away, then returns the key once the owner approves.
+#[tauri::command]
+async fn sign_in_new_key(on_authorization_url: Channel<String>) -> Result<String, BackupAppError> {
+    let manager = get_manager().await?;
+    let request = manager.start_sign_in_for_new_key().await?;
+    on_authorization_url
+        .send(request.authorization_url().to_string())
+        .map_err(BackupAppError::internal)?;
+
+    let pubky = request.approved().await?;
+    manager
+        .write_last_pubky(&pubky)
+        .await
+        .map_err(BackupAppError::internal)?;
+    info!("Signed in to and backing up: {}", pubky);
+    Ok(pubky.z32())
+}
+
+/// Cancel the sign-in started by `sign_in_new_key`, if it awaits approval.
+#[tauri::command]
+async fn cancel_sign_in_new_key() -> Result<(), BackupAppError> {
+    get_manager().await?.cancel_sign_in_for_new_key();
+    Ok(())
+}
+
+/// Cancel a sign-in that is still awaiting approval.
+#[tauri::command]
+async fn cancel_sign_in(pubky_str: &str) -> Result<(), BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager().await?.cancel_sign_in(&pubky).await?;
+    Ok(())
+}
+
+/// Sign out of a key, so that only its public data is backed up.
+#[tauri::command]
+async fn sign_out(pubky_str: &str) -> Result<(), BackupAppError> {
+    let pubky = parse_pubky_for_command(pubky_str)?;
+    get_manager().await?.sign_out(&pubky).await?;
+    debug!("Signed out of: {}", pubky);
+    Ok(())
+}
+
 /// Send backup controller task ForceSync message.
 #[tauri::command]
 async fn force_sync_now(pubky_str: &str) -> Result<(), BackupAppError> {
@@ -400,9 +467,7 @@ async fn set_backup_location(new_parent: &str) -> Result<String, BackupAppError>
             .map_err(BackupAppError::internal)?;
 
         // Create a fresh manager — reads keys_location from config, resumes controllers
-        let new_manager = BackupManager::new(create_config())
-            .await
-            .map_err(BackupAppError::internal)?;
+        let new_manager = create_manager().await?;
         spawn_event_listener(&new_manager).await;
         slot.store(Arc::new(new_manager));
 
@@ -471,6 +536,9 @@ pub fn run() {
 
     if is_developer_mode() {
         info!("Developer mode enabled via PUBKY_DEVELOPER_MODE environment variable");
+    }
+    if is_testnet_mode() {
+        info!("Testnet mode enabled via PUBKY_TESTNET environment variable");
     }
 
     tauri::Builder::default()
@@ -542,6 +610,11 @@ pub fn run() {
             remove_key,
             delete_key,
             force_sync_now,
+            start_sign_in,
+            cancel_sign_in,
+            sign_in_new_key,
+            cancel_sign_in_new_key,
+            sign_out,
             open_data_dir,
             open_snapshots_dir,
             create_snapshot,

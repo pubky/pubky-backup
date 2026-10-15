@@ -11,6 +11,7 @@ const mockKeyState: KeyState = {
   total_files: null,
   files_synced: null,
   bytes_downloaded: null,
+  auth: { type: "SignedOut" },
 };
 
 const mockSyncingKeyState: KeyState = {
@@ -22,6 +23,7 @@ const mockSyncingKeyState: KeyState = {
   total_files: 100,
   files_synced: 50,
   bytes_downloaded: 1024,
+  auth: { type: "SignedOut" },
 };
 
 describe("useUIStore", () => {
@@ -31,7 +33,6 @@ describe("useUIStore", () => {
       currentScreen: "startup",
       currentPage: "sync",
       statusMessageMode: "sync",
-      pubkyInputValue: "",
       hasAutoLoaded: false,
       toast: {
         visible: false,
@@ -54,11 +55,6 @@ describe("useUIStore", () => {
     it("should have sync as default status message mode", () => {
       const state = useUIStore.getState();
       expect(state.statusMessageMode).toBe("sync");
-    });
-
-    it("should have empty pubky input value", () => {
-      const state = useUIStore.getState();
-      expect(state.pubkyInputValue).toBe("");
     });
 
     it("should have toast hidden by default", () => {
@@ -131,25 +127,6 @@ describe("useUIStore", () => {
       useUIStore.getState().setStatusMessageMode("snapshot-success");
       useUIStore.getState().setStatusMessageMode("sync");
       expect(useUIStore.getState().statusMessageMode).toBe("sync");
-    });
-  });
-
-  describe("setPubkyInputValue", () => {
-    it("should update pubky input value", () => {
-      useUIStore.getState().setPubkyInputValue("test-pubky-value");
-      expect(useUIStore.getState().pubkyInputValue).toBe("test-pubky-value");
-    });
-
-    it("should handle empty string", () => {
-      useUIStore.getState().setPubkyInputValue("some-value");
-      useUIStore.getState().setPubkyInputValue("");
-      expect(useUIStore.getState().pubkyInputValue).toBe("");
-    });
-
-    it("should handle long pubky strings", () => {
-      const longPubky = "a".repeat(100);
-      useUIStore.getState().setPubkyInputValue(longPubky);
-      expect(useUIStore.getState().pubkyInputValue).toBe(longPubky);
     });
   });
 
@@ -228,26 +205,26 @@ describe("useUIStore", () => {
 
   describe("state independence", () => {
     it("should not affect other state when changing screen", () => {
-      useUIStore.getState().setPubkyInputValue("test-value");
+      useUIStore.getState().setPage("activity");
       useUIStore.getState().showToast("toast-text");
 
       useUIStore.getState().setScreen("dashboard");
 
       const state = useUIStore.getState();
-      expect(state.pubkyInputValue).toBe("test-value");
+      expect(state.currentPage).toBe("activity");
       expect(state.toast.visible).toBe(true);
       expect(state.toast.pubkyText).toBe("toast-text");
     });
 
     it("should not affect other state when changing status mode", () => {
       useUIStore.getState().setScreen("dashboard");
-      useUIStore.getState().setPubkyInputValue("test-value");
+      useUIStore.getState().setPage("activity");
 
       useUIStore.getState().setStatusMessageMode("snapshot-success");
 
       const state = useUIStore.getState();
       expect(state.currentScreen).toBe("dashboard");
-      expect(state.pubkyInputValue).toBe("test-value");
+      expect(state.currentPage).toBe("activity");
     });
   });
 

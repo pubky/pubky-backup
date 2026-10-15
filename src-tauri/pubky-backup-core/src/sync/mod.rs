@@ -8,6 +8,8 @@
 //! - [`BackupController`] - The main sync loop that processes events for a single pubky
 //! - [`events`] - Event stream creation and mock streams for testing
 //! - [`fetcher`] - Resource data fetching with retry logic
+//! - [`scope`] - The public and private scopes a key's data is synced in
+//! - [`session`] - Restoring the session a signed-in key's private data is synced with
 //!
 //! # Architecture
 //!
@@ -16,13 +18,19 @@
 //! 2. Processing PUT/DELETE events as they arrive
 //! 3. Fetching resource data for PUT events
 //! 4. Persisting data to storage via the storage module
-//! 5. Tracking sync progress via cursors
+//! 5. Tracking sync progress via cursors, one per scope
+//!
+//! Each sync cycle syncs a key's public data, then, if a session secret is stored
+//! for the key, its private data. A session the homeserver rejects is reported
+//! with `ControllerStatus::SessionRejected` and not used again, while public data
+//! keeps syncing.
 //!
 //! # Channel Architecture
 //!
 //! The controller uses two broadcast channels for communication with the orchestrator:
 //! - `ControllerCommand`: Commands sent TO the controller (Cancel, ForceSync)
-//! - `ControllerStatus`: Status updates sent FROM the controller (Syncing, Idle, Ended, Error)
+//! - `ControllerStatus`: Status updates sent FROM the controller (Syncing, Idle, Ended,
+//!   Error, SessionRejected)
 //!
 //! The [`BackupController`] runs as an async task and can be controlled via
 //! message channels for cancellation and force-sync triggers.
@@ -31,9 +39,13 @@ mod controller;
 pub mod error;
 mod events;
 mod fetcher;
+mod scope;
+pub(crate) mod session;
 
 pub use controller::{
     BackupController, ControllerCommand, ControllerStatus, DEFAULT_SYNC_INTERVAL_SECONDS,
     MIN_SYNC_INTERVAL_SECONDS,
 };
 pub use error::SyncError;
+pub(crate) use scope::PRIVATE_PATH;
+pub use session::SessionSecret;

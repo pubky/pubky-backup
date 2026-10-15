@@ -23,16 +23,39 @@ pub(crate) const STATE_DIR_NAME: &str = "state";
 pub(crate) const DATA_DIR_NAME: &str = "data";
 const SNAPSHOTS_DIR_NAME: &str = "snapshots";
 pub(crate) const CURSOR_FILENAME: &str = "cursor";
+const PRIVATE_CURSOR_FILENAME: &str = "private_cursor";
 const ACTIVITY_LOG_FILENAME: &str = "activity.log";
 const INACTIVE_FILENAME: &str = "inactive";
+/// A part of a key's data that is synced separately, with its own cursor.
+///
+/// Losing access to private data then never holds back the backup of public data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataScope {
+    /// Public data (`/pub`), readable by anyone.
+    Public,
+    /// Private data (`/priv`), readable only with the owner's session.
+    Private,
+}
+
+impl DataScope {
+    fn cursor_filename(self) -> &'static str {
+        match self {
+            Self::Public => CURSOR_FILENAME,
+            Self::Private => PRIVATE_CURSOR_FILENAME,
+        }
+    }
+}
+
 /// Storage for a single Pubky key's backup data.
 ///
 /// Located at: `~/.pubky-backup/keys/<pubky>/`
 ///
 /// Structure:
-/// - `state/cursor` - Sync progress cursor
+/// - `state/cursor` - Sync progress cursor for public data
+/// - `state/private_cursor` - Sync progress cursor for private data
 /// - `state/activity.log` - Activity log (JSON lines)
-/// - `data/pub/...` - Backed-up resources
+/// - `data/pub/...` - Backed-up public resources
+/// - `data/priv/...` - Backed-up private resources (signed-in keys only)
 /// - `snapshots/<timestamp>.zip` - Point-in-time snapshots
 pub struct KeyStorage {
     /// The public key this storage is for
@@ -59,27 +82,42 @@ impl KeyStorage {
         })
     }
 
-    /// Write cursor to track backup progress.
+    /// Write the cursor tracking backup progress of one scope of the key's data.
     ///
     /// Uses atomic write-then-rename to prevent torn writes on crashes.
-    pub async fn write_cursor(&self, cursor_value: u64) -> Result<(), StorageError> {
-        let temp_path = format!("{}.tmp", CURSOR_FILENAME);
-        self.state_storage
-            .write(&temp_path, cursor_value.to_string())
-            .await?;
-        self.state_storage
-            .rename(&temp_path, CURSOR_FILENAME)
-            .await?;
-        debug!("Cursor value written: {}", cursor_value);
-        Ok(())
+    pub async fn write_cursor(
+        &self,
+        scope: DataScope,
+        cursor_value: u64,
+    ) -> Result<(), StorageError> {
+        self.write_cursor_file(scope.cursor_filename(), cursor_value)
+            .await
     }
 
-    /// Read existing cursor.
+    /// Read the cursor tracking backup progress of one scope of the key's data.
     ///
     /// Handles migration from old string-stored cursors by parsing the string as u64.
     /// The cursor value from the API was always u64, just previously stored as String.
-    pub async fn read_cursor(&self) -> Result<Option<u64>, StorageError> {
-        match self.state_storage.read(CURSOR_FILENAME).await {
+    pub async fn read_cursor(&self, scope: DataScope) -> Result<Option<u64>, StorageError> {
+        self.read_cursor_file(scope.cursor_filename()).await
+    }
+
+    async fn write_cursor_file(
+        &self,
+        filename: &str,
+        cursor_value: u64,
+    ) -> Result<(), StorageError> {
+        let temp_path = format!("{}.tmp", filename);
+        self.state_storage
+            .write(&temp_path, cursor_value.to_string())
+            .await?;
+        self.state_storage.rename(&temp_path, filename).await?;
+        debug!("Cursor value written to {}: {}", filename, cursor_value);
+        Ok(())
+    }
+
+    async fn read_cursor_file(&self, filename: &str) -> Result<Option<u64>, StorageError> {
+        match self.state_storage.read(filename).await {
             Ok(cursor_data) => {
                 let cursor_string = String::from_utf8(cursor_data)?;
                 let cursor_string = cursor_string.trim();
@@ -96,7 +134,7 @@ impl KeyStorage {
                                 "Invalid cursor value '{}' cannot be parsed as u64, resetting cursor",
                                 cursor_string
                             );
-                            let _ = self.state_storage.delete(CURSOR_FILENAME).await;
+                            let _ = self.state_storage.delete(filename).await;
                             Ok(None)
                         }
                     }
@@ -475,10 +513,10 @@ mod tests {
         let (storage, _temp_dir) = create_test_key_storage();
 
         // Write cursor
-        storage.write_cursor(123).await.unwrap();
+        storage.write_cursor(DataScope::Public, 123).await.unwrap();
 
         // Read cursor back
-        let cursor = storage.read_cursor().await.unwrap();
+        let cursor = storage.read_cursor(DataScope::Public).await.unwrap();
         assert_eq!(cursor, Some(123));
     }
 
@@ -487,7 +525,7 @@ mod tests {
         let (storage, _temp_dir) = create_test_key_storage();
 
         // Read cursor before writing - should return None
-        let cursor = storage.read_cursor().await.unwrap();
+        let cursor = storage.read_cursor(DataScope::Public).await.unwrap();
         assert_eq!(cursor, None);
     }
 
@@ -497,12 +535,12 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Write cursor multiple times
-        storage.write_cursor(1).await.unwrap();
-        storage.write_cursor(2).await.unwrap();
-        storage.write_cursor(3).await.unwrap();
+        storage.write_cursor(DataScope::Public, 1).await.unwrap();
+        storage.write_cursor(DataScope::Public, 2).await.unwrap();
+        storage.write_cursor(DataScope::Public, 3).await.unwrap();
 
         // Verify the cursor has the latest value
-        let cursor = storage.read_cursor().await.unwrap();
+        let cursor = storage.read_cursor(DataScope::Public).await.unwrap();
         assert_eq!(cursor, Some(3));
 
         // Verify no temp file is left behind
@@ -799,6 +837,9 @@ mod tests {
             ActivityType::InitialBackup,
             ActivityType::SnapshotCreated,
             ActivityType::SyncFailed,
+            ActivityType::SignedIn,
+            ActivityType::SignedOut,
+            ActivityType::SessionExpired,
         ];
 
         for (i, activity_type) in types.iter().enumerate() {
@@ -813,10 +854,32 @@ mod tests {
         }
 
         let entries = storage.read_activity(10).await;
-        assert_eq!(entries.len(), 4);
-        assert_eq!(entries[0].activity_type, ActivityType::SyncFailed);
-        assert_eq!(entries[1].activity_type, ActivityType::SnapshotCreated);
-        assert_eq!(entries[2].activity_type, ActivityType::InitialBackup);
-        assert_eq!(entries[3].activity_type, ActivityType::FilesBackedUp);
+        assert_eq!(entries.len(), 7);
+        assert_eq!(entries[0].activity_type, ActivityType::SessionExpired);
+        assert_eq!(entries[1].activity_type, ActivityType::SignedOut);
+        assert_eq!(entries[2].activity_type, ActivityType::SignedIn);
+        assert_eq!(entries[3].activity_type, ActivityType::SyncFailed);
+        assert_eq!(entries[4].activity_type, ActivityType::SnapshotCreated);
+        assert_eq!(entries[5].activity_type, ActivityType::InitialBackup);
+        assert_eq!(entries[6].activity_type, ActivityType::FilesBackedUp);
+    }
+
+    #[tokio::test]
+    async fn test_private_cursor_is_independent_of_public_cursor() {
+        let (storage, _temp_dir) = create_test_key_storage();
+
+        assert_eq!(storage.read_cursor(DataScope::Private).await.unwrap(), None);
+
+        storage.write_cursor(DataScope::Public, 10).await.unwrap();
+        storage.write_cursor(DataScope::Private, 20).await.unwrap();
+
+        assert_eq!(
+            storage.read_cursor(DataScope::Public).await.unwrap(),
+            Some(10)
+        );
+        assert_eq!(
+            storage.read_cursor(DataScope::Private).await.unwrap(),
+            Some(20)
+        );
     }
 }

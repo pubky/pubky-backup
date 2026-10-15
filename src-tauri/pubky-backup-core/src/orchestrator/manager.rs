@@ -27,11 +27,15 @@ use super::session;
 use super::status::{current_unix_timestamp, next_sync_time, spawn_status_listener};
 use super::sync_interval::SyncInterval;
 use super::types::{
-    ActivityEntry, ActivityType, BackupManagerConfig, KeyError, KeyErrorCode, KeyState, KeyStatus,
-    KeyUpdate,
+    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyErrorCode, KeyState,
+    KeyStatus, KeyUpdate,
 };
 use crate::storage::AppStorage;
 use crate::sync::{BackupController, ControllerCommand, ControllerStatus};
+
+mod sign_in;
+
+use sign_in::PendingSignIn;
 
 /// Maximum number of keys that can be backed up simultaneously.
 ///
@@ -47,14 +51,32 @@ pub const MAX_KEYS: usize = 50;
 /// spreads first syncs over ~50 seconds.
 pub const STAGGER_MULTIPLE: usize = 5;
 
+/// HTTP relay of a local Pubky testnet, which listens on a fixed port.
+const TESTNET_HTTP_RELAY: &str = "http://localhost:15412/link/";
+
 /// Internal state for a managed key.
 struct ManagedKey {
     /// Sender for control messages to the backup controller (mpsc - single receiver)
     control_tx: mpsc::Sender<ControllerCommand>,
-    /// Current state of the key
-    state: KeyState,
+    /// State as the key's controller last reported it. Its `auth` is unused:
+    /// controllers don't know the sign-in status, which is kept in `auth`.
+    sync_state: KeyState,
+    /// Whether the key is signed in
+    auth: AuthStatus,
     /// Handle to the controller task
     task_handle: JoinHandle<()>,
+    /// A sign-in of this key that awaits approval
+    pending_sign_in: Option<PendingSignIn>,
+}
+
+impl ManagedKey {
+    /// The key's state, as reported to subscribers.
+    fn state(&self) -> KeyState {
+        KeyState {
+            auth: self.auth.clone(),
+            ..self.sync_state.clone()
+        }
+    }
 }
 
 pub(crate) struct ManagerInner {
@@ -62,6 +84,10 @@ pub(crate) struct ManagerInner {
     keys: HashMap<PublicKey, ManagedKey>,
     /// Shared pubky client for SDK calls
     pubky_client: Arc<Pubky>,
+    /// A sign-in that adds whichever key approves it, while it awaits approval
+    new_key_sign_in: Option<PendingSignIn>,
+    /// Set by [`BackupManager::shutdown`], after which no key is added
+    is_shut_down: bool,
 }
 
 /// Snapshot of a key's state values needed by the status listener.
@@ -76,21 +102,23 @@ impl ManagerInner {
     /// Get a snapshot of a key's current state, or `None` if the key is not tracked.
     pub(crate) fn key_snapshot(&self, pubky: &PublicKey) -> Option<KeySnapshot> {
         self.keys.get(pubky).map(|m| KeySnapshot {
-            data_size: m.state.data_size,
-            last_sync: m.state.last_sync,
-            next_sync: m.state.next_sync,
-            status: m.state.status.clone(),
+            data_size: m.sync_state.data_size,
+            last_sync: m.sync_state.last_sync,
+            next_sync: m.sync_state.next_sync,
+            status: m.sync_state.status.clone(),
         })
     }
 
-    /// Update the state for a key. Returns false if the key is not tracked.
-    pub(crate) fn update_key_state(&mut self, pubky: &PublicKey, state: KeyState) -> bool {
-        if let Some(managed) = self.keys.get_mut(pubky) {
-            managed.state = state;
-            true
-        } else {
-            false
-        }
+    /// Apply a state derived from a controller status update and return the
+    /// state the key now has, or `None` if the key is not tracked.
+    pub(crate) fn apply_controller_state(
+        &mut self,
+        pubky: &PublicKey,
+        state: KeyState,
+    ) -> Option<KeyState> {
+        let managed = self.keys.get_mut(pubky)?;
+        managed.sync_state = state;
+        Some(managed.state())
     }
 }
 
@@ -146,6 +174,52 @@ impl BackupManager {
     ///
     /// Returns `OrchestratorError` if storage initialization fails.
     pub async fn new(config: BackupManagerConfig) -> Result<Self, OrchestratorError> {
+        let pubky_client = if config.developer_mode {
+            Pubky::testnet().map_err(|e| OrchestratorError::Internal(e.to_string()))?
+        } else {
+            Pubky::new().map_err(|e| OrchestratorError::Internal(e.to_string()))?
+        };
+
+        Self::with_client(config, pubky_client).await
+    }
+
+    /// Create a new BackupManager that backs up from a local Pubky testnet
+    /// instead of mainnet.
+    ///
+    /// The testnet must be running on this machine with its well-known ports, as
+    /// started by `pubky-testnet` or this crate's `dev_testnet` example. Unless
+    /// the config names one, sign-ins go through the testnet's HTTP relay.
+    ///
+    /// Otherwise behaves like [`BackupManager::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `OrchestratorError` if storage initialization fails.
+    pub async fn testnet(mut config: BackupManagerConfig) -> Result<Self, OrchestratorError> {
+        let pubky_client =
+            Pubky::testnet().map_err(|e| OrchestratorError::Internal(e.to_string()))?;
+        if config.http_relay.is_none() {
+            let relay = TESTNET_HTTP_RELAY
+                .parse()
+                .map_err(|e| OrchestratorError::Internal(format!("Invalid relay URL: {}", e)))?;
+            config.http_relay = Some(relay);
+        }
+
+        Self::with_client(config, pubky_client).await
+    }
+
+    /// Create a new BackupManager that makes all its network calls through the
+    /// given Pubky client, e.g. one configured for a testnet or with custom timeouts.
+    ///
+    /// Otherwise behaves like [`BackupManager::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `OrchestratorError` if storage initialization fails.
+    pub async fn with_client(
+        config: BackupManagerConfig,
+        pubky_client: Pubky,
+    ) -> Result<Self, OrchestratorError> {
         // Initialize storage
         let storage = if let Some(ref data_dir) = config.data_dir {
             AppStorage::new_with_path(data_dir)?
@@ -153,13 +227,7 @@ impl BackupManager {
             AppStorage::new()?
         };
         let storage = Arc::new(storage);
-
-        // Create pubky client
-        let pubky_client = if config.developer_mode {
-            Arc::new(Pubky::testnet().map_err(|e| OrchestratorError::Internal(e.to_string()))?)
-        } else {
-            Arc::new(Pubky::new().map_err(|e| OrchestratorError::Internal(e.to_string()))?)
-        };
+        let pubky_client = Arc::new(pubky_client);
 
         let sync_interval = SyncInterval::load(storage.clone(), config.sync_interval_secs);
 
@@ -172,6 +240,8 @@ impl BackupManager {
         let inner = Arc::new(RwLock::new(ManagerInner {
             keys: HashMap::new(),
             pubky_client,
+            new_key_sign_in: None,
+            is_shut_down: false,
         }));
 
         let manager = BackupManager {
@@ -208,7 +278,7 @@ impl BackupManager {
 
     /// Add a key to be backed up.
     ///
-    /// This method validates the key (discovers homeserver, checks data exists),
+    /// This method checks that the key has a homeserver (it need not have any data yet),
     /// then starts syncing. If backup data already exists on disk, it resumes
     /// from where it left off.
     ///
@@ -216,7 +286,7 @@ impl BackupManager {
     ///
     /// Returns `OrchestratorError::KeyAlreadyExists` if the key is already being backed up.
     /// Returns `OrchestratorError::KeyLimitReached` if MAX_KEYS limit is reached.
-    /// Returns `OrchestratorError::ValidationFailed` if the key cannot be validated.
+    /// Returns `OrchestratorError::HomeserverNotFound` if the key has no homeserver.
     pub async fn add_key(&self, pubky: PublicKey) -> Result<(), OrchestratorError> {
         // Early check if key already exists or limit reached.
         // Note: There's a small race window between this check and the actual insert in
@@ -232,10 +302,7 @@ impl BackupManager {
             }
         }
 
-        if !self.config.developer_mode {
-            discovery::discover_homeserver(&pubky, self.config.validation_timeout_secs).await?;
-            discovery::verify_pubky_has_data(&pubky, self.config.validation_timeout_secs).await?;
-        }
+        self.validate_key(&pubky).await?;
 
         // Clear inactive marker if re-adding a previously removed key
         let key_storage = self.storage.key_storage(&pubky)?;
@@ -262,6 +329,10 @@ impl BackupManager {
                 .remove(pubky)
                 .ok_or_else(|| OrchestratorError::KeyNotFound(pubky.to_string()))?
         };
+
+        if let Some(pending) = managed_key.pending_sign_in {
+            pending.cancel();
+        }
 
         if managed_key
             .control_tx
@@ -293,7 +364,7 @@ impl BackupManager {
     }
 
     /// Stop syncing a key and mark it inactive. Backed-up data is preserved on disk
-    /// but the key will not be resumed on next launch.
+    /// but the key will not be resumed on next launch. A signed-in key is signed out.
     ///
     /// Use `delete_key()` to also remove all backed-up data.
     ///
@@ -302,6 +373,7 @@ impl BackupManager {
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn remove_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
         self.stop_controller(pubky)?;
+        self.discard_session_of_removed_key(pubky);
 
         // Mark the key as inactive so it won't be resumed on next launch
         let key_storage = self.storage.key_storage(pubky)?;
@@ -314,7 +386,8 @@ impl BackupManager {
         Ok(())
     }
 
-    /// Remove a key AND delete all backed-up data from disk.
+    /// Remove a key AND delete all backed-up data from disk. A signed-in key is
+    /// signed out.
     ///
     /// Awaits the controller task to ensure all in-flight IO completes
     /// before deleting files from disk.
@@ -324,6 +397,7 @@ impl BackupManager {
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     pub async fn delete_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
         let handle = self.stop_controller(pubky)?;
+        self.discard_session_of_removed_key(pubky);
         self.clear_last_pubky_if_empty().await;
 
         // Await the controller to ensure all in-flight IO completes before deleting files
@@ -350,7 +424,7 @@ impl BackupManager {
 
     /// Retry a key that is currently in error state.
     ///
-    /// Tears down the errored controller, re-validates (homeserver discovery + data check),
+    /// Tears down the errored controller, re-validates (homeserver discovery),
     /// and restarts the controller. If re-validation fails, the error propagates to the caller
     /// instead of silently leaving the key in error state.
     ///
@@ -363,10 +437,7 @@ impl BackupManager {
         self.stop_controller(pubky)?;
 
         // Re-validate
-        if !self.config.developer_mode {
-            discovery::discover_homeserver(pubky, self.config.validation_timeout_secs).await?;
-            discovery::verify_pubky_has_data(pubky, self.config.validation_timeout_secs).await?;
-        }
+        self.validate_key(pubky).await?;
 
         // Restart the controller
         self.start_controller(pubky.clone(), false).await?;
@@ -402,7 +473,7 @@ impl BackupManager {
     /// Returns `None` if the key is not being backed up.
     pub fn get_key_state(&self, pubky: &PublicKey) -> Option<KeyState> {
         let inner = self.inner.read();
-        inner.keys.get(pubky).map(|k| k.state.clone())
+        inner.keys.get(pubky).map(ManagedKey::state)
     }
 
     /// Get current state of all managed keys.
@@ -413,7 +484,7 @@ impl BackupManager {
         inner
             .keys
             .iter()
-            .map(|(pubky, managed)| (pubky.z32(), managed.state.clone()))
+            .map(|(pubky, managed)| (pubky.z32(), managed.state()))
             .collect()
     }
 
@@ -429,7 +500,7 @@ impl BackupManager {
         inner
             .keys
             .values()
-            .any(|k| matches!(k.state.status, KeyStatus::Syncing { .. }))
+            .any(|k| matches!(k.sync_state.status, KeyStatus::Syncing { .. }))
     }
 
     /// Check if any key has an error.
@@ -438,7 +509,7 @@ impl BackupManager {
         inner
             .keys
             .values()
-            .any(|k| matches!(k.state.status, KeyStatus::Error))
+            .any(|k| matches!(k.sync_state.status, KeyStatus::Error))
     }
 
     /// Check if any key is running (not stopped).
@@ -447,7 +518,7 @@ impl BackupManager {
         inner
             .keys
             .values()
-            .any(|k| !matches!(k.state.status, KeyStatus::Stopped))
+            .any(|k| !matches!(k.sync_state.status, KeyStatus::Stopped))
     }
 
     /// Create a snapshot (zip) for a key.
@@ -472,20 +543,12 @@ impl BackupManager {
         info!("Created snapshot for {}: {}", pubky, path.display());
 
         let snapshot_count = self.storage.count_snapshots(pubky).await;
-        if let Err(e) = self
-            .storage
-            .write_activity(
-                pubky,
-                &ActivityEntry {
-                    activity_type: ActivityType::SnapshotCreated,
-                    message: format!("Created snapshot v{}", snapshot_count),
-                    timestamp: current_unix_timestamp(),
-                },
-            )
-            .await
-        {
-            warn!("Failed to write activity for {}: {}", pubky, e);
-        }
+        self.write_activity(
+            pubky,
+            ActivityType::SnapshotCreated,
+            format!("Created snapshot v{}", snapshot_count),
+        )
+        .await;
 
         Ok(path)
     }
@@ -553,6 +616,10 @@ impl BackupManager {
 
     /// Gracefully shutdown all backups, awaiting controller tasks.
     pub async fn shutdown(&self) {
+        // Keys added from here on, e.g. by a sign-in that was just approved,
+        // would otherwise outlive the shutdown
+        self.inner.write().is_shut_down = true;
+        self.cancel_sign_in_for_new_key();
         let keys: Vec<PublicKey> = self.get_keys();
 
         let mut handles = Vec::new();
@@ -613,29 +680,80 @@ impl BackupManager {
 
     // --- Internal methods ---
 
-    /// Register a key in the manager: broadcast its state and insert into the keys map.
+    /// Check that a key has a homeserver to back up from.
+    ///
+    /// The key need not have any data yet: it may be new, or all its data may
+    /// be private, which only shows once it is signed in.
+    ///
+    /// Skipped in developer mode, which makes no network calls.
+    async fn validate_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
+        if self.config.developer_mode {
+            return Ok(());
+        }
+
+        let pubky_client = self.inner.read().pubky_client.clone();
+        let timeout_secs = self.config.validation_timeout_secs;
+        discovery::discover_homeserver(&pubky_client, pubky, timeout_secs).await?;
+        Ok(())
+    }
+
+    /// Append an entry to a key's activity log. Failures are logged, not returned.
+    async fn write_activity(
+        &self,
+        pubky: &PublicKey,
+        activity_type: ActivityType,
+        message: String,
+    ) {
+        let entry = ActivityEntry {
+            activity_type,
+            message,
+            timestamp: current_unix_timestamp(),
+        };
+        if let Err(e) = self.storage.write_activity(pubky, &entry).await {
+            warn!("Failed to write activity for {}: {}", pubky, e);
+        }
+    }
+
+    /// Register a key in the manager: insert it into the keys map and broadcast
+    /// its state. Its sign-in status comes from its stored session.
+    ///
+    /// # Errors
+    ///
+    /// Returns `OrchestratorError::Internal`, and stops the key's controller, if
+    /// the manager has shut down.
     fn register_key(
         &self,
         pubky: PublicKey,
-        state: KeyState,
+        sync_state: KeyState,
         control_tx: mpsc::Sender<ControllerCommand>,
         task_handle: JoinHandle<()>,
-    ) {
+    ) -> Result<(), OrchestratorError> {
+        let managed = ManagedKey {
+            control_tx,
+            sync_state,
+            auth: self.stored_auth_status(&pubky),
+            task_handle,
+            pending_sign_in: None,
+        };
+        let state = managed.state();
+
+        {
+            let mut inner = self.inner.write();
+            if inner.is_shut_down {
+                managed.task_handle.abort();
+                return Err(OrchestratorError::Internal(
+                    "The backup manager has shut down".to_string(),
+                ));
+            }
+            inner.keys.insert(pubky.clone(), managed);
+        }
+
         let receivers = self.update_tx.send(KeyUpdate {
             pubky: pubky.clone(),
-            state: state.clone(),
+            state,
         });
         debug!("Broadcast state for {} (receivers: {:?})", pubky, receivers);
-
-        let mut inner = self.inner.write();
-        inner.keys.insert(
-            pubky,
-            ManagedKey {
-                control_tx,
-                state,
-                task_handle,
-            },
-        );
+        Ok(())
     }
 
     /// Start the backup controller for a key.
@@ -689,9 +807,7 @@ impl BackupManager {
             controller.run().await;
         });
 
-        self.register_key(pubky, initial_state, control_tx, task_handle);
-
-        Ok(())
+        self.register_key(pubky, initial_state, control_tx, task_handle)
     }
 
     /// Resume all keys that have stored data on disk
@@ -765,7 +881,9 @@ impl BackupManager {
         };
 
         let task_handle = tokio::spawn(async {});
-        self.register_key(pubky, error_state, control_tx, task_handle);
+        if let Err(e) = self.register_key(pubky.clone(), error_state, control_tx, task_handle) {
+            warn!("Failed to register errored key {}: {}", pubky, e);
+        }
     }
 }
 
@@ -777,37 +895,39 @@ mod tests {
     use crate::TEST_PUBKY;
     use std::str::FromStr;
     use tempfile::TempDir;
+    use url::Url;
 
     /// Helper to enable developer mode for tests that need mock data
-    fn enable_developer_mode() {
+    pub(super) fn enable_developer_mode() {
         std::env::set_var("PUBKY_DEVELOPER_MODE", "1");
     }
 
-    fn create_test_config(temp_dir: &TempDir) -> BackupManagerConfig {
+    pub(super) fn create_test_config(temp_dir: &TempDir) -> BackupManagerConfig {
         enable_developer_mode();
         BackupManagerConfig {
             data_dir: Some(temp_dir.path().to_path_buf()),
             validation_timeout_secs: 30,
             developer_mode: true,
             sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+            http_relay: None,
         }
     }
 
     /// Create a temp dir and a BackupManager configured for testing.
-    async fn setup() -> (TempDir, BackupManager) {
+    pub(super) async fn setup() -> (TempDir, BackupManager) {
         let temp_dir = TempDir::new().unwrap();
         let (_, manager) = setup_with_dir(&temp_dir).await;
         (temp_dir, manager)
     }
 
     /// Create a BackupManager using an existing temp dir (for multi-lifecycle tests).
-    async fn setup_with_dir(temp_dir: &TempDir) -> (BackupManagerConfig, BackupManager) {
+    pub(super) async fn setup_with_dir(temp_dir: &TempDir) -> (BackupManagerConfig, BackupManager) {
         let config = create_test_config(temp_dir);
         let manager = BackupManager::new(config.clone()).await.unwrap();
         (config, manager)
     }
 
-    fn test_pubky() -> PublicKey {
+    pub(super) fn test_pubky() -> PublicKey {
         PublicKey::from_str(TEST_PUBKY).unwrap()
     }
 
@@ -1348,6 +1468,7 @@ mod tests {
             validation_timeout_secs: 30,
             developer_mode: true,
             sync_interval_secs: 900,
+            http_relay: None,
         };
         let manager = BackupManager::new(config).await.unwrap();
 
@@ -1420,5 +1541,31 @@ mod tests {
             dirs.contains(&pubky.z32()),
             "key directories must be listable without a BackupManager"
         );
+    }
+
+    #[tokio::test]
+    async fn test_testnet_manager_signs_in_through_local_relay() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let manager = BackupManager::testnet(create_test_config(&temp_dir))
+            .await
+            .unwrap();
+
+        let relay = manager.config.http_relay.as_ref().unwrap();
+        assert_eq!(relay.as_str(), TESTNET_HTTP_RELAY);
+    }
+
+    #[tokio::test]
+    async fn test_testnet_manager_keeps_configured_relay() {
+        let temp_dir = TempDir::new().unwrap();
+        let relay: Url = "http://relay.example/link/".parse().unwrap();
+        let config = BackupManagerConfig {
+            http_relay: Some(relay.clone()),
+            ..create_test_config(&temp_dir)
+        };
+
+        let manager = BackupManager::testnet(config).await.unwrap();
+
+        assert_eq!(manager.config.http_relay, Some(relay));
     }
 }

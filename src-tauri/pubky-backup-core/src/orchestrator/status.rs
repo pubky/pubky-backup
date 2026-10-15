@@ -75,6 +75,11 @@ impl StatusHandler {
                 }
             }
             ControllerStatus::Ended { .. } => self.base_state(KeyStatus::Stopped),
+            // Not a change of sync status: the listener handles it with the
+            // key's sign-in status instead
+            ControllerStatus::SessionRejected { .. } => {
+                self.base_state(self.previous_status.clone())
+            }
             ControllerStatus::Error { message, .. } => KeyState {
                 error: Some(KeyError {
                     code: KeyErrorCode::Internal,
@@ -178,6 +183,22 @@ pub(crate) fn spawn_status_listener(
     tokio::spawn(async move {
         loop {
             match status_rx.recv().await {
+                Ok(ControllerStatus::SessionRejected { pubky, secret }) => {
+                    let expired = inner.write().expire_session(&storage, &pubky, &secret);
+                    let Some(state) = expired else {
+                        continue;
+                    };
+                    let entry = ActivityEntry {
+                        activity_type: ActivityType::SessionExpired,
+                        message: "Session expired — sign in again to back up private data"
+                            .to_string(),
+                        timestamp: current_unix_timestamp(),
+                    };
+                    if let Err(e) = storage.write_activity(&pubky, &entry).await {
+                        warn!("Failed to write activity for {}: {}", pubky, e);
+                    }
+                    let _ = update_tx.send(KeyUpdate { pubky, state });
+                }
                 Ok(status) => {
                     let pubky = status.pubky().clone();
 
@@ -201,10 +222,11 @@ pub(crate) fn spawn_status_listener(
 
                     let new_state = handler.handle(&status).await;
 
-                    {
-                        let mut inner_write = inner.write();
-                        inner_write.update_key_state(&pubky, new_state.clone());
-                    }
+                    // Skip the broadcast if the key was removed while handling the update
+                    let applied = inner.write().apply_controller_state(&pubky, new_state);
+                    let Some(new_state) = applied else {
+                        continue;
+                    };
 
                     let receivers = update_tx.send(KeyUpdate {
                         pubky: pubky.clone(),

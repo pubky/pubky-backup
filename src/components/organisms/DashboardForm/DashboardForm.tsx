@@ -1,6 +1,7 @@
 import * as Atoms from "@/components/atoms";
 import * as Molecules from "@/components/molecules";
 import { ActionButtons } from "../ActionButtons";
+import { CoverageCard } from "../CoverageCard";
 import * as Hooks from "@/hooks";
 import * as Utils from "@/utils";
 
@@ -25,14 +26,22 @@ export function DashboardForm() {
     isCreatingSnapshot,
   } = Hooks.useDashboardActions();
 
+  const coverage = Hooks.useBackupCoverage(pubky);
+  const coverageByKey = Hooks.useBackupCoverageByKey(keys);
+
   return (
     <>
       {/* Header */}
       <Molecules.DashboardHeader
         pubkyDisplay={Utils.displayPubky(pubky)}
         status={statusInfo.badge}
+        coverage={pubky !== null ? coverage : undefined}
         onCopy={() => handleCopy(pubky)}
-        keys={keys.map((k) => ({ pubky: k, isSelected: k === pubky }))}
+        keys={keys.map((k) => ({
+          pubky: k,
+          isSelected: k === pubky,
+          coverage: coverageByKey[k],
+        }))}
         onSelectKey={handleSelectKey}
       />
 
@@ -74,6 +83,9 @@ export function DashboardForm() {
           }
         />
       </div>
+
+      {/* Signing in and out to back up private data */}
+      {pubky !== null && <CoverageCard pubky={pubky} />}
 
       {/* Action buttons */}
       <ActionButtons

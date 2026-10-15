@@ -28,13 +28,6 @@ export const useUIStore = create<UIStore>()(
           UIActionTypes.SET_STATUS_MESSAGE_MODE,
         ),
 
-      setPubkyInputValue: (value: string) =>
-        set(
-          { pubkyInputValue: value },
-          false,
-          UIActionTypes.SET_PUBKY_INPUT_VALUE,
-        ),
-
       setHasAutoLoaded: (value: boolean) =>
         set({ hasAutoLoaded: value }, false, UIActionTypes.SET_HAS_AUTO_LOADED),
 

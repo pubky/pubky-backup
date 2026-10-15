@@ -2,7 +2,10 @@ export type ActivityType =
   | "files_backed_up"
   | "initial_backup"
   | "snapshot_created"
-  | "sync_failed";
+  | "sync_failed"
+  | "signed_in"
+  | "signed_out"
+  | "session_expired";
 
 export interface ActivityEntry {
   type: ActivityType;
@@ -26,7 +29,6 @@ export interface ToastState {
 export type KeyErrorCode =
   | "HomeserverUnreachable"
   | "HomeserverNotFound"
-  | "NoDataFound"
   | "StorageFull"
   | "NetworkError"
   | "Timeout"
@@ -45,6 +47,14 @@ export type KeyStatus =
   | { type: "Stopped" }
   | { type: "Error" };
 
+// Whether a key is signed in. Private data is backed up only while SignedIn.
+export type AuthStatus =
+  | { type: "SignedOut" }
+  | { type: "AwaitingApproval"; authorization_url: string }
+  | { type: "SignedIn" }
+  | { type: "SessionExpired" }
+  | { type: "SignInFailed"; message: string };
+
 export interface KeyState {
   status: KeyStatus;
   data_size: number;
@@ -54,6 +64,7 @@ export interface KeyState {
   total_files: number | null;
   files_synced: number | null;
   bytes_downloaded: number | null;
+  auth: AuthStatus;
 }
 
 export interface KeyUpdate {
@@ -65,7 +76,6 @@ export interface UIState {
   currentScreen: Screen;
   currentPage: Page;
   statusMessageMode: StatusMessageMode;
-  pubkyInputValue: string;
   hasAutoLoaded: boolean;
   toast: ToastState;
   // App state from backend
@@ -79,7 +89,6 @@ export interface UIActions {
   setScreen: (screen: Screen) => void;
   setPage: (page: Page) => void;
   setStatusMessageMode: (mode: StatusMessageMode) => void;
-  setPubkyInputValue: (value: string) => void;
   setHasAutoLoaded: (value: boolean) => void;
   showToast: (pubkyText: string) => void;
   showErrorToast: (message: string) => void;
@@ -99,7 +108,6 @@ export const uiInitialState: UIState = {
   currentScreen: "startup",
   currentPage: "sync",
   statusMessageMode: "sync",
-  pubkyInputValue: "",
   hasAutoLoaded: false,
   toast: {
     visible: false,
@@ -117,7 +125,6 @@ export enum UIActionTypes {
   SET_SCREEN = "SET_SCREEN",
   SET_PAGE = "SET_PAGE",
   SET_STATUS_MESSAGE_MODE = "SET_STATUS_MESSAGE_MODE",
-  SET_PUBKY_INPUT_VALUE = "SET_PUBKY_INPUT_VALUE",
   SET_HAS_AUTO_LOADED = "SET_HAS_AUTO_LOADED",
   SHOW_TOAST = "SHOW_TOAST",
   SHOW_ERROR_TOAST = "SHOW_ERROR_TOAST",

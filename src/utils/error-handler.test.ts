@@ -11,7 +11,6 @@ describe("handleBackendError", () => {
     useUIStore.setState({
       currentScreen: "startup",
       statusMessageMode: "sync",
-      pubkyInputValue: "",
       hasAutoLoaded: false,
       toast: {
         visible: false,

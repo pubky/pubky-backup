@@ -3,7 +3,10 @@
 //! This module is a simple wrapper around pubky SDK's event streams functionality.
 //! Test helpers for mock streams are available under `#[cfg(test)]`.
 
-use super::error::EventsError;
+use super::error::{EventsError, SyncError};
+use super::scope::{SyncScope, PRIVATE_PATH};
+use super::session::is_session_rejection;
+use crate::utils::retry_with_backoff;
 use futures_util::Stream;
 use log::{info, warn};
 use pubky::{Event, EventCursor, Pubky, PublicKey};
@@ -12,74 +15,57 @@ use std::pin::Pin;
 /// Batch size for event stream processing and cursor save frequency.
 pub(super) const EVENT_BATCH_SIZE: u16 = 50;
 
-/// Maximum retry attempts for 429 Too Many Requests responses.
-const MAX_429_RETRIES: u32 = 3;
+/// A stream of a key's events, as the controller consumes it.
+pub(super) type EventStream = Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>>;
 
-/// Create an event stream for a given pubky.
+/// Create an event stream for one scope of a given pubky's data.
 ///
 /// Returns a stream of events starting from the given cursor position.
-/// If cursor is None, starts from the beginning.
-/// Retries with exponential backoff on 429 Too Many Requests responses.
+/// If cursor is None, starts from the beginning. Transient failures to
+/// subscribe, including rate limiting, are retried.
+///
+/// # Errors
+///
+/// Returns `SyncError::SessionRejected` if the homeserver does not accept
+/// the session of a private scope.
 pub(super) async fn create_event_stream(
     pubky_client: &Pubky,
     user: &PublicKey,
+    scope: SyncScope<'_>,
     cursor: Option<u64>,
-) -> Result<Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>>, EventsError> {
+) -> Result<EventStream, SyncError> {
     let cursor = cursor.map(EventCursor::new);
 
-    let mut last_error = None;
-
-    for attempt in 1..=MAX_429_RETRIES {
-        match pubky_client
+    let subscribed = retry_with_backoff(|| {
+        let mut builder = pubky_client
             .event_stream_for_user(user, cursor)
-            .limit(EVENT_BATCH_SIZE)
-            .subscribe()
-            .await
-        {
-            Ok(stream) => {
-                info!("Event stream subscribed OK for {}", user);
-
-                let mapped_stream = futures_util::StreamExt::map(stream, |result| {
-                    result
-                        .map_err(|e| EventsError::FetchFailed(format!("Event stream error: {}", e)))
-                });
-
-                return Ok(Box::pin(mapped_stream));
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                // NOTE: String matching is fragile — the SDK doesn't expose a typed
-                // status code, so we check the error message. If the SDK changes its
-                // error format, this detection will silently stop working.
-                if msg.contains("429") && attempt < MAX_429_RETRIES {
-                    let backoff_secs = 2u64.pow(attempt);
-                    warn!(
-                        "Event stream 429 for {} (attempt {}/{}), retrying in {}s",
-                        user, attempt, MAX_429_RETRIES, backoff_secs
-                    );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
-                    last_error = Some(msg);
-                    continue;
-                }
-                if msg.contains("429") {
-                    warn!(
-                        "Event stream 429 Too Many Requests for {} (exhausted retries)",
-                        user
-                    );
-                }
-                return Err(EventsError::FetchFailed(format!(
-                    "Failed to subscribe to event stream: {}",
-                    e
-                )));
-            }
+            .limit(EVENT_BATCH_SIZE);
+        if let SyncScope::Private(session) = scope {
+            builder = builder.path(PRIVATE_PATH).session(session);
         }
-    }
+        builder.subscribe()
+    })
+    .await;
 
-    Err(EventsError::FetchFailed(format!(
-        "Failed to subscribe to event stream after {} retries: {}",
-        MAX_429_RETRIES,
-        last_error.unwrap_or_default()
-    )))
+    let stream = match subscribed {
+        Ok(stream) => stream,
+        Err(e) if matches!(scope, SyncScope::Private(_)) && is_session_rejection(&e) => {
+            warn!("Private event stream for {} rejected: {}", user, e);
+            return Err(SyncError::SessionRejected);
+        }
+        Err(e) => {
+            return Err(EventsError::FetchFailed(format!(
+                "Failed to subscribe to event stream: {}",
+                e
+            ))
+            .into())
+        }
+    };
+
+    info!("Event stream subscribed OK for {}", user);
+    Ok(Box::pin(futures_util::StreamExt::map(stream, |result| {
+        result.map_err(|e| EventsError::FetchFailed(format!("Event stream error: {}", e)))
+    })))
 }
 
 #[cfg(test)]
@@ -116,9 +102,7 @@ pub mod test_helpers {
     ///
     /// Returns a stream of events starting from the given cursor position.
     /// Used by controller pipeline tests to exercise the sync logic.
-    pub fn create_test_event_stream(
-        cursor: Option<u64>,
-    ) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
+    pub fn create_test_event_stream(cursor: Option<u64>) -> EventStream {
         let mock_pubky = PublicKey::from_str(TEST_PUBKY).expect("Test pubky should be valid");
         let z32 = mock_pubky.z32();
 
@@ -171,10 +155,7 @@ pub mod test_helpers {
     ///
     /// Used to test multi-batch accumulation: create a stream with `count >= EVENT_BATCH_SIZE`
     /// so `process_event_stream` returns `Continue`, then a smaller follow-up that returns `Break`.
-    pub fn create_sized_test_event_stream(
-        count: usize,
-        cursor_start: u64,
-    ) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
+    pub fn create_sized_test_event_stream(count: usize, cursor_start: u64) -> EventStream {
         let mock_pubky = PublicKey::from_str(TEST_PUBKY).expect("Test pubky should be valid");
         let z32 = mock_pubky.z32();
 
@@ -191,9 +172,7 @@ pub mod test_helpers {
 
     /// Create a test event stream that fails after yielding some events.
     /// Used for testing error recovery and cursor persistence.
-    pub fn create_failing_test_event_stream(
-        fail_after: usize,
-    ) -> Pin<Box<dyn Stream<Item = Result<Event, EventsError>> + Send>> {
+    pub fn create_failing_test_event_stream(fail_after: usize) -> EventStream {
         let mock_pubky = PublicKey::from_str(TEST_PUBKY).expect("Test pubky should be valid");
         let z32 = mock_pubky.z32();
 

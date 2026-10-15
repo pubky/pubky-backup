@@ -1,61 +1,16 @@
-import { useEffect, useCallback } from "react";
-import { useShallow } from "zustand/react/shallow";
+import { useCallback } from "react";
 import * as Atoms from "@/components/atoms";
-import * as Molecules from "@/components/molecules";
 import * as Stores from "@/stores";
 import * as Hooks from "@/hooks";
-import * as Utils from "@/utils";
-import { cn, Logger } from "@/lib";
+import { AddKeyForm } from "../AddKeyForm";
 
 export function StartupForm() {
-  const { pubkyInputValue, hasAutoLoaded } = Stores.useUIStore(
-    useShallow((s) => ({
-      pubkyInputValue: s.pubkyInputValue,
-      hasAutoLoaded: s.hasAutoLoaded,
-    })),
-  );
-  const { setPubkyInputValue, setScreen, setHasAutoLoaded } =
-    Stores.useUIStore.getState();
-  const { addKey, isPending: isLoading } = Hooks.useAddKey();
   const keys = Hooks.useKeys();
-  const { lastPubky } = Hooks.useLastPubky();
+  const { isResuming } = Hooks.useResumeLastPubky();
 
-  const hasValue = pubkyInputValue.trim().length > 0;
-
-  const handleAddKey = useCallback(
-    async (value: string) => {
-      const trimmedValue = value.trim();
-      if (!trimmedValue) return;
-
-      try {
-        await addKey({ pubkyValue: trimmedValue });
-        setScreen("dashboard");
-      } catch (error: unknown) {
-        Logger.error("StartupForm", "Add key error", { error });
-        Utils.handleBackendError(error);
-      }
-    },
-    [addKey, setScreen],
-  );
-
-  // Auto-load last pubky on mount (only once per app session)
-  useEffect(() => {
-    if (lastPubky && !hasAutoLoaded) {
-      setHasAutoLoaded(true);
-      setPubkyInputValue(lastPubky);
-      void handleAddKey(lastPubky);
-    }
-  }, [
-    lastPubky,
-    hasAutoLoaded,
-    setHasAutoLoaded,
-    setPubkyInputValue,
-    handleAddKey,
-  ]);
-
-  const handleSubmit = () => {
-    void handleAddKey(pubkyInputValue);
-  };
+  const handleAdded = useCallback(() => {
+    Stores.useUIStore.getState().setScreen("dashboard");
+  }, []);
 
   // Determine placeholder based on available keys
   const placeholder =
@@ -64,45 +19,27 @@ export function StartupForm() {
   return (
     <main className="flex flex-col items-center justify-start text-center relative">
       <Atoms.Card>
-        <div className="flex flex-col items-stretch gap-8">
+        <div className="flex flex-col items-stretch gap-6">
           {/* Header */}
-          <div className="flex flex-col items-center gap-2 py-4">
+          <div className="flex flex-col items-center gap-2 pt-4">
             <Atoms.PubkyLogo />
             <h1 className="text-xl font-normal text-text-secondary m-0">
               Securely mirror your Pubky data.
             </h1>
           </div>
 
-          {/* Form content */}
-          <div className="flex flex-col gap-4">
-            <Molecules.PubkyInput
-              value={pubkyInputValue}
-              onChange={setPubkyInputValue}
+          {isResuming ? (
+            <div className="flex items-center justify-center gap-3 py-8 text-text-secondary">
+              <Atoms.Spinner />
+              <span className="text-sm">Opening your backup...</span>
+            </div>
+          ) : (
+            <AddKeyForm
+              onAdded={handleAdded}
               suggestions={keys}
               placeholder={placeholder}
             />
-
-            <Atoms.Button
-              onClick={handleSubmit}
-              disabled={!hasValue || isLoading}
-              className={cn(
-                !hasValue && "opacity-30",
-                hasValue && !isLoading && "opacity-100",
-                isLoading && "opacity-100 bg-surface-dark border-border",
-              )}
-            >
-              <span className="text-sm font-bold text-pubky-purple">
-                Backup
-              </span>
-              <Atoms.RefreshIcon
-                className={cn(
-                  "w-4 h-4 text-pubky-purple",
-                  isLoading && "animate-spin",
-                )}
-                size={16}
-              />
-            </Atoms.Button>
-          </div>
+          )}
         </div>
       </Atoms.Card>
     </main>

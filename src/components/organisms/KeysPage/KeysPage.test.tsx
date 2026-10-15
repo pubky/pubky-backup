@@ -16,6 +16,8 @@ vi.mock("@/services", () => ({
   addKey: vi.fn(),
   setLastPubky: vi.fn(),
   removeKey: vi.fn(),
+  signInNewKey: vi.fn(),
+  cancelSignInNewKey: vi.fn(),
 }));
 
 describe("KeysPage", () => {
@@ -28,6 +30,7 @@ describe("KeysPage", () => {
     total_files: null,
     files_synced: null,
     bytes_downloaded: null,
+    auth: { type: "SignedOut" },
   };
 
   beforeEach(() => {
@@ -77,6 +80,23 @@ describe("KeysPage", () => {
       // a2c7xq9ciiyv0987654321fedcba -> a2c7x...dcba
       expect(screen.getByText(/g1b6w/i)).toBeInTheDocument();
       expect(screen.getByText(/a2c7x/i)).toBeInTheDocument();
+    });
+
+    it("should show which keys have their private data backed up", () => {
+      useUIStore.setState({
+        keyStates: {
+          g1b6wp8bhhxt1234567890abcdef: mockKeyState,
+          a2c7xq9ciiyv0987654321fedcba: {
+            ...mockKeyState,
+            auth: { type: "SignedIn" },
+          },
+        },
+      });
+
+      render(<KeysPage />);
+
+      expect(screen.getAllByText("Public only")).toHaveLength(1);
+      expect(screen.getAllByText("Public + private")).toHaveLength(1);
     });
 
     it("should show 'Add another pubky' button", () => {
@@ -260,7 +280,7 @@ describe("KeysPage", () => {
         screen.getByRole("button", { name: /cancel/i }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: /^add$/i }),
+        screen.getByRole("button", { name: /back up public data/i }),
       ).toBeInTheDocument();
     });
 
@@ -287,7 +307,9 @@ describe("KeysPage", () => {
         screen.getByRole("button", { name: /add another pubky/i }),
       );
 
-      expect(screen.getByRole("button", { name: /^add$/i })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /back up public data/i }),
+      ).toBeDisabled();
     });
 
     it("should enable Add button when input has value", () => {
@@ -300,7 +322,9 @@ describe("KeysPage", () => {
         target: { value: "new-pubky-value" },
       });
 
-      expect(screen.getByRole("button", { name: /^add$/i })).not.toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /back up public data/i }),
+      ).not.toBeDisabled();
     });
 
     it("should call addKey service when Add is clicked", async () => {
@@ -314,7 +338,9 @@ describe("KeysPage", () => {
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "my-new-pubky" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(services.addKey).toHaveBeenCalledWith("my-new-pubky");
@@ -332,7 +358,9 @@ describe("KeysPage", () => {
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(
@@ -353,14 +381,16 @@ describe("KeysPage", () => {
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
       await waitFor(() => {
         expect(useUIStore.getState().currentPage).toBe("sync");
       });
     });
 
-    it("should show 'Adding...' text while adding", async () => {
+    it("should disable adding while adding", async () => {
       let resolveAdd: (value: string) => void;
       vi.mocked(services.addKey).mockImplementation(
         () =>
@@ -377,14 +407,39 @@ describe("KeysPage", () => {
       fireEvent.change(screen.getByPlaceholderText(/enter pubky to add/i), {
         target: { value: "new-pubky" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /back up public data/i }),
+      );
 
-      expect(screen.getByText("Adding...")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /back up public data/i }),
+      ).toBeDisabled();
 
       // Resolve the pending promise to avoid act() warning
       await act(async () => {
         resolveAdd!("done");
       });
+    });
+
+    it("should close the add view and show the pubky a sign-in added", async () => {
+      vi.mocked(services.signInNewKey).mockResolvedValue("signed-in-pubky");
+      useUIStore.setState({ currentPage: "keys" });
+
+      render(<KeysPage />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /add another pubky/i }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: /sign in with pubky ring/i }),
+      );
+
+      await waitFor(() => {
+        expect(useUIStore.getState().currentPage).toBe("sync");
+      });
+      expect(useUIStore.getState().lastPubky).toBe("signed-in-pubky");
+      expect(
+        screen.queryByPlaceholderText(/enter pubky to add/i),
+      ).not.toBeInTheDocument();
     });
   });
 });

@@ -12,9 +12,12 @@
 //! - Returning empty data in developer mode (no network calls)
 
 use log::{debug, info};
-use pubky::{Pubky, PubkyResource};
+use pubky::errors::RequestError;
+use pubky::{Pubky, PubkyResource, StatusCode};
 
 use super::error::SyncError;
+use super::scope::SyncScope;
+use super::session::is_session_rejection;
 use crate::is_developer_mode;
 use crate::utils::retry_with_backoff;
 
@@ -26,6 +29,7 @@ use crate::utils::retry_with_backoff;
 /// # Arguments
 ///
 /// * `pubky_client` - The Pubky client for making requests
+/// * `scope` - The scope the resource belongs to, which decides how it is read
 /// * `resource` - The resource to fetch
 ///
 /// # Returns
@@ -35,9 +39,12 @@ use crate::utils::retry_with_backoff;
 ///
 /// # Errors
 ///
-/// Returns `SyncError::Internal` if the fetch fails for non-404 reasons.
+/// Returns `SyncError::SessionRejected` if the homeserver does not accept the
+/// session of a private scope.
+/// Returns `SyncError::Internal` if the fetch fails for other non-404 reasons.
 pub(super) async fn fetch_resource_data(
     pubky_client: &Pubky,
+    scope: SyncScope<'_>,
     resource: &PubkyResource,
 ) -> Result<Vec<u8>, SyncError> {
     if is_developer_mode() {
@@ -45,21 +52,27 @@ pub(super) async fn fetch_resource_data(
     }
 
     let public_storage = pubky_client.public_storage();
-    let response = match retry_with_backoff(|| async {
-        public_storage
-            .get(resource)
-            .await
-            .map_err(|e| format!("{}", e))
+    let fetched = retry_with_backoff(|| async {
+        match scope {
+            SyncScope::Public => public_storage.get(resource).await,
+            SyncScope::Private(session) => session.storage().get(&resource.path).await,
+        }
     })
-    .await
-    {
+    .await;
+
+    let response = match fetched {
         Ok(response) => response,
+        Err(e) if matches!(scope, SyncScope::Private(_)) && is_session_rejection(&e) => {
+            return Err(SyncError::SessionRejected);
+        }
+        // The resource was deleted between its event and the fetch
+        Err(pubky::Error::Request(RequestError::Server { status, .. }))
+            if matches!(status, StatusCode::NOT_FOUND | StatusCode::GONE) =>
+        {
+            info!("{} response: Returning empty data for {}", status, resource);
+            return Ok(Vec::new());
+        }
         Err(e) => {
-            // Handle 404s gracefully - resource was deleted between event and fetch
-            if e.contains("404") || e.to_lowercase().contains("not found") {
-                info!("404 response: Returning empty data for {}", resource);
-                return Ok(Vec::new());
-            }
             return Err(SyncError::Internal(format!(
                 "Failed to fetch data for {}: {}",
                 resource, e
@@ -98,7 +111,9 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let resource = PubkyResource::new(pubky, "/pub/profile.json").unwrap();
 
-        let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();
+        let data = fetch_resource_data(&pubky_client, SyncScope::Public, &resource)
+            .await
+            .unwrap();
 
         // Developer mode returns empty data (no network calls)
         assert!(data.is_empty());
@@ -112,7 +127,9 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         let resource = PubkyResource::new(pubky, "/pub/posts/123").unwrap();
 
-        let data = fetch_resource_data(&pubky_client, &resource).await.unwrap();
+        let data = fetch_resource_data(&pubky_client, SyncScope::Public, &resource)
+            .await
+            .unwrap();
 
         // Developer mode returns empty data (no network calls)
         assert!(data.is_empty());

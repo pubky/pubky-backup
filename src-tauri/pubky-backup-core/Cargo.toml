@@ -26,4 +26,5 @@ rand = "0.8"
 tempfile = "3.14"
 pubky-testnet = { git = "https://github.com/pubky/pubky-homeserver", tag = "v0.14.0", features = ["docker-postgres"] }
 serial_test = "3"
+tokio = { version = "1", features = ["test-util"] }
 

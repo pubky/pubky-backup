@@ -5,8 +5,9 @@
 use super::common::Storage;
 use super::config::ConfigStorage;
 use super::error::StorageError;
-use super::keys::{KeyStorage, KeysStorage};
+use super::keys::{DataScope, KeyStorage, KeysStorage};
 use super::migration::remove_legacy_data;
+use super::sessions::SessionStorage;
 use crate::orchestrator::types::ActivityEntry;
 use log::{error, info, warn};
 use pubky::{PubkyResource, PublicKey};
@@ -43,10 +44,11 @@ pub fn get_data_directory() -> Result<PathBuf, StorageError> {
     }
 }
 
-/// Storage for application-level data (config, global logs).
+/// Storage for application-level data (config, global logs, sessions).
 struct AppDataStorage {
     config: ConfigStorage,
     logs_storage: Storage,
+    sessions: SessionStorage,
 }
 
 impl AppDataStorage {
@@ -56,6 +58,7 @@ impl AppDataStorage {
         Ok(AppDataStorage {
             config: ConfigStorage::new(data_dir)?,
             logs_storage: Storage::new(&logs_dir)?,
+            sessions: SessionStorage::new(data_dir)?,
         })
     }
 
@@ -98,6 +101,8 @@ impl AppDataStorage {
 /// ├── config.json                # App-level configuration
 /// ├── logs/                      # App-level logs
 /// │   └── error.log              # Global error log
+/// ├── sessions/                  # Session secrets of signed-in keys, which
+/// │   └── <pubky>                # stay here when the keys directory moves
 /// └── keys/                      # Per-key data
 ///     └── <pubky>/
 ///         ├── state/             # Backup state/metadata
@@ -225,35 +230,63 @@ impl AppStorage {
         key_storage.read_data(resource).await
     }
 
-    /// Write cursor to track backup progress for a specific pubky.
+    /// Write the cursor tracking backup progress of one scope of a pubky's data.
     ///
-    /// The cursor tracks the last processed event from the homeserver's event stream.
-    ///
-    /// # Arguments
-    ///
-    /// * `pubky` - The public key to track progress for
-    /// * `cursor_value` - The cursor value (event ID) from the last processed event
+    /// The cursor is the last processed event from the homeserver's event stream.
     pub async fn write_cursor(
         &self,
         pubky: &PublicKey,
+        scope: DataScope,
         cursor_value: u64,
     ) -> Result<(), StorageError> {
-        let key_storage = self.key_storage(pubky)?;
-        key_storage.write_cursor(cursor_value).await
+        self.key_storage(pubky)?
+            .write_cursor(scope, cursor_value)
+            .await
     }
 
-    /// Read the backup progress cursor for a specific pubky.
+    /// Read the cursor tracking backup progress of one scope of a pubky's data,
+    /// or `None` if that scope has not been synced yet.
+    pub async fn read_cursor(
+        &self,
+        pubky: &PublicKey,
+        scope: DataScope,
+    ) -> Result<Option<u64>, StorageError> {
+        self.key_storage(pubky)?.read_cursor(scope).await
+    }
+
+    /// Store the session secret of a signed-in pubky, for a [`BackupController`]
+    /// to sync its private data with.
     ///
-    /// # Arguments
+    /// Not for pubkys a [`BackupManager`] backs up: sign them in through the
+    /// manager instead, which keeps their sign-in status in step with this secret.
     ///
-    /// * `pubky` - The public key to read the cursor for
-    ///
-    /// # Returns
-    ///
-    /// The cursor value, or `None` if no cursor exists yet
-    pub async fn read_cursor(&self, pubky: &PublicKey) -> Result<Option<u64>, StorageError> {
-        let key_storage = self.key_storage(pubky)?;
-        key_storage.read_cursor().await
+    /// [`BackupController`]: crate::BackupController
+    /// [`BackupManager`]: crate::BackupManager
+    pub fn write_session_secret(
+        &self,
+        pubky: &PublicKey,
+        secret: &str,
+    ) -> Result<(), StorageError> {
+        self.app_data.sessions.write(pubky, secret)
+    }
+
+    /// Read the stored session secret of a pubky, or `None` if it is not signed in.
+    pub fn read_session_secret(&self, pubky: &PublicKey) -> Result<Option<String>, StorageError> {
+        self.app_data.sessions.read(pubky)
+    }
+
+    /// Remove the stored session secret of a pubky and return it, or `None` if
+    /// it is not signed in.
+    pub(crate) fn take_session_secret(
+        &self,
+        pubky: &PublicKey,
+    ) -> Result<Option<String>, StorageError> {
+        self.app_data.sessions.take(pubky)
+    }
+
+    /// Delete the stored session secret of a pubky. Does nothing if there is none.
+    pub(crate) fn delete_session_secret(&self, pubky: &PublicKey) -> Result<(), StorageError> {
+        self.app_data.sessions.delete(pubky)
     }
 
     /// Write an error to the global error log file.
@@ -543,10 +576,16 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Write cursor
-        storage.write_cursor(&pubky, 123).await.unwrap();
+        storage
+            .write_cursor(&pubky, DataScope::Public, 123)
+            .await
+            .unwrap();
 
         // Read cursor back
-        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        let cursor = storage
+            .read_cursor(&pubky, DataScope::Public)
+            .await
+            .unwrap();
         assert_eq!(cursor, Some(123));
     }
 
@@ -556,11 +595,17 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Read cursor before writing - should return None
-        let cursor = storage.read_cursor(&pubky).await.unwrap();
+        let cursor = storage
+            .read_cursor(&pubky, DataScope::Public)
+            .await
+            .unwrap();
         assert_eq!(cursor, None);
 
         // Should be able to read it again
-        let cursor2 = storage.read_cursor(&pubky).await.unwrap();
+        let cursor2 = storage
+            .read_cursor(&pubky, DataScope::Public)
+            .await
+            .unwrap();
         assert_eq!(cursor2, None);
     }
 
@@ -876,6 +921,30 @@ mod tests {
         // Config should be updated
         let stored_location = storage.read_keys_location().unwrap();
         assert_eq!(stored_location, new_keys_dir);
+    }
+
+    #[tokio::test]
+    async fn test_move_keys_leaves_sessions_in_app_data() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        storage.write_session_secret(&pubky, "secret").unwrap();
+
+        let new_keys_dir = storage.move_keys(&temp_dir.path().join("moved")).unwrap();
+
+        // The secret must not travel to the new, possibly synced, location
+        let moved_files: Vec<_> = walkdir::WalkDir::new(&new_keys_dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+            .collect();
+        assert!(moved_files
+            .iter()
+            .all(|entry| std::fs::read_to_string(entry.path()).ok().as_deref() != Some("secret")));
+        assert_eq!(
+            storage.read_session_secret(&pubky).unwrap().as_deref(),
+            Some("secret")
+        );
     }
 
     #[tokio::test]

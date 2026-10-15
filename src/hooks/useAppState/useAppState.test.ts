@@ -33,6 +33,7 @@ describe("useAppState", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {
@@ -62,6 +63,7 @@ describe("useAppState", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {
@@ -92,6 +94,7 @@ describe("useAppState", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {
@@ -136,6 +139,7 @@ describe("useAppState", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {
@@ -179,6 +183,7 @@ describe("useAppState", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {
@@ -205,6 +210,7 @@ describe("useAppState", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {
@@ -229,6 +235,7 @@ describe("useAppState", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {
@@ -255,6 +262,7 @@ describe("useAppState", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {
@@ -276,6 +284,7 @@ describe("useAppState", () => {
       total_files: null,
       files_synced: null,
       bytes_downloaded: null,
+      auth: { type: "SignedOut" },
     };
 
     act(() => {

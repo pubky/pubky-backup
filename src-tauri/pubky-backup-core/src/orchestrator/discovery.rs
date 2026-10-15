@@ -1,11 +1,10 @@
-//! Homeserver discovery and pubky validation.
+//! Homeserver discovery.
 //!
-//! This module provides two independent operations:
-//!
-//! - [`discover_homeserver`] - Resolves a pubky's homeserver via PKDNS
-//! - [`verify_pubky_has_data`] - Checks that a pubky has backup-able data at `/pub/`
+//! [`discover_homeserver`] resolves a pubky's homeserver via PKDNS. It is the
+//! one check a pubky must pass to be backed up: without a homeserver there is
+//! nothing to back up from. A pubky does not need to have any data yet.
 
-use pubky::{Pkdns, PubkyResource, PublicKey, PublicStorage};
+use pubky::{Pubky, PublicKey};
 
 use super::error::OrchestratorError;
 
@@ -13,6 +12,7 @@ use super::error::OrchestratorError;
 ///
 /// # Arguments
 ///
+/// * `pubky_client` - The Pubky client to resolve with
 /// * `pubky` - The public key to discover the homeserver for
 /// * `timeout_secs` - Timeout for the discovery operation
 ///
@@ -24,12 +24,12 @@ use super::error::OrchestratorError;
 ///
 /// Returns `OrchestratorError::HomeserverNotFound` if discovery times out or fails.
 pub async fn discover_homeserver(
+    pubky_client: &Pubky,
     pubky: &PublicKey,
     timeout_secs: u64,
 ) -> Result<PublicKey, OrchestratorError> {
     tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-        Pkdns::new()
-            .map_err(|e| OrchestratorError::HomeserverNotFound(e.to_string()))?
+        pubky_client
             .get_homeserver_of(pubky)
             .await
             .map_err(|e| OrchestratorError::HomeserverNotFound(e.to_string()))?
@@ -43,42 +43,6 @@ pub async fn discover_homeserver(
     })?
 }
 
-/// Verify that a pubky has data available for backup.
-///
-/// Checks if the pubky's `/pub/` directory exists and is accessible.
-///
-/// # Arguments
-///
-/// * `pubky` - The public key to check
-/// * `timeout_secs` - Timeout for the check operation
-///
-/// # Errors
-///
-/// Returns `OrchestratorError::ValidationFailed` if:
-/// - The check times out
-/// - No data is found at the pubky's `/pub/` path
-pub async fn verify_pubky_has_data(
-    pubky: &PublicKey,
-    timeout_secs: u64,
-) -> Result<(), OrchestratorError> {
-    let pubky_storage = PublicStorage::new()
-        .map_err(|e| OrchestratorError::ValidationFailed(format!("Storage error: {}", e)))?;
-
-    let path = PubkyResource::new(pubky.clone(), "/pub/").map_err(|e| {
-        OrchestratorError::ValidationFailed(format!("Invalid resource path: {}", e))
-    })?;
-
-    tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        pubky_storage.get(path),
-    )
-    .await
-    .map_err(|_| OrchestratorError::ValidationFailed("Data check timed out".to_string()))?
-    .map_err(|e| OrchestratorError::ValidationFailed(format!("No data found for pubky: {}", e)))?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,7 +53,8 @@ mod tests {
         // A valid z-base-32 key that has no homeserver registered
         let pubky =
             PublicKey::from_str("yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy").unwrap();
-        let result = discover_homeserver(&pubky, 3).await;
+        let pubky_client = Pubky::new().unwrap();
+        let result = discover_homeserver(&pubky_client, &pubky, 3).await;
         assert!(result.is_err());
     }
 }

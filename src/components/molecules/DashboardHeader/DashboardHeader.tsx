@@ -1,16 +1,20 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as Atoms from "@/components/atoms";
 import * as Utils from "@/utils";
+import type { BackupCoverage } from "@/utils/coverage";
 import { cn } from "@/lib";
 
 interface KeyOption {
   pubky: string;
   isSelected: boolean;
+  coverage?: BackupCoverage;
 }
 
 export interface DashboardHeaderProps {
   pubkyDisplay: string;
   status: Atoms.StatusBadgeProps["status"];
+  /** Which of the pubky's data is backed up, shown under it */
+  coverage?: BackupCoverage;
   onCopy: () => void;
   keys?: KeyOption[];
   onSelectKey?: (pubky: string) => void;
@@ -19,6 +23,7 @@ export interface DashboardHeaderProps {
 export function DashboardHeader({
   pubkyDisplay,
   status,
+  coverage,
   onCopy,
   keys = [],
   onSelectKey,
@@ -124,82 +129,93 @@ export function DashboardHeader({
   const showDropdown = keys.length > 1;
 
   return (
-    <div className="flex items-center self-stretch gap-2">
-      <div
-        className="flex items-center gap-2 flex-1 relative"
-        ref={dropdownRef}
-      >
-        <h4 className="text-xl font-bold text-white m-0">{pubkyDisplay}</h4>
-        <Atoms.IconButton
-          variant="inline"
-          onClick={onCopy}
-          title="Copy full pubky"
+    <div className="flex flex-col items-start self-stretch gap-2">
+      <div className="flex items-center self-stretch gap-2">
+        <div
+          className="flex items-center gap-2 flex-1 relative"
+          ref={dropdownRef}
         >
-          <Atoms.CopyIcon size={20} />
-        </Atoms.IconButton>
-        {showDropdown && (
-          <>
-            <Atoms.IconButton
-              variant="inline"
-              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              title="Switch key"
-              aria-expanded={isDropdownOpen}
-              aria-haspopup="listbox"
-            >
-              <Atoms.ChevronDownIcon
-                size={20}
-                className={cn(
-                  "transition-transform duration-200",
-                  isDropdownOpen && "rotate-180",
-                )}
-              />
-            </Atoms.IconButton>
-            {isDropdownOpen && (
-              <div
-                role="listbox"
-                aria-label="Select key"
-                tabIndex={-1}
-                onKeyDown={handleKeyDown}
-                className="absolute top-full left-0 mt-2 z-50 min-w-[200px] bg-surface-dark border border-border rounded-lg shadow-lg overflow-hidden"
+          <h4 className="text-xl font-bold text-white m-0">{pubkyDisplay}</h4>
+          <Atoms.IconButton
+            variant="inline"
+            onClick={onCopy}
+            title="Copy full pubky"
+          >
+            <Atoms.CopyIcon size={20} />
+          </Atoms.IconButton>
+          {showDropdown && (
+            <>
+              <Atoms.IconButton
+                variant="inline"
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                title="Switch key"
+                aria-expanded={isDropdownOpen}
+                aria-haspopup="listbox"
               >
-                {keys.map((key, index) => (
-                  <button
-                    key={key.pubky}
-                    ref={(el) => {
-                      optionRefs.current[index] = el;
-                    }}
-                    type="button"
-                    role="option"
-                    aria-selected={key.isSelected}
-                    onClick={() => handleSelectKey(key.pubky)}
-                    className={cn(
-                      "flex items-center gap-2 w-full px-3 py-2.5 text-left",
-                      "hover:bg-surface-light transition-colors duration-150",
-                      "focus:bg-surface-light focus:outline-none",
-                      key.isSelected && "bg-surface-light",
-                    )}
-                  >
-                    <Atoms.NavKeysIcon
-                      size={16}
-                      className="text-text-secondary shrink-0"
-                    />
-                    <span className="text-sm text-white font-medium">
-                      {Utils.displayPubky(key.pubky)}
-                    </span>
-                    {key.isSelected && (
-                      <Atoms.CheckIcon
-                        size={14}
-                        className="text-pubky-lime ml-auto shrink-0"
+                <Atoms.ChevronDownIcon
+                  size={20}
+                  className={cn(
+                    "transition-transform duration-200",
+                    isDropdownOpen && "rotate-180",
+                  )}
+                />
+              </Atoms.IconButton>
+              {isDropdownOpen && (
+                <div
+                  role="listbox"
+                  aria-label="Select key"
+                  tabIndex={-1}
+                  onKeyDown={handleKeyDown}
+                  className="absolute top-full left-0 mt-2 z-50 min-w-[200px] bg-surface-dark border border-border rounded-lg shadow-lg overflow-hidden"
+                >
+                  {keys.map((key, index) => (
+                    <button
+                      key={key.pubky}
+                      ref={(el) => {
+                        optionRefs.current[index] = el;
+                      }}
+                      type="button"
+                      role="option"
+                      aria-selected={key.isSelected}
+                      onClick={() => handleSelectKey(key.pubky)}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-3 py-2.5 text-left",
+                        "hover:bg-surface-light transition-colors duration-150",
+                        "focus:bg-surface-light focus:outline-none",
+                        key.isSelected && "bg-surface-light",
+                      )}
+                    >
+                      <Atoms.NavKeysIcon
+                        size={16}
+                        className="text-text-secondary shrink-0"
                       />
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </>
-        )}
+                      <span className="text-sm text-white font-medium">
+                        {Utils.displayPubky(key.pubky)}
+                      </span>
+                      {key.coverage === "public-and-private" && (
+                        <span title="Public and private data are backed up">
+                          <Atoms.LockIcon
+                            size={12}
+                            className="text-pubky-green"
+                          />
+                        </span>
+                      )}
+                      {key.isSelected && (
+                        <Atoms.CheckIcon
+                          size={14}
+                          className="text-pubky-lime ml-auto shrink-0"
+                        />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <Atoms.StatusBadge status={status} />
       </div>
-      <Atoms.StatusBadge status={status} />
+      {coverage && <Atoms.CoverageBadge coverage={coverage} />}
     </div>
   );
 }

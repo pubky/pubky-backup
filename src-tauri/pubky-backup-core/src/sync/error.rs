@@ -13,6 +13,10 @@ pub enum SyncError {
     #[error("Events error: {0}")]
     Events(#[from] EventsError),
 
+    /// The homeserver rejected the key's session
+    #[error("The homeserver rejected the session")]
+    SessionRejected,
+
     /// Internal sync error
     #[error("Internal error: {0}")]
     Internal(String),
