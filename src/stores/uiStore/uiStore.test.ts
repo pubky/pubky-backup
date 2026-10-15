@@ -8,9 +8,6 @@ const mockKeyState: KeyState = {
   last_sync: 1672531200,
   next_sync: 1672531230,
   error: null,
-  total_files: null,
-  files_synced: null,
-  bytes_downloaded: null,
   auth: { type: "SignedOut" },
 };
 
@@ -20,9 +17,6 @@ const mockSyncingKeyState: KeyState = {
   last_sync: null,
   next_sync: null,
   error: null,
-  total_files: 100,
-  files_synced: 50,
-  bytes_downloaded: 1024,
   auth: { type: "SignedOut" },
 };
 
@@ -42,7 +36,6 @@ describe("useUIStore", () => {
       },
       keyStates: {},
       lastPubky: null,
-      developerMode: false,
     });
   });
 
@@ -302,7 +295,6 @@ describe("useUIStore", () => {
 
     it("should not affect other state", () => {
       useUIStore.getState().setLastPubky("pk:viewed");
-      useUIStore.getState().setDeveloperMode(true);
 
       useUIStore.getState().setAllKeyStates({
         "pk:key1": mockKeyState,
@@ -310,7 +302,6 @@ describe("useUIStore", () => {
 
       const state = useUIStore.getState();
       expect(state.lastPubky).toBe("pk:viewed");
-      expect(state.developerMode).toBe(true);
     });
   });
 
@@ -376,34 +367,6 @@ describe("useUIStore", () => {
     });
   });
 
-  describe("setDeveloperMode", () => {
-    it("should enable developer mode", () => {
-      useUIStore.getState().setDeveloperMode(true);
-
-      const state = useUIStore.getState();
-      expect(state.developerMode).toBe(true);
-    });
-
-    it("should disable developer mode", () => {
-      useUIStore.getState().setDeveloperMode(true);
-      useUIStore.getState().setDeveloperMode(false);
-
-      const state = useUIStore.getState();
-      expect(state.developerMode).toBe(false);
-    });
-
-    it("should not affect other state", () => {
-      useUIStore.getState().setLastPubky("pk:mykey");
-      useUIStore.getState().setKeyState("pk:key1", mockKeyState);
-
-      useUIStore.getState().setDeveloperMode(true);
-
-      const state = useUIStore.getState();
-      expect(state.lastPubky).toBe("pk:mykey");
-      expect(state.keyStates["pk:key1"]).toEqual(mockKeyState);
-    });
-  });
-
   describe("initial key state values", () => {
     it("should have empty keyStates by default", () => {
       const state = useUIStore.getState();
@@ -413,11 +376,6 @@ describe("useUIStore", () => {
     it("should have null lastPubky by default", () => {
       const state = useUIStore.getState();
       expect(state.lastPubky).toBeNull();
-    });
-
-    it("should have developerMode false by default", () => {
-      const state = useUIStore.getState();
-      expect(state.developerMode).toBe(false);
     });
   });
 });

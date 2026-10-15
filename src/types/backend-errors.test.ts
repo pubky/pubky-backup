@@ -4,9 +4,6 @@ import {
   isInternalError,
   isHomeserverNotFoundError,
   isInvalidPubkyFormatError,
-  isStorageError,
-  isEventsError,
-  isBackupError,
   type BackendError,
 } from "./backend-errors";
 
@@ -16,9 +13,6 @@ describe("isBackendError", () => {
       { type: "Internal", message: "Internal error occurred" },
       { type: "HomeserverNotFound", message: "Homeserver not found" },
       { type: "InvalidPubkyFormat", message: "Invalid pubky format" },
-      { type: "Storage", message: "Storage error" },
-      { type: "Events", message: "Events error" },
-      { type: "Backup", message: "Backup error" },
     ];
 
     validErrors.forEach((error) => {
@@ -83,18 +77,6 @@ describe("specific type guards", () => {
     type: "InvalidPubkyFormat",
     message: "Invalid pubky",
   };
-  const storageError: BackendError = {
-    type: "Storage",
-    message: "Storage error",
-  };
-  const eventsError: BackendError = {
-    type: "Events",
-    message: "Events error",
-  };
-  const backupError: BackendError = {
-    type: "Backup",
-    message: "Backup error",
-  };
 
   describe("isInternalError", () => {
     it("should correctly identify Internal errors", () => {
@@ -126,42 +108,6 @@ describe("specific type guards", () => {
     it("should reject non-InvalidPubkyFormat errors", () => {
       expect(isInvalidPubkyFormatError(internalError)).toBe(false);
       expect(isInvalidPubkyFormatError(homeserverError)).toBe(false);
-    });
-  });
-
-  describe("isStorageError", () => {
-    it("should correctly identify Storage errors", () => {
-      expect(isStorageError(storageError)).toBe(true);
-    });
-
-    it("should reject non-Storage errors", () => {
-      expect(isStorageError(internalError)).toBe(false);
-      expect(isStorageError(homeserverError)).toBe(false);
-      expect(isStorageError(eventsError)).toBe(false);
-    });
-  });
-
-  describe("isEventsError", () => {
-    it("should correctly identify Events errors", () => {
-      expect(isEventsError(eventsError)).toBe(true);
-    });
-
-    it("should reject non-Events errors", () => {
-      expect(isEventsError(internalError)).toBe(false);
-      expect(isEventsError(storageError)).toBe(false);
-      expect(isEventsError(backupError)).toBe(false);
-    });
-  });
-
-  describe("isBackupError", () => {
-    it("should correctly identify Backup errors", () => {
-      expect(isBackupError(backupError)).toBe(true);
-    });
-
-    it("should reject non-Backup errors", () => {
-      expect(isBackupError(internalError)).toBe(false);
-      expect(isBackupError(eventsError)).toBe(false);
-      expect(isBackupError(storageError)).toBe(false);
     });
   });
 });

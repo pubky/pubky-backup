@@ -34,7 +34,7 @@ fn create_test_interval_rx() -> (watch::Sender<u64>, watch::Receiver<u64>) {
 /// Helper to create a storage instance with a temporary directory
 fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    let storage = AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap();
+    let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
     (Arc::new(storage), temp_dir)
 }
 

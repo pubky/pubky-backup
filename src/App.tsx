@@ -4,7 +4,7 @@ import * as Atoms from "@/components/atoms";
 import * as Organisms from "@/components/organisms";
 import * as Molecules from "@/components/molecules";
 import * as Hooks from "@/hooks";
-import { getAllKeyStates, getConfig, getLastPubky } from "@/services";
+import { getAllKeyStates, getLastPubky } from "@/services";
 import { Logger } from "@/lib";
 import { stripPubkyPrefix } from "@/utils/pubky";
 
@@ -13,8 +13,7 @@ import { stripPubkyPrefix } from "@/utils/pubky";
  * Sets up event listener first, then fetches initial state to avoid race conditions.
  */
 function useBootstrap() {
-  const { setAllKeyStates, setDeveloperMode, setLastPubky } =
-    Stores.useUIStore.getState();
+  const { setAllKeyStates, setLastPubky } = Stores.useUIStore.getState();
 
   // Set up event listener for key updates (must be first to avoid race)
   Hooks.useKeyUpdates();
@@ -23,10 +22,6 @@ function useBootstrap() {
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        // Fetch config (one-time)
-        const config = await getConfig();
-        setDeveloperMode(config.developer_mode);
-
         // Fetch all key states
         const keyStates = await getAllKeyStates();
         setAllKeyStates(keyStates);
@@ -42,7 +37,7 @@ function useBootstrap() {
     };
 
     void bootstrap();
-  }, [setAllKeyStates, setDeveloperMode, setLastPubky]);
+  }, [setAllKeyStates, setLastPubky]);
 }
 
 function DashboardPageContent() {

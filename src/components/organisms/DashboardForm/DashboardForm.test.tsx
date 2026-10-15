@@ -28,9 +28,6 @@ describe("DashboardForm", () => {
     last_sync: Math.floor(Date.now() / 1000) - 60, // 1 minute ago
     next_sync: Math.floor(Date.now() / 1000) + 30, // 30 seconds from now
     error: null,
-    total_files: null,
-    files_synced: null,
-    bytes_downloaded: null,
     auth: { type: "SignedOut" },
   };
 
@@ -40,16 +37,12 @@ describe("DashboardForm", () => {
     last_sync: null,
     next_sync: null,
     error: null,
-    total_files: 100,
-    files_synced: 50,
-    bytes_downloaded: 1024,
     auth: { type: "SignedOut" },
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(services.getConfig).mockResolvedValue({
-      developer_mode: false,
       sync_interval_secs: 300,
       keys_dir: "/home/user/.pubky-backup/keys",
     });
@@ -58,7 +51,6 @@ describe("DashboardForm", () => {
       keyStates: { "pk:test-pubky": mockKeyState },
       lastPubky: "pk:test-pubky",
       statusMessageMode: "sync",
-      developerMode: false,
     });
   });
 

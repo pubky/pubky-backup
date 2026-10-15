@@ -140,7 +140,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_start_sign_in_for_new_key_unavailable_in_developer_mode() {
+    async fn test_start_sign_in_for_new_key_unavailable_offline() {
         let (_dir, manager) = setup().await;
 
         let result = manager.start_sign_in_for_new_key().await;

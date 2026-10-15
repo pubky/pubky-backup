@@ -34,9 +34,6 @@ function renderWithAuth(auth: AuthStatus) {
     last_sync: null,
     next_sync: null,
     error: null,
-    total_files: null,
-    files_synced: null,
-    bytes_downloaded: null,
     auth,
   };
   useUIStore.setState({ keyStates: { [PUBKY]: keyState } });

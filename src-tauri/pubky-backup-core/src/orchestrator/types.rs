@@ -14,8 +14,12 @@ pub struct BackupManagerConfig {
     pub data_dir: Option<PathBuf>,
     /// Timeout for key validation/homeserver discovery in seconds (default: 30)
     pub validation_timeout_secs: u64,
-    /// Enable developer mode (default: false)
-    pub developer_mode: bool,
+    /// Make no network calls (default: false).
+    ///
+    /// Offline, keys are not validated, syncs find no events and signing in is
+    /// unavailable, so only the data already on disk is kept. For tests and
+    /// for developing against the manager's behaviour without a network.
+    pub offline: bool,
     /// Sync interval in seconds (default: 30)
     pub sync_interval_secs: u64,
     /// HTTP relay that delivers sign-in approvals from the user's signer app
@@ -34,7 +38,7 @@ impl Default for BackupManagerConfig {
         Self {
             data_dir: None,
             validation_timeout_secs: 30,
-            developer_mode: false,
+            offline: false,
             sync_interval_secs: crate::sync::DEFAULT_SYNC_INTERVAL_SECONDS,
             http_relay: None,
             client_id: ClientId::new(DEFAULT_CLIENT_ID)
@@ -59,12 +63,6 @@ pub struct KeyState {
     pub next_sync: Option<u64>,
     /// Error information if status is Error
     pub error: Option<KeyError>,
-    /// Total number of files being backed up (if known)
-    pub total_files: Option<u64>,
-    /// Number of files synced so far
-    pub files_synced: Option<u64>,
-    /// Total bytes downloaded in current sync
-    pub bytes_downloaded: Option<u64>,
     /// Whether the key is signed in, which decides what its backup covers
     pub auth: AuthStatus,
 }
@@ -77,9 +75,6 @@ impl Default for KeyState {
             last_sync: None,
             next_sync: None,
             error: None,
-            total_files: None,
-            files_synced: None,
-            bytes_downloaded: None,
             auth: AuthStatus::SignedOut,
         }
     }
@@ -114,38 +109,11 @@ pub enum AuthStatus {
     },
 }
 
-/// Structured error for frontend display.
-///
-/// Contains error details in a format suitable for
-/// showing to users in the UI.
+/// The error that put a key's backup in [`KeyStatus::Error`].
 #[derive(Clone, Debug, Serialize)]
 pub struct KeyError {
-    /// Error classification
-    pub code: KeyErrorCode,
     /// Human-readable error message
     pub message: String,
-    /// Whether this error is likely to resolve on retry
-    pub recoverable: bool,
-}
-
-/// Error codes for key-specific errors.
-///
-/// These codes help the frontend display appropriate
-/// error messages and recovery options.
-#[derive(Clone, Debug, Serialize, PartialEq)]
-pub enum KeyErrorCode {
-    /// Homeserver is not responding
-    HomeserverUnreachable,
-    /// Could not discover homeserver for the pubky
-    HomeserverNotFound,
-    /// Local storage is full
-    StorageFull,
-    /// Network connectivity issue
-    NetworkError,
-    /// Operation timed out
-    Timeout,
-    /// Internal error
-    Internal,
 }
 
 /// Status of a key's backup process.

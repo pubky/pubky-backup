@@ -36,9 +36,6 @@ export function handleBackendError(error: unknown): void {
       break;
 
     case "Internal":
-    case "Storage":
-    case "Events":
-    case "Backup":
       showError(`Error: ${error.message || "An error occurred"}`);
       break;
 

@@ -100,13 +100,6 @@ export const useUIStore = create<UIStore>()(
       setLastPubky: (pubky: string | null) =>
         set({ lastPubky: pubky }, false, UIActionTypes.SET_LAST_PUBKY),
 
-      setDeveloperMode: (enabled: boolean) =>
-        set(
-          { developerMode: enabled },
-          false,
-          UIActionTypes.SET_DEVELOPER_MODE,
-        ),
-
       setNavDisabled: (disabled: boolean) =>
         set({ navDisabled: disabled }, false, UIActionTypes.SET_NAV_DISABLED),
     }),

@@ -279,9 +279,10 @@ impl BackupManager {
     /// Start a sign-in request with the signer app, asking for read access to
     /// private data.
     fn start_sign_in_flow(&self) -> Result<SignInFlow, OrchestratorError> {
-        if self.config.developer_mode {
+        if self.config.offline {
             return Err(OrchestratorError::AuthFailed(
-                "Signing in needs network access, which developer mode disables".to_string(),
+                "Signing in needs network access, which this backup is configured without"
+                    .to_string(),
             ));
         }
         let pubky_client = self.inner.read().pubky_client.clone();
@@ -441,8 +442,7 @@ impl BackupManager {
 
     /// End a session that was already forgotten locally on its homeserver.
     fn end_session_on_homeserver(&self, secret: String, pubky: &PublicKey) {
-        // Developer mode makes no network calls
-        if self.config.developer_mode {
+        if self.config.offline {
             return;
         }
         let pubky_client = self.inner.read().pubky_client.as_ref().clone();
@@ -532,7 +532,7 @@ mod tests {
     // --- Starting a sign-in ---
 
     #[tokio::test]
-    async fn test_start_sign_in_unavailable_in_developer_mode() {
+    async fn test_start_sign_in_unavailable_offline() {
         let (_dir, manager) = setup().await;
         let pubky = test_pubky();
         manager.add_key(pubky.clone()).await.unwrap();

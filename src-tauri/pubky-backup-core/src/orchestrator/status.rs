@@ -7,9 +7,7 @@ use pubky::PublicKey;
 use tokio::sync::broadcast;
 
 use super::sync_interval::SyncInterval;
-use super::types::{
-    ActivityEntry, ActivityType, KeyError, KeyErrorCode, KeyState, KeyStatus, KeyUpdate,
-};
+use super::types::{ActivityEntry, ActivityType, KeyError, KeyState, KeyStatus, KeyUpdate};
 use crate::storage::AppStorage;
 use crate::sync::ControllerStatus;
 
@@ -82,9 +80,7 @@ impl StatusHandler {
             }
             ControllerStatus::Error { message, .. } => KeyState {
                 error: Some(KeyError {
-                    code: KeyErrorCode::Internal,
                     message: message.clone(),
-                    recoverable: false,
                 }),
                 ..self.base_state(KeyStatus::Error)
             },
@@ -263,7 +259,7 @@ mod tests {
     /// Create a fresh temp storage and pubky for a test.
     fn setup() -> (TempDir, Arc<AppStorage>, PublicKey) {
         let temp_dir = TempDir::new().unwrap();
-        let storage = Arc::new(AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap());
+        let storage = Arc::new(AppStorage::new_with_path(temp_dir.path()).unwrap());
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
         (temp_dir, storage, pubky)
     }
@@ -472,11 +468,7 @@ mod tests {
             .await;
 
         assert!(matches!(state.status, KeyStatus::Error));
-        assert!(state.error.is_some());
-        let error = state.error.unwrap();
-        assert_eq!(error.code, KeyErrorCode::Internal);
-        assert_eq!(error.message, "Test error message");
-        assert!(!error.recoverable);
+        assert_eq!(state.error.unwrap().message, "Test error message");
         assert_eq!(state.data_size, 1000);
     }
 

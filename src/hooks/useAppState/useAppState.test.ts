@@ -10,7 +10,6 @@ describe("useAppState", () => {
     useUIStore.setState({
       keyStates: {},
       lastPubky: null,
-      developerMode: false,
     });
   });
 
@@ -30,9 +29,6 @@ describe("useAppState", () => {
       last_sync: 1672531200,
       next_sync: 1672531230,
       error: null,
-      total_files: null,
-      files_synced: null,
-      bytes_downloaded: null,
       auth: { type: "SignedOut" },
     };
 
@@ -40,7 +36,6 @@ describe("useAppState", () => {
       useUIStore.setState({
         lastPubky: "pk:test123",
         keyStates: { "pk:test123": mockKeyState },
-        developerMode: false,
       });
     });
 
@@ -60,9 +55,6 @@ describe("useAppState", () => {
       last_sync: null,
       next_sync: null,
       error: null,
-      total_files: null,
-      files_synced: null,
-      bytes_downloaded: null,
       auth: { type: "SignedOut" },
     };
 
@@ -70,7 +62,6 @@ describe("useAppState", () => {
       useUIStore.setState({
         lastPubky: "pk:test123",
         keyStates: { "pk:test123": mockKeyState },
-        developerMode: false,
       });
     });
 
@@ -87,13 +78,8 @@ describe("useAppState", () => {
       last_sync: null,
       next_sync: null,
       error: {
-        code: "Internal",
         message: "Connection failed",
-        recoverable: false,
       },
-      total_files: null,
-      files_synced: null,
-      bytes_downloaded: null,
       auth: { type: "SignedOut" },
     };
 
@@ -101,7 +87,6 @@ describe("useAppState", () => {
       useUIStore.setState({
         lastPubky: "pk:test123",
         keyStates: { "pk:test123": mockKeyState },
-        developerMode: false,
       });
     });
 
@@ -117,7 +102,6 @@ describe("useAppState", () => {
       useUIStore.setState({
         lastPubky: "pk:newkey",
         keyStates: {}, // No state for this key yet
-        developerMode: false,
       });
     });
 
@@ -136,9 +120,6 @@ describe("useAppState", () => {
       last_sync: null,
       next_sync: null,
       error: null,
-      total_files: null,
-      files_synced: null,
-      bytes_downloaded: null,
       auth: { type: "SignedOut" },
     };
 
@@ -146,7 +127,6 @@ describe("useAppState", () => {
       useUIStore.setState({
         lastPubky: "pk:test123",
         keyStates: { "pk:test123": mockKeyState },
-        developerMode: false,
       });
     });
 
@@ -154,20 +134,6 @@ describe("useAppState", () => {
 
     expect(result.current.is_syncing).toBe(true);
     expect(result.current.backup_running).toBe(true);
-  });
-
-  it("should reflect developer_mode from store", () => {
-    act(() => {
-      useUIStore.setState({
-        lastPubky: null,
-        keyStates: {},
-        developerMode: true,
-      });
-    });
-
-    const { result } = renderHook(() => useAppState());
-
-    expect(result.current.developer_mode).toBe(true);
   });
 
   it("should re-render when keyState changes from Idle to Syncing via setKeyState", () => {
@@ -180,9 +146,6 @@ describe("useAppState", () => {
       last_sync: 1672531200,
       next_sync: 1672531230,
       error: null,
-      total_files: null,
-      files_synced: null,
-      bytes_downloaded: null,
       auth: { type: "SignedOut" },
     };
 
@@ -190,7 +153,6 @@ describe("useAppState", () => {
       useUIStore.setState({
         lastPubky: pubky,
         keyStates: { [pubky]: idleState },
-        developerMode: false,
       });
     });
 
@@ -207,9 +169,6 @@ describe("useAppState", () => {
       last_sync: null,
       next_sync: null,
       error: null,
-      total_files: null,
-      files_synced: null,
-      bytes_downloaded: null,
       auth: { type: "SignedOut" },
     };
 
@@ -232,9 +191,6 @@ describe("useAppState", () => {
       last_sync: null,
       next_sync: null,
       error: null,
-      total_files: null,
-      files_synced: null,
-      bytes_downloaded: null,
       auth: { type: "SignedOut" },
     };
 
@@ -242,7 +198,6 @@ describe("useAppState", () => {
       useUIStore.setState({
         lastPubky: pubky,
         keyStates: { [pubky]: startingState },
-        developerMode: false,
       });
     });
 
@@ -259,9 +214,6 @@ describe("useAppState", () => {
       last_sync: null,
       next_sync: null,
       error: null,
-      total_files: null,
-      files_synced: null,
-      bytes_downloaded: null,
       auth: { type: "SignedOut" },
     };
 
@@ -281,9 +233,6 @@ describe("useAppState", () => {
       last_sync: 1672531200,
       next_sync: 1672531230,
       error: null,
-      total_files: null,
-      files_synced: null,
-      bytes_downloaded: null,
       auth: { type: "SignedOut" },
     };
 

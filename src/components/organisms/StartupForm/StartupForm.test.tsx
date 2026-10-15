@@ -20,9 +20,6 @@ describe("StartupForm", () => {
     last_sync: 1672531200,
     next_sync: 1672531230,
     error: null,
-    total_files: null,
-    files_synced: null,
-    bytes_downloaded: null,
     auth: { type: "SignedOut" },
   };
 

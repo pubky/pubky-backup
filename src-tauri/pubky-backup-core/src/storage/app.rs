@@ -360,8 +360,8 @@ impl AppStorage {
     }
 
     /// Get the root data directory path (e.g. `~/.pubky-backup`).
-    pub fn get_backup_data_dir(&self) -> Result<PathBuf, StorageError> {
-        Ok(self.data_dir.clone())
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
     }
 
     /// Get the current keys directory path.
@@ -566,7 +566,7 @@ mod tests {
 
     fn create_test_storage() -> (AppStorage, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let storage = AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap();
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
         (storage, temp_dir)
     }
 

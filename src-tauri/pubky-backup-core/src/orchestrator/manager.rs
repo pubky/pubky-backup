@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use parking_lot::RwLock;
 use pubky::{Pubky, PublicKey};
 use tokio::sync::{broadcast, mpsc};
@@ -23,12 +23,10 @@ use tokio::task::JoinHandle;
 
 use super::discovery;
 use super::error::OrchestratorError;
-use super::session;
 use super::status::{current_unix_timestamp, next_sync_time, spawn_status_listener};
 use super::sync_interval::SyncInterval;
 use super::types::{
-    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyErrorCode, KeyState,
-    KeyStatus, KeyUpdate,
+    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyState, KeyStatus, KeyUpdate,
 };
 use crate::storage::AppStorage;
 use crate::sync::{BackupController, ControllerCommand, ControllerStatus};
@@ -174,12 +172,7 @@ impl BackupManager {
     ///
     /// Returns `OrchestratorError` if storage initialization fails.
     pub async fn new(config: BackupManagerConfig) -> Result<Self, OrchestratorError> {
-        let pubky_client = if config.developer_mode {
-            Pubky::testnet().map_err(|e| OrchestratorError::Internal(e.to_string()))?
-        } else {
-            Pubky::new().map_err(|e| OrchestratorError::Internal(e.to_string()))?
-        };
-
+        let pubky_client = Pubky::new().map_err(|e| OrchestratorError::Internal(e.to_string()))?;
         Self::with_client(config, pubky_client).await
     }
 
@@ -559,10 +552,8 @@ impl BackupManager {
     }
 
     /// Get the root data directory path (e.g. `~/.pubky-backup`).
-    pub fn data_dir(&self) -> PathBuf {
-        self.storage
-            .get_backup_data_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
+    pub fn data_dir(&self) -> &Path {
+        self.storage.data_dir()
     }
 
     /// Get the current keys directory path.
@@ -597,14 +588,14 @@ impl BackupManager {
     ///
     /// This allows the app to remember which pubky was last used.
     pub async fn write_last_pubky(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        session::write_last_pubky(&self.storage, pubky).await
+        Ok(self.storage.write_last_pubky(pubky).await?)
     }
 
     /// Read the last used pubky from storage.
     ///
     /// Returns `None` if no last pubky was saved.
     pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, OrchestratorError> {
-        session::read_last_pubky(&self.storage).await
+        Ok(self.storage.read_last_pubky().await?)
     }
 
     /// List pubky directories that have backup data stored.
@@ -685,9 +676,9 @@ impl BackupManager {
     /// The key need not have any data yet: it may be new, or all its data may
     /// be private, which only shows once it is signed in.
     ///
-    /// Skipped in developer mode, which makes no network calls.
+    /// Skipped offline.
     async fn validate_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        if self.config.developer_mode {
+        if self.config.offline {
             return Ok(());
         }
 
@@ -786,7 +777,7 @@ impl BackupManager {
 
         // Stagger resumed keys at startup to avoid thundering-herd.
         // Window = key_count * STAGGER_MULTIPLE, so 10 keys spread their stagger over 10*STAGGER_MULTIPLE.
-        let initial_delay = if stagger && !self.config.developer_mode && key_count > 0 {
+        let initial_delay = if stagger && !self.config.offline && key_count > 0 {
             let window_secs = (key_count * STAGGER_MULTIPLE) as u64;
             std::time::Duration::from_secs(rand::random::<u64>() % window_secs)
         } else {
@@ -801,7 +792,8 @@ impl BackupManager {
             Some(self.status_tx.clone()),
             self.sync_interval.read().subscribe(),
         )
-        .with_initial_delay(initial_delay);
+        .with_initial_delay(initial_delay)
+        .offline(self.config.offline);
 
         let task_handle = tokio::spawn(async move {
             controller.run().await;
@@ -815,11 +807,7 @@ impl BackupManager {
         let key_dirs = match self.storage.list_pubky_directories() {
             Ok(dirs) => dirs,
             Err(e) => {
-                let error_msg = format!("Failed to list key directories: {}", e);
-                warn!("{}", error_msg);
-                let _ = self
-                    .storage
-                    .write_global_error("resume_stored_keys", &error_msg)
+                self.log_resume_failure(format!("Failed to list key directories: {}", e))
                     .await;
                 return;
             }
@@ -836,12 +824,11 @@ impl BackupManager {
             let pubky = match PublicKey::from_str(&pubky_str) {
                 Ok(p) => p,
                 Err(e) => {
-                    let error_msg = format!("Invalid pubky directory name {}: {}", pubky_str, e);
-                    warn!("{}", error_msg);
-                    let _ = self
-                        .storage
-                        .write_global_error("resume_stored_keys", &error_msg)
-                        .await;
+                    self.log_resume_failure(format!(
+                        "Invalid pubky directory name {}: {}",
+                        pubky_str, e
+                    ))
+                    .await;
                     continue;
                 }
             };
@@ -850,40 +837,19 @@ impl BackupManager {
             // and already have data on disk. The controller's sync loop will handle
             // transient network errors with its built-in retry mechanism.
             if let Err(e) = self.start_controller(pubky.clone(), true).await {
-                let error_msg = format!("Failed to resume key {}: {}", pubky, e);
-                error!("{}", error_msg);
-                let _ = self
-                    .storage
-                    .write_global_error("resume_stored_keys", &error_msg)
+                self.log_resume_failure(format!("Failed to resume key {}: {}", pubky, e))
                     .await;
-                self.start_controller_in_error_state(
-                    pubky,
-                    KeyError {
-                        code: KeyErrorCode::Internal,
-                        message: format!("Failed to resume: {}", e),
-                        recoverable: true,
-                    },
-                )
-                .await;
             }
         }
     }
 
-    /// Start a key in error state (for auto-resume failures)
-    async fn start_controller_in_error_state(&self, pubky: PublicKey, error: KeyError) {
-        let (control_tx, _control_rx) = mpsc::channel(5);
-
-        let error_state = KeyState {
-            status: KeyStatus::Error,
-            data_size: self.storage.calculate_pubky_size(&pubky).await,
-            error: Some(error),
-            ..Default::default()
-        };
-
-        let task_handle = tokio::spawn(async {});
-        if let Err(e) = self.register_key(pubky.clone(), error_state, control_tx, task_handle) {
-            warn!("Failed to register errored key {}: {}", pubky, e);
-        }
+    /// Log a failure to resume stored keys, and record it in the global error log.
+    async fn log_resume_failure(&self, message: String) {
+        warn!("{}", message);
+        let _ = self
+            .storage
+            .write_global_error("resume_stored_keys", &message)
+            .await;
     }
 }
 
@@ -897,20 +863,18 @@ mod tests {
     use tempfile::TempDir;
     use url::Url;
 
-    /// Helper to enable developer mode for tests that need mock data
-    pub(super) fn enable_developer_mode() {
-        std::env::set_var("PUBKY_DEVELOPER_MODE", "1");
-    }
-
+    /// An offline config, so that tests make no network calls.
     pub(super) fn create_test_config(temp_dir: &TempDir) -> BackupManagerConfig {
-        enable_developer_mode();
         BackupManagerConfig {
             data_dir: Some(temp_dir.path().to_path_buf()),
-            validation_timeout_secs: 30,
-            developer_mode: true,
-            sync_interval_secs: DEFAULT_SYNC_INTERVAL_SECONDS,
+            offline: true,
             ..Default::default()
         }
+    }
+
+    /// A client that would only ever reach a local testnet, never mainnet.
+    pub(super) fn create_test_client() -> Pubky {
+        Pubky::testnet().unwrap()
     }
 
     /// Create a temp dir and a BackupManager configured for testing.
@@ -923,7 +887,9 @@ mod tests {
     /// Create a BackupManager using an existing temp dir (for multi-lifecycle tests).
     pub(super) async fn setup_with_dir(temp_dir: &TempDir) -> (BackupManagerConfig, BackupManager) {
         let config = create_test_config(temp_dir);
-        let manager = BackupManager::new(config.clone()).await.unwrap();
+        let manager = BackupManager::with_client(config.clone(), create_test_client())
+            .await
+            .unwrap();
         (config, manager)
     }
 
@@ -1403,8 +1369,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_first_key_starts_immediately_without_stagger_delay() {
-        // Test that the first key added starts syncing immediately (no stagger delay),
-        // even when developer_mode is false. This ensures good UX for single-key users.
+        // Test that the first key added starts syncing immediately (no stagger delay).
+        // This ensures good UX for single-key users.
         // The stagger delay logic checks key_count == 0 before inserting the key.
         let (_dir, manager) = setup().await;
 
@@ -1462,15 +1428,13 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Create a config with a non-default interval and no stored value on disk
-        enable_developer_mode();
         let config = BackupManagerConfig {
-            data_dir: Some(temp_dir.path().to_path_buf()),
-            validation_timeout_secs: 30,
-            developer_mode: true,
             sync_interval_secs: 900,
-            ..Default::default()
+            ..create_test_config(&temp_dir)
         };
-        let manager = BackupManager::new(config).await.unwrap();
+        let manager = BackupManager::with_client(config, create_test_client())
+            .await
+            .unwrap();
 
         assert_eq!(
             manager.get_sync_interval(),

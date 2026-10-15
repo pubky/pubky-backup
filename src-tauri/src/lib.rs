@@ -11,8 +11,8 @@ use std::sync::{Arc, OnceLock};
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_developer_mode, is_testnet_mode, parse_pubky, ActivityEntry, AppStorage, BackupManager,
-    BackupManagerConfig, KeyState, KeyStatus,
+    is_testnet_mode, parse_pubky, ActivityEntry, AppStorage, BackupManager, BackupManagerConfig,
+    KeyState, KeyStatus,
 };
 use tauri::{
     ipc::Channel,
@@ -47,27 +47,19 @@ fn event_listener_mutex() -> &'static Mutex<Option<tauri::async_runtime::JoinHan
 /// Config response for frontend
 #[derive(Clone, Serialize)]
 pub struct AppConfig {
-    developer_mode: bool,
     sync_interval_secs: u64,
     keys_dir: String,
 }
 
-fn create_config() -> BackupManagerConfig {
-    BackupManagerConfig {
-        developer_mode: is_developer_mode(),
-        ..Default::default()
-    }
-}
-
 /// Create a BackupManager for mainnet, or for a local testnet in testnet mode.
 async fn create_manager() -> Result<BackupManager, BackupAppError> {
-    let config = create_config();
+    let config = BackupManagerConfig::default();
     let manager = if is_testnet_mode() {
-        BackupManager::testnet(config).await
+        BackupManager::testnet(config).await?
     } else {
-        BackupManager::new(config).await
+        BackupManager::new(config).await?
     };
-    manager.map_err(BackupAppError::internal)
+    Ok(manager)
 }
 
 /// Ensure a BackupManager exists inside the global slot.
@@ -176,29 +168,16 @@ async fn add_key(pubky_str: &str) -> Result<String, BackupAppError> {
     if let Some(state) = manager.get_key_state(&pubky) {
         if state.status == KeyStatus::Error {
             debug!("Key is in error state, retrying validation");
-            manager
-                .retry_errored_key(&pubky)
-                .await
-                .map_err(BackupAppError::internal)?;
+            manager.retry_errored_key(&pubky).await?;
         } else {
             debug!("Key already being backed up");
         }
-        manager
-            .write_last_pubky(&pubky)
-            .await
-            .map_err(BackupAppError::internal)?;
+        manager.write_last_pubky(&pubky).await?;
         return Ok(pubky.z32());
     }
 
-    manager
-        .add_key(pubky.clone())
-        .await
-        .map_err(BackupAppError::internal)?;
-
-    manager
-        .write_last_pubky(&pubky)
-        .await
-        .map_err(BackupAppError::internal)?;
+    manager.add_key(pubky.clone()).await?;
+    manager.write_last_pubky(&pubky).await?;
 
     info!("Key added and backup started for: {}", pubky);
     Ok(pubky.z32())
@@ -215,7 +194,6 @@ async fn get_all_key_states() -> Result<HashMap<String, KeyState>, BackupAppErro
 async fn get_config() -> Result<AppConfig, BackupAppError> {
     let m = get_manager().await?;
     Ok(AppConfig {
-        developer_mode: is_developer_mode(),
         sync_interval_secs: m.get_sync_interval(),
         keys_dir: m.keys_dir().to_string_lossy().to_string(),
     })
@@ -268,22 +246,15 @@ async fn get_last_pubky() -> Result<Option<String>, BackupAppError> {
 #[tauri::command]
 async fn set_last_pubky(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = parse_pubky_for_command(pubky_str)?;
-    get_manager()
-        .await?
-        .write_last_pubky(&pubky)
-        .await
-        .map_err(BackupAppError::internal)
+    get_manager().await?.write_last_pubky(&pubky).await?;
+    Ok(())
 }
 
 /// Remove a key from the backup manager, stopping its backup controller.
 #[tauri::command]
 async fn remove_key(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = parse_pubky_for_command(pubky_str)?;
-    get_manager()
-        .await?
-        .remove_key(&pubky)
-        .await
-        .map_err(BackupAppError::internal)?;
+    get_manager().await?.remove_key(&pubky).await?;
     debug!("Key removed: {}", pubky);
     Ok(())
 }
@@ -292,11 +263,7 @@ async fn remove_key(pubky_str: &str) -> Result<(), BackupAppError> {
 #[tauri::command]
 async fn delete_key(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = parse_pubky_for_command(pubky_str)?;
-    get_manager()
-        .await?
-        .delete_key(&pubky)
-        .await
-        .map_err(BackupAppError::internal)?;
+    get_manager().await?.delete_key(&pubky).await?;
     debug!("Key deleted: {}", pubky);
     Ok(())
 }
@@ -326,10 +293,7 @@ async fn sign_in_new_key(on_authorization_url: Channel<String>) -> Result<String
         .map_err(BackupAppError::internal)?;
 
     let pubky = request.approved().await?;
-    manager
-        .write_last_pubky(&pubky)
-        .await
-        .map_err(BackupAppError::internal)?;
+    manager.write_last_pubky(&pubky).await?;
     info!("Signed in to and backing up: {}", pubky);
     Ok(pubky.z32())
 }
@@ -362,11 +326,7 @@ async fn sign_out(pubky_str: &str) -> Result<(), BackupAppError> {
 #[tauri::command]
 async fn force_sync_now(pubky_str: &str) -> Result<(), BackupAppError> {
     let pubky = parse_pubky_for_command(pubky_str)?;
-    get_manager()
-        .await?
-        .force_sync(&pubky)
-        .await
-        .map_err(BackupAppError::internal)?;
+    get_manager().await?.force_sync(&pubky).await?;
     debug!("Force sync triggered for: {}", pubky);
     Ok(())
 }
@@ -406,19 +366,15 @@ async fn set_sync_interval(interval_secs: u64) -> Result<(), BackupAppError> {
     get_manager()
         .await?
         .set_sync_interval(interval_secs)
-        .await
-        .map_err(BackupAppError::internal)
+        .await?;
+    Ok(())
 }
 
 /// Create a snapshot (zip archive) of the specified pubky's backed-up data
 #[tauri::command]
 async fn create_snapshot(pubky_str: &str) -> Result<String, BackupAppError> {
     let pubky = parse_pubky_for_command(pubky_str)?;
-    let path = get_manager()
-        .await?
-        .create_snapshot(&pubky)
-        .await
-        .map_err(BackupAppError::internal)?;
+    let path = get_manager().await?.create_snapshot(&pubky).await?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -460,11 +416,7 @@ async fn set_backup_location(new_parent: &str) -> Result<String, BackupAppError>
         // move_keys shuts down controllers, moves files, updates config.
         // RELOCATING flag prevents concurrent commands from getting a ref
         // to this (now stale) manager.
-        let new_keys_dir = slot
-            .load()
-            .move_keys(&new_parent)
-            .await
-            .map_err(BackupAppError::internal)?;
+        let new_keys_dir = slot.load().move_keys(&new_parent).await?;
 
         // Create a fresh manager — reads keys_location from config, resumes controllers
         let new_manager = create_manager().await?;
@@ -512,31 +464,24 @@ fn update_tray_icon_aggregate() {
     }
 
     let (tooltip, title) = if has_syncing {
-        ("Pubky Backup - Syncing...", Some("🔄"))
+        ("Pubky Backup - Syncing...", "🔄")
     } else if has_starting {
-        ("Pubky Backup - Starting...", Some("⏳"))
+        ("Pubky Backup - Starting...", "⏳")
     } else if has_error {
-        ("Pubky Backup - Error", Some("❌"))
+        ("Pubky Backup - Error", "❌")
     } else {
-        ("Pubky Backup - Synced", Some("✅"))
+        ("Pubky Backup - Synced", "✅")
     };
 
     let _ = tray.set_tooltip(Some(tooltip));
-    if let Some(title_str) = title {
-        if let Err(e) = tray.set_title(Some(title_str)) {
-            error!("Failed to update tray title: {}", e);
-        }
-    } else {
-        let _ = tray.set_title(None::<&str>);
+    if let Err(e) = tray.set_title(Some(title)) {
+        error!("Failed to update tray title: {}", e);
     }
 }
 
 pub fn run() {
     env_logger::init();
 
-    if is_developer_mode() {
-        info!("Developer mode enabled via PUBKY_DEVELOPER_MODE environment variable");
-    }
     if is_testnet_mode() {
         info!("Testnet mode enabled via PUBKY_TESTNET environment variable");
     }

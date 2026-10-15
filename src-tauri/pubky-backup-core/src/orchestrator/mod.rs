@@ -8,7 +8,6 @@
 //! - [`BackupManager`] - Thread-safe manager for multiple pubky backups
 //! - [`types`] - Configuration and state types for the manager
 //! - [`discovery`] - Homeserver discovery
-//! - [`session`] - Session persistence (last used pubky)
 //!
 //! # Architecture
 //!
@@ -57,7 +56,6 @@ mod auth;
 pub mod discovery;
 pub mod error;
 mod manager;
-pub mod session;
 mod status;
 mod sync_interval;
 pub mod types;
@@ -66,6 +64,6 @@ pub use auth::SignInRequest;
 pub use error::OrchestratorError;
 pub use manager::{BackupManager, MAX_KEYS};
 pub use types::{
-    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyErrorCode, KeyState,
-    KeyStatus, KeyUpdate,
+    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyState, KeyStatus,
+    KeyUpdate,
 };
