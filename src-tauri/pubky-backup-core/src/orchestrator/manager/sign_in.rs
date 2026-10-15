@@ -330,7 +330,7 @@ impl BackupManager {
         let Some(slot) = inner.pending_sign_in(target) else {
             return false;
         };
-        if !slot.as_ref().is_some_and(|pending| pending.id == id) {
+        if slot.as_ref().is_none_or(|pending| pending.id != id) {
             return false;
         }
         // Dropping the handle leaves the claiming task running
