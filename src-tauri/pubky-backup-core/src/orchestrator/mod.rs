@@ -23,7 +23,7 @@
 //!
 //! The orchestrator communicates with sync controllers via:
 //! - [`ControllerCommand`](crate::sync::ControllerCommand): Commands sent to controllers
-//! - [`ControllerStatus`](crate::sync::ControllerStatus): Status updates from controllers
+//! - [`ControllerUpdate`](crate::sync::ControllerUpdate): Status updates from controllers
 //!
 //! It then transforms these into [`KeyUpdate`] messages for external consumers.
 //!
@@ -56,7 +56,6 @@ mod auth;
 pub mod discovery;
 pub mod error;
 mod manager;
-mod status;
 mod sync_interval;
 pub mod types;
 

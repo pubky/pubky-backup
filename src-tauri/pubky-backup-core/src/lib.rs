@@ -63,7 +63,7 @@
 //! For more control, use [`BackupController`] directly:
 //!
 //! ```no_run
-//! use pubky_backup_core::{AppStorage, BackupController, ControllerCommand, ControllerStatus};
+//! use pubky_backup_core::{AppStorage, BackupController, ControllerCommand, ControllerUpdate};
 //! use pubky::{Pubky, PublicKey};
 //! use std::sync::Arc;
 //! use std::str::FromStr;
@@ -76,7 +76,7 @@
 //!     let pubky = PublicKey::from_str("your_pubky_here")?;
 //!
 //!     let (_control_tx, control_rx) = mpsc::channel::<ControllerCommand>(5);
-//!     let (status_tx, _status_rx) = broadcast::channel::<ControllerStatus>(5);
+//!     let (status_tx, _status_rx) = broadcast::channel::<ControllerUpdate>(5);
 //!     let (_interval_tx, interval_rx) = watch::channel(30u64);
 //!
 //!     let controller = BackupController::new(
@@ -116,8 +116,8 @@ pub use storage::{get_data_directory, AppStorage, DataScope, StorageError};
 
 // Re-export main types from sync module
 pub use sync::{
-    BackupController, ControllerCommand, ControllerStatus, SessionSecret, SyncError,
-    DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS,
+    BackupController, ControllerCommand, ControllerStatus, ControllerUpdate, SessionSecret,
+    SyncError, DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS,
 };
 
 // Re-export utility functions

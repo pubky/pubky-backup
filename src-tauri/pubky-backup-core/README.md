@@ -92,6 +92,7 @@ let config = BackupManagerConfig {
 | `testnet(config)` | Like `new`, but backs up from a local Pubky testnet instead of mainnet |
 | `with_client(config, pubky_client)` | Like `new`, but with your own Pubky client |
 | `add_key(pubky)` | Add a key to backup (validates and discovers homeserver) |
+| `ensure_backed_up(pubky)` | Add a key unless it is backed up already, or retry it if its backup is in error |
 | `remove_key(pubky)` | Stop syncing but preserve data on disk |
 | `delete_key(pubky)` | Stop syncing AND delete all backed-up data |
 | `start_sign_in(pubky)` | Start signing in to a key, to back up its private data too |
@@ -124,7 +125,7 @@ while let Ok(update) = rx.recv().await {
         KeyStatus::Idle => println!("Up to date, waiting for next sync"),
         KeyStatus::Error => {
             if let Some(err) = &update.state.error {
-                println!("Error: {} (recoverable: {})", err.message, err.recoverable);
+                println!("Error: {}", err.message);
             }
         }
         KeyStatus::Stopped => println!("Backup stopped"),

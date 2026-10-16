@@ -22,6 +22,7 @@ use pubky::{PubkySession, PublicKey};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
+use super::status::log_activity;
 use super::{BackupManager, ManagedKey, ManagerInner};
 use crate::orchestrator::auth::{self, SignInFlow, SignInRequest};
 use crate::orchestrator::error::OrchestratorError;
@@ -239,7 +240,8 @@ impl BackupManager {
             return Ok(());
         };
         self.end_session_on_homeserver(secret, pubky);
-        self.write_activity(
+        log_activity(
+            &self.storage,
             pubky,
             ActivityType::SignedOut,
             "Signed out — only public data is backed up".to_string(),
@@ -285,9 +287,8 @@ impl BackupManager {
                     .to_string(),
             ));
         }
-        let pubky_client = self.inner.read().pubky_client.clone();
         auth::start_sign_in_flow(
-            &pubky_client,
+            &self.pubky_client,
             &self.config.client_id,
             self.config.http_relay.as_ref(),
         )
@@ -353,7 +354,8 @@ impl BackupManager {
         }
 
         info!("Signed in to key: {}", pubky);
-        self.write_activity(
+        log_activity(
+            &self.storage,
             pubky,
             ActivityType::SignedIn,
             "Signed in — private data is backed up too".to_string(),
@@ -445,8 +447,7 @@ impl BackupManager {
         if self.config.offline {
             return;
         }
-        let pubky_client = self.inner.read().pubky_client.as_ref().clone();
-        auth::end_stored_session(secret, pubky.clone(), pubky_client);
+        auth::end_stored_session(secret, pubky.clone(), self.pubky_client.as_ref().clone());
     }
 }
 
@@ -460,6 +461,7 @@ fn failure_reason(error: &OrchestratorError) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::status::SyncState;
     use super::super::tests::{setup, setup_with_dir, test_pubky};
     use super::*;
     use tempfile::TempDir;
@@ -723,7 +725,7 @@ mod tests {
         let applied = manager
             .inner
             .write()
-            .apply_controller_state(&pubky, KeyState::default())
+            .apply_sync_state(&pubky, SyncState::default())
             .unwrap();
 
         assert_eq!(applied.auth, AuthStatus::SignedIn);
