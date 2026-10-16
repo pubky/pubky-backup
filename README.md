@@ -57,6 +57,8 @@ PUBKY_TESTNET=1 cargo tauri dev
 PUBKY_TESTNET=1 cargo run -p pubky-backup-core --example dev_signer -- approve 'pubkyauth://...' user.key
 ```
 
+The network also runs a second homeserver (printed as "Mirror homeserver") to try mirroring against. Give the test user an account there by adding its key to step 2 (`dev_signer -- signup <homeserver> user.key <mirror-homeserver>`), then click "Add mirror", enter that key and approve the request the same way as the sign-in.
+
 ## Testing
 
 ### Frontend Tests

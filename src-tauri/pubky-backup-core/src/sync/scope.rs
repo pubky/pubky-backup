@@ -4,6 +4,9 @@ use pubky::PubkySession;
 
 use crate::storage::DataScope;
 
+/// Path prefix of a key's public data on its homeserver.
+pub(crate) const PUBLIC_PATH: &str = "/pub/";
+
 /// Path prefix of a key's private data on its homeserver.
 pub(crate) const PRIVATE_PATH: &str = "/priv/";
 

@@ -17,6 +17,10 @@
 //! ├── config.json                # App-level configuration
 //! ├── logs/                      # App-level logs
 //! │   └── error.log              # Global error log
+//! ├── sessions/                  # Session secrets of signed-in keys
+//! │   └── <pubky>
+//! ├── mirrors/                   # Mirrors of keys, with the sessions on them
+//! │   └── <pubky>
 //! └── keys/                      # Per-key data
 //!     └── <pubky>/
 //!         ├── state/             # Backup state/metadata
@@ -42,8 +46,10 @@ pub(crate) mod config;
 pub mod error;
 mod keys;
 mod migration;
-mod sessions;
+mod mirrors;
+mod secrets;
 
 pub use app::{get_data_directory, AppStorage};
 pub use error::StorageError;
 pub use keys::{DataScope, KeyStorage, KeysStorage};
+pub use mirrors::StoredMirror;

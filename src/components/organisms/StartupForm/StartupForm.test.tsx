@@ -21,6 +21,7 @@ describe("StartupForm", () => {
     next_sync: 1672531230,
     error: null,
     auth: { type: "SignedOut" },
+    mirror: { type: "NotMirrored" },
   };
 
   beforeEach(() => {

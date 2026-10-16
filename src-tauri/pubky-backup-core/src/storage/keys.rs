@@ -24,6 +24,8 @@ pub(crate) const DATA_DIR_NAME: &str = "data";
 const SNAPSHOTS_DIR_NAME: &str = "snapshots";
 pub(crate) const CURSOR_FILENAME: &str = "cursor";
 const PRIVATE_CURSOR_FILENAME: &str = "private_cursor";
+const MIRROR_CURSOR_FILENAME: &str = "mirror_cursor";
+const MIRROR_PRIVATE_CURSOR_FILENAME: &str = "mirror_private_cursor";
 const ACTIVITY_LOG_FILENAME: &str = "activity.log";
 const INACTIVE_FILENAME: &str = "inactive";
 /// A part of a key's data that is synced separately, with its own cursor.
@@ -44,6 +46,14 @@ impl DataScope {
             Self::Private => PRIVATE_CURSOR_FILENAME,
         }
     }
+
+    /// The file tracking how far this scope is copied to the key's mirror.
+    fn mirror_cursor_filename(self) -> &'static str {
+        match self {
+            Self::Public => MIRROR_CURSOR_FILENAME,
+            Self::Private => MIRROR_PRIVATE_CURSOR_FILENAME,
+        }
+    }
 }
 
 /// Storage for a single Pubky key's backup data.
@@ -53,6 +63,7 @@ impl DataScope {
 /// Structure:
 /// - `state/cursor` - Sync progress cursor for public data
 /// - `state/private_cursor` - Sync progress cursor for private data
+/// - `state/mirror_cursor`, `state/mirror_private_cursor` - Progress of copying to the mirror
 /// - `state/activity.log` - Activity log (JSON lines)
 /// - `data/pub/...` - Backed-up public resources
 /// - `data/priv/...` - Backed-up private resources (signed-in keys only)
@@ -100,6 +111,42 @@ impl KeyStorage {
     /// The cursor value from the API was always u64, just previously stored as String.
     pub async fn read_cursor(&self, scope: DataScope) -> Result<Option<u64>, StorageError> {
         self.read_cursor_file(scope.cursor_filename()).await
+    }
+
+    /// Write the cursor tracking how far one scope of the key's data is copied
+    /// to its mirror.
+    pub async fn write_mirror_cursor(
+        &self,
+        scope: DataScope,
+        cursor_value: u64,
+    ) -> Result<(), StorageError> {
+        self.write_cursor_file(scope.mirror_cursor_filename(), cursor_value)
+            .await
+    }
+
+    /// Read the cursor tracking how far one scope of the key's data is copied
+    /// to its mirror, or `None` if nothing was copied yet.
+    pub async fn read_mirror_cursor(&self, scope: DataScope) -> Result<Option<u64>, StorageError> {
+        self.read_cursor_file(scope.mirror_cursor_filename()).await
+    }
+
+    /// Forget how far the key's data is copied to its mirror, so that a mirror
+    /// set up later starts from the beginning. Does nothing if nothing was copied.
+    pub fn delete_mirror_cursors(&self) -> Result<(), StorageError> {
+        let state_dir = self.key_dir.join(STATE_DIR_NAME);
+        for scope in [DataScope::Public, DataScope::Private] {
+            match std::fs::remove_file(state_dir.join(scope.mirror_cursor_filename())) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(StorageError::Internal(format!(
+                        "Failed to delete mirror cursor: {}",
+                        e
+                    )))
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn write_cursor_file(
@@ -840,6 +887,10 @@ mod tests {
             ActivityType::SignedIn,
             ActivityType::SignedOut,
             ActivityType::SessionExpired,
+            ActivityType::MirrorStarted,
+            ActivityType::MirrorStopped,
+            ActivityType::MirrorSessionExpired,
+            ActivityType::MirrorFailed,
         ];
 
         for (i, activity_type) in types.iter().enumerate() {
@@ -853,15 +904,67 @@ mod tests {
                 .unwrap();
         }
 
-        let entries = storage.read_activity(10).await;
-        assert_eq!(entries.len(), 7);
-        assert_eq!(entries[0].activity_type, ActivityType::SessionExpired);
-        assert_eq!(entries[1].activity_type, ActivityType::SignedOut);
-        assert_eq!(entries[2].activity_type, ActivityType::SignedIn);
-        assert_eq!(entries[3].activity_type, ActivityType::SyncFailed);
-        assert_eq!(entries[4].activity_type, ActivityType::SnapshotCreated);
-        assert_eq!(entries[5].activity_type, ActivityType::InitialBackup);
-        assert_eq!(entries[6].activity_type, ActivityType::FilesBackedUp);
+        let entries = storage.read_activity(types.len()).await;
+        // Newest first
+        let read_back: Vec<ActivityType> = entries.into_iter().map(|e| e.activity_type).collect();
+        let expected: Vec<ActivityType> = types.iter().rev().cloned().collect();
+        assert_eq!(read_back, expected);
+    }
+
+    #[tokio::test]
+    async fn test_mirror_cursors_are_independent_of_backup_cursors() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        assert_eq!(
+            storage.read_mirror_cursor(DataScope::Public).await.unwrap(),
+            None
+        );
+
+        storage.write_cursor(DataScope::Public, 10).await.unwrap();
+        storage
+            .write_mirror_cursor(DataScope::Public, 3)
+            .await
+            .unwrap();
+        storage
+            .write_mirror_cursor(DataScope::Private, 4)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            storage.read_cursor(DataScope::Public).await.unwrap(),
+            Some(10)
+        );
+        assert_eq!(
+            storage.read_mirror_cursor(DataScope::Public).await.unwrap(),
+            Some(3)
+        );
+        assert_eq!(
+            storage
+                .read_mirror_cursor(DataScope::Private)
+                .await
+                .unwrap(),
+            Some(4)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_mirror_cursors_keeps_backup_cursors() {
+        let (storage, _temp_dir) = create_test_key_storage();
+        storage.write_cursor(DataScope::Public, 10).await.unwrap();
+        for scope in [DataScope::Public, DataScope::Private] {
+            storage.write_mirror_cursor(scope, 7).await.unwrap();
+        }
+
+        storage.delete_mirror_cursors().unwrap();
+
+        for scope in [DataScope::Public, DataScope::Private] {
+            assert_eq!(storage.read_mirror_cursor(scope).await.unwrap(), None);
+        }
+        assert_eq!(
+            storage.read_cursor(DataScope::Public).await.unwrap(),
+            Some(10)
+        );
+        // Deleting when nothing was copied is not an error
+        storage.delete_mirror_cursors().unwrap();
     }
 
     #[tokio::test]

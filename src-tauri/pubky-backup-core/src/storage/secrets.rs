@@ -1,9 +1,9 @@
-//! Session secrets of signed-in keys.
+//! Secrets kept for keys: session secrets, and mirrors with their sessions.
 //!
-//! A session secret grants read access to a key's private data for as long as
-//! the session lasts, so it is kept apart from the backed-up data: in the app
-//! data directory, which never moves, rather than in the keys directory, which
-//! the user may relocate to a synced or removable folder.
+//! A secret grants access to a key's data on a homeserver for as long as the
+//! session lasts, so it is kept apart from the backed-up data: in the app data
+//! directory, which never moves, rather than in the keys directory, which the
+//! user may relocate to a synced or removable folder.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,27 +14,32 @@ use super::error::StorageError;
 
 pub(crate) const SESSIONS_DIR_NAME: &str = "sessions";
 
-/// Storage for the session secrets of signed-in keys, one file per key.
+/// Storage for one kind of secret, one file per key.
 ///
-/// Located at: `~/.pubky-backup/sessions/<pubky>`
-pub(super) struct SessionStorage {
-    sessions_dir: PathBuf,
+/// Located at: `~/.pubky-backup/<dir name>/<pubky>`
+pub(super) struct SecretStorage {
+    dir: PathBuf,
+    /// What the secrets are, for error messages
+    what: &'static str,
 }
 
-impl SessionStorage {
-    pub(super) fn new(data_dir: &Path) -> Result<Self, StorageError> {
-        let sessions_dir = data_dir.join(SESSIONS_DIR_NAME);
-        std::fs::create_dir_all(&sessions_dir).map_err(|e| {
-            StorageError::DirectoryCreation(format!("{}: {}", sessions_dir.display(), e))
-        })?;
-        Ok(Self { sessions_dir })
+impl SecretStorage {
+    pub(super) fn new(
+        data_dir: &Path,
+        dir_name: &str,
+        what: &'static str,
+    ) -> Result<Self, StorageError> {
+        let dir = data_dir.join(dir_name);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| StorageError::DirectoryCreation(format!("{}: {}", dir.display(), e)))?;
+        Ok(Self { dir, what })
     }
 
     fn path(&self, pubky: &PublicKey) -> PathBuf {
-        self.sessions_dir.join(pubky.z32())
+        self.dir.join(pubky.z32())
     }
 
-    /// Store the session secret of a signed-in key.
+    /// Store a key's secret.
     ///
     /// The file is readable by its owner only (on Unix). Written atomically.
     pub(super) fn write(&self, pubky: &PublicKey, secret: &str) -> Result<(), StorageError> {
@@ -44,38 +49,37 @@ impl SessionStorage {
             .and_then(|_| std::fs::rename(&temp_path, &path))
             .map_err(|e| {
                 let _ = std::fs::remove_file(&temp_path);
-                StorageError::Internal(format!("Failed to write session secret: {}", e))
+                StorageError::Internal(format!("Failed to write {}: {}", self.what, e))
             })
     }
 
-    /// Read the stored session secret, or `None` if the key is not signed in.
+    /// Read a key's stored secret, or `None` if it has none.
     pub(super) fn read(&self, pubky: &PublicKey) -> Result<Option<String>, StorageError> {
         match std::fs::read_to_string(self.path(pubky)) {
             Ok(secret) => Ok(Some(secret)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(StorageError::Internal(format!(
-                "Failed to read session secret: {}",
-                e
+                "Failed to read {}: {}",
+                self.what, e
             ))),
         }
     }
 
-    /// Remove the stored session secret and return it, or `None` if the key is
-    /// not signed in.
+    /// Remove a key's stored secret and return it, or `None` if it has none.
     pub(super) fn take(&self, pubky: &PublicKey) -> Result<Option<String>, StorageError> {
         let secret = self.read(pubky)?;
         self.delete(pubky)?;
         Ok(secret)
     }
 
-    /// Delete the stored session secret. Does nothing if there is none.
+    /// Delete a key's stored secret. Does nothing if it has none.
     pub(super) fn delete(&self, pubky: &PublicKey) -> Result<(), StorageError> {
         match std::fs::remove_file(self.path(pubky)) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(StorageError::Internal(format!(
-                "Failed to delete session secret: {}",
-                e
+                "Failed to delete {}: {}",
+                self.what, e
             ))),
         }
     }
@@ -100,14 +104,14 @@ mod tests {
     use std::str::FromStr;
     use tempfile::TempDir;
 
-    fn create_test_storage() -> (SessionStorage, PublicKey, TempDir) {
+    fn create_test_storage() -> (SecretStorage, PublicKey, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let storage = SessionStorage::new(temp_dir.path()).unwrap();
+        let storage = SecretStorage::new(temp_dir.path(), "sessions", "session secret").unwrap();
         (storage, PublicKey::from_str(TEST_PUBKY).unwrap(), temp_dir)
     }
 
     #[test]
-    fn test_session_secret_roundtrip() {
+    fn test_secret_roundtrip() {
         let (storage, pubky, _temp_dir) = create_test_storage();
 
         assert_eq!(storage.read(&pubky).unwrap(), None);
@@ -127,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn test_take_session_secret() {
+    fn test_take_secret() {
         let (storage, pubky, _temp_dir) = create_test_storage();
         storage.write(&pubky, "pubky:secret").unwrap();
 
@@ -141,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_session_secret() {
+    fn test_delete_secret() {
         let (storage, pubky, _temp_dir) = create_test_storage();
 
         storage.write(&pubky, "pubky:secret").unwrap();
@@ -152,9 +156,22 @@ mod tests {
         storage.delete(&pubky).unwrap();
     }
 
+    #[test]
+    fn test_secrets_of_different_kinds_are_kept_apart() {
+        let temp_dir = TempDir::new().unwrap();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        let sessions = SecretStorage::new(temp_dir.path(), "sessions", "session").unwrap();
+        let mirrors = SecretStorage::new(temp_dir.path(), "mirrors", "mirror").unwrap();
+
+        sessions.write(&pubky, "session").unwrap();
+
+        assert_eq!(mirrors.read(&pubky).unwrap(), None);
+        assert!(temp_dir.path().join("sessions").join(pubky.z32()).exists());
+    }
+
     #[cfg(unix)]
     #[test]
-    fn test_session_secret_is_readable_by_owner_only() {
+    fn test_secret_is_readable_by_owner_only() {
         use std::os::unix::fs::PermissionsExt;
 
         let (storage, pubky, _temp_dir) = create_test_storage();

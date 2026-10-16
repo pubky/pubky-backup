@@ -14,6 +14,7 @@ Handles the core backup synchronization logic for a single pubky key:
 - **Event processing**: Handling PUT/DELETE operations and updating local storage
 - **Cursor management**: Tracking sync progress to enable resumable backups
 - **Private data**: Syncing `/priv` as well as `/pub` for keys that are signed in
+- **Mirroring**: Copying what is backed up to a second homeserver
 
 ### `orchestrator` - Multi-Key Management
 
@@ -21,6 +22,7 @@ Provides high-level management of multiple pubky backups running concurrently:
 
 - **Key lifecycle**: Adding, removing, and validating backup keys
 - **Signing in**: Getting the owner's approval to back up a key's private data
+- **Mirrors**: Getting the owner's approval to copy a key's data to a second homeserver
 - **Coordination**: Managing multiple backup controllers via message channels
 - **Status aggregation**: Broadcasting status updates for all managed keys
 - **Error recovery**: Restarting failed backups with appropriate delays
@@ -31,7 +33,7 @@ Manages all file system operations for backup data and application state:
 
 - **Application storage**: Global state like the list of backed-up keys
 - **Per-key storage**: Individual backup data, cursors, and error logs
-- **Sessions**: Session secrets of signed-in keys, kept in the app data directory rather than with the backup
+- **Sessions and mirrors**: Session secrets of signed-in keys, and the mirrors of keys with the sessions on them, kept in the app data directory rather than with the backup
 - **Migration**: Upgrading from legacy storage formats
 - **Snapshots**: Point-in-time backup archives (zip)
 
@@ -100,6 +102,9 @@ let config = BackupManagerConfig {
 | `start_sign_in_for_new_key()` | Start a sign-in that backs up, and signs in, whichever key approves it |
 | `cancel_sign_in_for_new_key()` | Cancel that sign-in if it is still awaiting approval |
 | `sign_out(pubky)` | Sign out of a key, going back to backing up public data only |
+| `start_mirror(pubky, homeserver)` | Start copying a key's backup to a second homeserver |
+| `cancel_mirror(pubky)` | Cancel a mirror request that is still awaiting approval |
+| `stop_mirror(pubky)` | Stop mirroring a key; what was copied stays on the mirror |
 | `force_sync(pubky)` | Trigger immediate sync for a specific key |
 | `get_key_state(pubky)` | Get current state of a specific key |
 | `get_keys()` | List all managed pubkys |
@@ -179,6 +184,37 @@ Losing the session never interrupts the backup of public data. `sign_out(pubky)`
 
 Backed-up private data is stored unencrypted under `keys/<pubky>/data/priv/` and is included in snapshots, so protect the backup directory accordingly.
 
+## Mirroring
+
+A mirror is a second homeserver that holds the same data as a key's own. Mirroring copies the key's backup there after every sync, so the mirror follows along with every change, deletions included:
+
+```rust
+let request = manager.start_mirror(&pubky, &mirror_homeserver).await?;
+
+// Show this link (or a QR code of it) to the key's owner, as for signing in.
+println!("Approve in Pubky Ring: {}", request.authorization_url());
+
+request.approved().await?;
+// Everything backed up so far is copied to the mirror, then every later change.
+```
+
+The key must already have an account on the mirror, for example one created through the mirror's own website. The request asks for write access to `/pub` and `/priv`. The grant the owner approves is not tied to a homeserver, so the backup uses it to sign in to the key's account on the mirror and copies there directly; the session the approval opens on the key's own homeserver is ended right away, since the backup never writes there. The key's own homeserver in PKDNS stays the same, so mirroring never moves the key's identity. Private data reaches the mirror only while the key is signed in, because that is when it is backed up.
+
+Follow `KeyState::mirror` in the status updates:
+
+| `MirrorStatus` | Meaning |
+|----------------|---------|
+| `NotMirrored` | The key has no mirror |
+| `AwaitingApproval { homeserver, authorization_url }` | Mirror requested, waiting for the owner |
+| `Mirroring { homeserver }` | Changes are copied after every sync |
+| `SessionExpired { homeserver }` | The mirror no longer accepts the session; `start_mirror` again to resume where it stopped |
+| `Failing { homeserver, message }` | Copying fails (e.g. the mirror is unreachable or full); retried on every sync |
+| `SetupFailed { homeserver, message }` | The last mirror request failed |
+
+Problems with the mirror never hold up the backup itself. The mirror pass copies in batches of 50 events after the backup's own passes, and never gets ahead of what is backed up locally, which is where the content comes from. Its progress is kept in `state/mirror_cursor` and `state/mirror_private_cursor` next to the backup's cursors, while the mirror itself and the session on it are stored with the sign-in sessions in the app data directory (`~/.pubky-backup/mirrors/`).
+
+Mirroring stops on its own if the mirror becomes the key's own homeserver, since every copy would then be a new change to copy.
+
 ### ControllerCommand
 
 | Command | Description |
@@ -200,6 +236,8 @@ PUBKY_TESTNET=1 cargo run -p pubky-backup-core --example dev_signer -- approve '
 ```
 
 Create the manager with `BackupManager::testnet(config)` to back up from that network. `is_testnet_mode()` reports whether `PUBKY_TESTNET` is set, for applications that want to switch on it.
+
+The local testnet started by `dev_testnet` includes a second homeserver to mirror to.
 
 ## Offline Mode
 

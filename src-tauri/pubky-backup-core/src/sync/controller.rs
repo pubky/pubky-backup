@@ -9,7 +9,9 @@
 //! Public data is always synced. Private data is synced as well while a session
 //! secret is stored for the pubky (see [`AppStorage::write_session_secret`]).
 //! Each sync cycle syncs public data to the end, then private data, so a
-//! problem with private data never holds back the backup of public data.
+//! problem with private data never holds back the backup of public data. If a
+//! mirror is stored for the pubky (see [`AppStorage::write_mirror`]), the cycle
+//! ends by copying what was backed up to it (see [`mirroring`]).
 //!
 //! # Responsibilities
 //!
@@ -40,6 +42,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time;
+
+mod mirroring;
+
+use mirroring::RestoredMirror;
 
 /// Minimum allowed sync interval in seconds.
 pub const MIN_SYNC_INTERVAL_SECONDS: u64 = 10;
@@ -100,6 +106,23 @@ pub enum ControllerStatus {
         /// The stored session secret that was rejected
         secret: SessionSecret,
     },
+    /// The pubky's mirror rejected its session, so nothing is copied to the
+    /// mirror any more. The backup itself keeps syncing.
+    ///
+    /// As with `SessionRejected`, the controller leaves the stored mirror in
+    /// place and doesn't use its session again.
+    MirrorSessionRejected {
+        /// The stored secret of the session on the mirror that was rejected
+        secret: SessionSecret,
+    },
+    /// Copying to the pubky's mirror failed (will retry on next sync interval).
+    /// The backup itself keeps syncing. Reported once per distinct failure.
+    MirrorFailed {
+        /// Human-readable error message
+        message: String,
+    },
+    /// Copying to the pubky's mirror works again after a failure.
+    MirrorRecovered,
 }
 
 /// Main backup controller which manages the backup process for a Pubky user.
@@ -155,6 +178,15 @@ pub enum ControllerStatus {
 ///                 ControllerStatus::SessionRejected { .. } => {
 ///                     println!("{}: Session rejected", pubky)
 ///                 },
+///                 ControllerStatus::MirrorSessionRejected { .. } => {
+///                     println!("{}: Mirror session rejected", pubky)
+///                 },
+///                 ControllerStatus::MirrorFailed { message } => {
+///                     println!("{}: Mirror error: {}", pubky, message)
+///                 },
+///                 ControllerStatus::MirrorRecovered => {
+///                     println!("{}: Mirror recovered", pubky)
+///                 },
 ///             }
 ///         }
 ///     });
@@ -180,6 +212,12 @@ pub struct BackupController {
     session: Option<RestoredSession>,
     /// A stored session secret the homeserver rejected, which is not used again
     rejected_secret: Option<String>,
+    /// Session on the pubky's mirror, restored from the stored mirror
+    mirror: Option<RestoredMirror>,
+    /// A stored mirror session secret the mirror rejected, which is not used again
+    rejected_mirror_secret: Option<String>,
+    /// The problem last reported for the pubky's mirror, to report each only once
+    mirror_failure: Option<String>,
     /// Whether a sync is due now, rather than at the next interval
     sync_now: bool,
     /// The sync cycle in progress, which may take several batches
@@ -187,12 +225,21 @@ pub struct BackupController {
 }
 
 /// Progress through a sync cycle, which syncs public data to the end, then
-/// private data.
+/// private data, then copies what was backed up to the mirror.
 struct SyncCycle {
     /// Events processed in this cycle so far
     events: usize,
-    /// The scope being synced
-    scope: DataScope,
+    /// The phase the cycle is in
+    phase: SyncPhase,
+}
+
+/// The phases of a sync cycle, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SyncPhase {
+    /// Backing up one scope of the pubky's data
+    Backup(DataScope),
+    /// Copying the backup to the pubky's mirror
+    Mirror,
 }
 
 /// A session together with the stored secret it was restored from, so a
@@ -241,6 +288,9 @@ impl BackupController {
             offline: false,
             session: None,
             rejected_secret: None,
+            mirror: None,
+            rejected_mirror_secret: None,
+            mirror_failure: None,
             sync_now: false,
             cycle: None,
         }
@@ -423,7 +473,7 @@ impl BackupController {
             None => self.start_cycle(),
         };
 
-        match self.perform_sync_batch(&mut cycle.scope).await {
+        match self.perform_sync_batch(&mut cycle.phase).await {
             Ok(ControlFlow::Continue(batch_count)) => {
                 cycle.events += batch_count;
                 self.send_status(ControllerStatus::Syncing {
@@ -460,29 +510,44 @@ impl BackupController {
         });
         SyncCycle {
             events: 0,
-            scope: DataScope::Public,
+            phase: SyncPhase::Backup(DataScope::Public),
         }
     }
 
-    /// Perform a single sync batch of the cycle's current scope.
+    /// Perform a single sync batch of the cycle's current phase.
     ///
-    /// Once public data is synced to the end, moves the cycle on to private data.
-    /// Returns `ControlFlow::Continue(count)` if the cycle has more to sync, or
-    /// `ControlFlow::Break(count)` if it is complete.
+    /// Once public data is synced to the end, moves the cycle on to private
+    /// data, and after that to copying to the mirror. Returns
+    /// `ControlFlow::Continue(count)` if the cycle has more to do, or
+    /// `ControlFlow::Break(count)` if it is complete. The count is the number
+    /// of events backed up.
     async fn perform_sync_batch(
         &mut self,
-        scope: &mut DataScope,
+        phase: &mut SyncPhase,
     ) -> Result<ControlFlow<usize, usize>, SyncError> {
-        match scope {
-            DataScope::Public => {
+        match phase {
+            SyncPhase::Backup(DataScope::Public) => {
                 let batch = self.perform_scope_batch(SyncScope::Public).await?;
                 let ControlFlow::Break(count) = batch else {
                     return Ok(batch);
                 };
-                *scope = DataScope::Private;
+                *phase = SyncPhase::Backup(DataScope::Private);
                 Ok(ControlFlow::Continue(count))
             }
-            DataScope::Private => Ok(self.perform_private_batch().await),
+            SyncPhase::Backup(DataScope::Private) => {
+                let batch = self.perform_private_batch().await;
+                let ControlFlow::Break(count) = batch else {
+                    return Ok(batch);
+                };
+                // Copying follows the backup, so it only ever sees complete files
+                *phase = SyncPhase::Mirror;
+                Ok(ControlFlow::Continue(count))
+            }
+            SyncPhase::Mirror => Ok(if self.perform_mirror_batch().await {
+                ControlFlow::Continue(0)
+            } else {
+                ControlFlow::Break(0)
+            }),
         }
     }
 
@@ -730,7 +795,7 @@ mod tests {
     }
 
     // Test helper to create a storage instance with a temporary directory
-    fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
+    pub(super) fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
         (Arc::new(storage), temp_dir)
@@ -757,13 +822,13 @@ mod tests {
     }
 
     /// An offline controller without channels, for calling its methods directly.
-    fn create_detached_controller(storage: Arc<AppStorage>) -> BackupController {
+    pub(super) fn create_detached_controller(storage: Arc<AppStorage>) -> BackupController {
         create_test_controller(storage, None, None)
     }
 
     /// An offline controller to run as a task, with the channels to control it
     /// and to observe its status.
-    fn create_controlled_controller(
+    pub(super) fn create_controlled_controller(
         storage: Arc<AppStorage>,
     ) -> (
         BackupController,
@@ -963,7 +1028,7 @@ mod tests {
         let mut controller = create_detached_controller(storage);
         controller.cycle = Some(SyncCycle {
             events: 5,
-            scope: DataScope::Private,
+            phase: SyncPhase::Backup(DataScope::Private),
         });
 
         let flow = controller.handle_command(Some(ControllerCommand::ForceSync));
@@ -1280,19 +1345,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sync_cycle_moves_from_public_to_private_data() {
+    async fn test_sync_cycle_moves_from_public_to_private_data_to_the_mirror() {
         let (storage, _temp_dir) = create_test_storage();
         let mut controller = create_detached_controller(storage.clone());
-        let mut scope = DataScope::Public;
+        let mut phase = SyncPhase::Backup(DataScope::Public);
 
         // Public data is caught up, so the cycle moves on to private data
-        let public = controller.perform_sync_batch(&mut scope).await.unwrap();
+        let public = controller.perform_sync_batch(&mut phase).await.unwrap();
         assert_eq!(public, ControlFlow::Continue(0));
-        assert_eq!(scope, DataScope::Private);
+        assert_eq!(phase, SyncPhase::Backup(DataScope::Private));
 
-        // A signed-out key has no private data to sync, which ends the cycle
-        let private = controller.perform_sync_batch(&mut scope).await.unwrap();
-        assert_eq!(private, ControlFlow::Break(0));
+        // A signed-out key has no private data to sync, so the cycle moves on
+        // to the mirror
+        let private = controller.perform_sync_batch(&mut phase).await.unwrap();
+        assert_eq!(private, ControlFlow::Continue(0));
+        assert_eq!(phase, SyncPhase::Mirror);
         assert_eq!(
             storage
                 .read_cursor(&test_pubky(), DataScope::Private)
@@ -1300,5 +1367,9 @@ mod tests {
                 .unwrap(),
             None
         );
+
+        // A key without a mirror has nothing to copy, which ends the cycle
+        let mirror = controller.perform_sync_batch(&mut phase).await.unwrap();
+        assert_eq!(mirror, ControlFlow::Break(0));
     }
 }

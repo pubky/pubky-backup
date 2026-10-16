@@ -33,21 +33,30 @@ const coverageText: Record<BackupCoverage, { label: string; title: string }> = {
 
 export interface CoverageBadgeProps {
   coverage: BackupCoverage;
+  /** Whether the backup is also copied to a mirror homeserver */
+  isMirrored?: boolean;
   className?: string;
 }
 
-/** Which of a pubky's data is backed up: public only, or private data too. */
-export function CoverageBadge({ coverage, className }: CoverageBadgeProps) {
+/**
+ * Which of a pubky's data is backed up: public only, or private data too,
+ * and whether it is mirrored.
+ */
+export function CoverageBadge({
+  coverage,
+  isMirrored = false,
+  className,
+}: CoverageBadgeProps) {
   const { label, title } = coverageText[coverage];
   const Icon = coverage === "public-and-private" ? LockIcon : GlobeIcon;
 
   return (
     <span
-      title={title}
+      title={isMirrored ? `${title}, and copied to a mirror` : title}
       className={cn(coverageBadgeVariants({ coverage }), className)}
     >
       <Icon size={12} />
-      {label}
+      {isMirrored ? `${label}, mirrored` : label}
     </span>
   );
 }

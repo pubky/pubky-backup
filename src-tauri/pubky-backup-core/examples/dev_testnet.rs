@@ -1,7 +1,8 @@
-//! Local Pubky network for development: a DHT, a homeserver and the relays, all
-//! on this machine with fixed ports.
+//! Local Pubky network for development: a DHT, two homeservers and the relays,
+//! all on this machine with fixed ports.
 //!
-//! Lets you run backups, including signing in, without touching mainnet:
+//! Lets you run backups, including signing in and mirroring to the second
+//! homeserver, without touching mainnet:
 //!
 //! ```bash
 //! # 1. Start the network (needs Docker, for the homeserver's Postgres)
@@ -24,12 +25,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let postgres = DockerPostgres::shared().await.connection_string()?;
     std::env::set_var("TEST_PUBKY_CONNECTION_STRING", postgres.as_str());
 
-    let testnet = StaticTestnet::start().await?;
+    let mut testnet = StaticTestnet::start().await?;
+    let mirror = testnet.create_random_homeserver().await?.public_key();
 
     println!(
         "Testnet running. Homeserver: {}",
         testnet.homeserver_app().public_key().z32()
     );
+    println!("Mirror homeserver: {}", mirror.z32());
     println!("HTTP relay: {}", testnet.http_relay().local_link_url());
     println!("Press Ctrl+C to stop.");
 

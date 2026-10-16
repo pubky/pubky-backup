@@ -6,7 +6,12 @@ import { formatRelativeTime } from "@/utils/format";
 import * as Atoms from "@/components/atoms";
 
 /** Activity that means something stopped being backed up. */
-const FAILURE_TYPES: ActivityType[] = ["sync_failed", "session_expired"];
+const FAILURE_TYPES: ActivityType[] = [
+  "sync_failed",
+  "session_expired",
+  "mirror_session_expired",
+  "mirror_failed",
+];
 
 export function ActivityPage() {
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
@@ -72,7 +77,7 @@ export function ActivityPage() {
                       : "bg-green-500"
                   }`}
                 />
-                <span className="text-sm font-bold text-white leading-5">
+                <span className="text-sm font-bold text-white leading-5 min-w-0 break-all">
                   {entry.type === "sync_failed" ? (
                     <>
                       Sync failed{" "}

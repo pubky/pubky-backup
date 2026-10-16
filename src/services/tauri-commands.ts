@@ -205,6 +205,51 @@ export async function signOut(pubkyStr: string): Promise<void> {
 }
 
 /**
+ * Start mirroring a key to a second homeserver, so that it holds the same data.
+ * The outcome arrives with the key's state in a key-update event.
+ * @param pubkyStr - The pubky key to mirror
+ * @param homeserverStr - The mirror homeserver's key; the pubky must already have an account there
+ * @returns The link to show to the key's owner, to approve in their signer app
+ * @throws {BackendError} If the mirror cannot be requested
+ */
+export async function startMirror(
+  pubkyStr: string,
+  homeserverStr: string,
+): Promise<string> {
+  try {
+    return await invoke<string>("start_mirror", { pubkyStr, homeserverStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
+ * Cancel a mirror request that is still awaiting approval
+ * @param pubkyStr - The pubky key whose mirror request to cancel
+ * @throws {BackendError} If cancelling fails
+ */
+export async function cancelMirror(pubkyStr: string): Promise<void> {
+  try {
+    await invoke("cancel_mirror", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
+ * Stop mirroring a key. What was copied to the mirror stays there.
+ * @param pubkyStr - The pubky key to stop mirroring
+ * @throws {BackendError} If stopping fails
+ */
+export async function stopMirror(pubkyStr: string): Promise<void> {
+  try {
+    await invoke("stop_mirror", { pubkyStr });
+  } catch (error: unknown) {
+    throw normalizeError(error);
+  }
+}
+
+/**
  * Open the data directory in the system file browser
  * @throws {BackendError} If opening directory fails
  */

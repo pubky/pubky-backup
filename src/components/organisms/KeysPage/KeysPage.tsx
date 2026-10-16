@@ -16,6 +16,9 @@ interface KeyItemProps {
 
 function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
   const coverage = Hooks.useBackupCoverage(pubky);
+  const isMirrored = Stores.useUIStore(
+    (s) => s.keyStates[pubky]?.mirror.type === "Mirroring",
+  );
 
   return (
     <div
@@ -41,7 +44,7 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
         {Utils.displayPubky(pubky)}
       </span>
       <div className="flex items-center gap-4">
-        <Atoms.CoverageBadge coverage={coverage} />
+        <Atoms.CoverageBadge coverage={coverage} isMirrored={isMirrored} />
         {isSelected && (
           <Atoms.CheckIcon size={16} className="text-text-light" />
         )}
