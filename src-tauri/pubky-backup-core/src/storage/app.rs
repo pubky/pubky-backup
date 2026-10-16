@@ -360,8 +360,8 @@ impl AppStorage {
     }
 
     /// Get the root data directory path (e.g. `~/.pubky-backup`).
-    pub fn get_backup_data_dir(&self) -> Result<PathBuf, StorageError> {
-        Ok(self.data_dir.clone())
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
     }
 
     /// Get the current keys directory path.
@@ -376,7 +376,7 @@ impl AppStorage {
     /// # Arguments
     ///
     /// * `pubky` - The public key to store
-    pub async fn write_last_pubky(&self, pubky: &PublicKey) -> Result<(), StorageError> {
+    pub fn write_last_pubky(&self, pubky: &PublicKey) -> Result<(), StorageError> {
         self.app_data.config.write_last_pubky(pubky)
     }
 
@@ -385,12 +385,12 @@ impl AppStorage {
     /// # Returns
     ///
     /// The last used public key, or `None` if none has been stored
-    pub async fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
+    pub fn read_last_pubky(&self) -> Result<Option<PublicKey>, StorageError> {
         self.app_data.config.read_last_pubky()
     }
 
     /// Clear the last used pubky from storage.
-    pub async fn clear_last_pubky(&self) -> Result<(), StorageError> {
+    pub fn clear_last_pubky(&self) -> Result<(), StorageError> {
         self.app_data.config.clear_last_pubky()
     }
 
@@ -489,7 +489,7 @@ impl AppStorage {
     }
 
     /// Write the sync interval to storage.
-    pub async fn write_sync_interval(&self, interval_secs: u64) -> Result<(), StorageError> {
+    pub fn write_sync_interval(&self, interval_secs: u64) -> Result<(), StorageError> {
         self.app_data.config.write_sync_interval(interval_secs)
     }
 
@@ -566,7 +566,7 @@ mod tests {
 
     fn create_test_storage() -> (AppStorage, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let storage = AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap();
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
         (storage, temp_dir)
     }
 
@@ -659,14 +659,14 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Initially should be None
-        let last = storage.read_last_pubky().await.unwrap();
+        let last = storage.read_last_pubky().unwrap();
         assert!(last.is_none());
 
         // Write a pubky
-        storage.write_last_pubky(&pubky).await.unwrap();
+        storage.write_last_pubky(&pubky).unwrap();
 
         // Read it back
-        let last = storage.read_last_pubky().await.unwrap();
+        let last = storage.read_last_pubky().unwrap();
         assert_eq!(last, Some(pubky));
     }
 
@@ -778,14 +778,14 @@ mod tests {
         assert!(interval.is_none());
 
         // Write an interval
-        storage.write_sync_interval(600).await.unwrap();
+        storage.write_sync_interval(600).unwrap();
 
         // Read it back
         let interval = storage.read_sync_interval();
         assert_eq!(interval, Some(600));
 
         // Overwrite with a new value
-        storage.write_sync_interval(1800).await.unwrap();
+        storage.write_sync_interval(1800).unwrap();
         let interval = storage.read_sync_interval();
         assert_eq!(interval, Some(1800));
     }
@@ -822,7 +822,7 @@ mod tests {
         storage.write(&resource, b"test".to_vec()).await.unwrap();
 
         // Write last pubky to trigger config file creation
-        storage.write_last_pubky(&pubky).await.unwrap();
+        storage.write_last_pubky(&pubky).unwrap();
 
         // Verify directory structure
         let root = temp_dir.path();
@@ -1038,14 +1038,14 @@ mod tests {
         let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
 
         // Set all config values
-        storage.write_last_pubky(&pubky).await.unwrap();
-        storage.write_sync_interval(300).await.unwrap();
+        storage.write_last_pubky(&pubky).unwrap();
+        storage.write_sync_interval(300).unwrap();
 
         // Clear only last_pubky
-        storage.clear_last_pubky().await.unwrap();
+        storage.clear_last_pubky().unwrap();
 
         // last_pubky should be gone, sync_interval should remain
-        let last = storage.read_last_pubky().await.unwrap();
+        let last = storage.read_last_pubky().unwrap();
         assert!(last.is_none());
         let interval = storage.read_sync_interval();
         assert_eq!(interval, Some(300));
@@ -1065,7 +1065,7 @@ mod tests {
         // Simulate a previous session: write last_pubky and create a key directory
         {
             let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
-            storage.write_last_pubky(&pubky).await.unwrap();
+            storage.write_last_pubky(&pubky).unwrap();
             let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
             storage.write(&resource, b"data".to_vec()).await.unwrap();
         }
@@ -1074,7 +1074,7 @@ mod tests {
         // A fresh AppStorage (cheap, no network) should read everything back
         let storage2 = AppStorage::new_with_path(temp_dir.path()).unwrap();
 
-        let last = storage2.read_last_pubky().await.unwrap();
+        let last = storage2.read_last_pubky().unwrap();
         assert_eq!(
             last,
             Some(pubky.clone()),

@@ -7,7 +7,6 @@ import { useUIStore, type KeyState } from "@/stores/uiStore";
  */
 export interface DerivedAppState {
   pubky: string | null;
-  developer_mode: boolean;
   is_syncing: boolean;
   next_sync_time: number;
   last_sync_time: number | null;
@@ -30,12 +29,10 @@ function defaultNextSyncTime(): number {
 function deriveAppState(
   lastPubky: string | null,
   keyStates: Record<string, KeyState>,
-  developerMode: boolean,
 ): DerivedAppState {
   if (lastPubky === null) {
     return {
       pubky: null,
-      developer_mode: developerMode,
       is_syncing: false,
       next_sync_time: 0,
       last_sync_time: null,
@@ -51,7 +48,6 @@ function deriveAppState(
     // Key was just added but state hasn't arrived yet - show as syncing
     return {
       pubky: lastPubky,
-      developer_mode: developerMode,
       is_syncing: true,
       next_sync_time: 0,
       last_sync_time: null,
@@ -69,7 +65,6 @@ function deriveAppState(
 
   return {
     pubky: lastPubky,
-    developer_mode: developerMode,
     is_syncing: isSyncing,
     next_sync_time: keyState.next_sync ?? defaultNextSyncTime(),
     last_sync_time: keyState.last_sync,
@@ -104,11 +99,10 @@ function deriveAppState(
  */
 export function useAppState(): DerivedAppState {
   // Use useShallow to ensure re-render when any property changes
-  const { lastPubky, keyState, developerMode } = useUIStore(
+  const { lastPubky, keyState } = useUIStore(
     useShallow((s) => ({
       lastPubky: s.lastPubky,
       keyState: s.lastPubky !== null ? s.keyStates[s.lastPubky] : undefined,
-      developerMode: s.developerMode,
     })),
   );
 
@@ -118,5 +112,5 @@ export function useAppState(): DerivedAppState {
       ? { [lastPubky]: keyState }
       : {};
 
-  return deriveAppState(lastPubky, keyStates, developerMode);
+  return deriveAppState(lastPubky, keyStates);
 }

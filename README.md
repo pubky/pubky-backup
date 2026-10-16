@@ -37,17 +37,6 @@ For executable build:
 cargo tauri build
 ```
 
-## Development mode (offline/no-network)
-
-Development mode is useful when working on the GUI without a real homeserver. It skips network validation and returns empty data instead of making network calls.
-
-Existing backed-up data on disk is still readable in this mode.
-
-```
-PUBKY_DEVELOPER_MODE=1 cargo tauri dev
-```
-
-
 ## Testnet mode (local network)
 
 Testnet mode runs the app against a Pubky network on your own machine, so you can exercise real syncing and signing in without mainnet or a phone. It needs Docker.

@@ -11,7 +11,6 @@ use tokio::sync::oneshot;
 use super::{replace_pending_sign_in, BackupManager, PendingSignIn, SignInTarget};
 use crate::orchestrator::auth::{self, SignInFlow, SignInRequest};
 use crate::orchestrator::error::OrchestratorError;
-use crate::orchestrator::types::KeyStatus;
 
 impl BackupManager {
     /// Start a sign-in that backs up whichever key approves it, public and
@@ -108,19 +107,6 @@ impl BackupManager {
         self.complete_sign_in(&pubky, session).await?;
         Ok(pubky)
     }
-
-    /// Back up `pubky` if it isn't yet, or retry it if it is in error.
-    async fn ensure_backed_up(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        match self.get_key_state(pubky) {
-            None => match self.add_key(pubky.clone()).await {
-                // Added in the meantime by someone else
-                Ok(()) | Err(OrchestratorError::KeyAlreadyExists(_)) => Ok(()),
-                Err(e) => Err(e),
-            },
-            Some(state) if state.status == KeyStatus::Error => self.retry_errored_key(pubky).await,
-            Some(_) => Ok(()),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -140,7 +126,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_start_sign_in_for_new_key_unavailable_in_developer_mode() {
+    async fn test_start_sign_in_for_new_key_unavailable_offline() {
         let (_dir, manager) = setup().await;
 
         let result = manager.start_sign_in_for_new_key().await;

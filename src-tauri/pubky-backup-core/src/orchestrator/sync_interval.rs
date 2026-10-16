@@ -91,7 +91,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_uses_stored_value_over_config() {
         let (_dir, storage) = setup();
-        storage.write_sync_interval(600).await.unwrap();
+        storage.write_sync_interval(600).unwrap();
 
         let interval = SyncInterval::load(storage, 900);
         assert_eq!(interval.get(), 600);
@@ -100,7 +100,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_rejects_stored_below_minimum() {
         let (_dir, storage) = setup();
-        storage.write_sync_interval(5).await.unwrap();
+        storage.write_sync_interval(5).unwrap();
 
         let interval = SyncInterval::load(storage, 900);
         assert_eq!(interval.get(), DEFAULT_SYNC_INTERVAL_SECONDS);

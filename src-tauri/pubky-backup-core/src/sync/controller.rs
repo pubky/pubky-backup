@@ -20,16 +20,15 @@
 //!
 //! # Channel Architecture
 //!
-//! The controller uses two broadcast channels:
+//! The controller uses two channels:
 //! - `control_rx`: Receives commands from the orchestrator (Cancel, ForceSync)
-//! - `status_tx`: Sends status updates to the orchestrator (ControllerStatus)
+//! - `status_tx`: Sends status updates to the orchestrator ([`ControllerUpdate`])
 
 use super::error::SyncError;
 use super::events::{self, EventStream, EVENT_BATCH_SIZE};
 use super::fetcher;
 use super::scope::SyncScope;
 use super::session::{is_session_rejection, SessionSecret};
-use crate::is_developer_mode;
 use crate::storage::{AppStorage, DataScope};
 #[cfg(test)]
 use crate::TEST_PUBKY;
@@ -39,7 +38,7 @@ use pubky::{Event, EventType, Pubky, PubkySession, PublicKey};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time;
 
 /// Minimum allowed sync interval in seconds.
@@ -60,42 +59,35 @@ pub enum ControllerCommand {
     ForceSync,
 }
 
-/// Status updates emitted by the backup controller to the orchestrator.
+/// A status update from a backup controller, as sent on the status channel.
 ///
-/// These are internal status updates used for communication between the
-/// sync layer and the orchestrator. The orchestrator transforms these
-/// into [`KeyUpdate`](crate::orchestrator::KeyUpdate) messages for external consumers.
-///
-/// Each variant includes the `pubky` field identifying which controller
-/// sent the status, enabling a shared status channel across all controllers.
+/// All controllers send on the same channel, so each update names the pubky
+/// it is for. The orchestrator transforms these into
+/// [`KeyUpdate`](crate::orchestrator::KeyUpdate) messages for external consumers.
+#[derive(Debug, Clone)]
+pub struct ControllerUpdate {
+    /// The public key the update is for
+    pub pubky: PublicKey,
+    /// The controller's new status
+    pub status: ControllerStatus,
+}
+
+/// Status of a backup controller, as reported to the orchestrator.
 #[derive(Debug, Clone)]
 pub enum ControllerStatus {
     /// Controller is starting up (waiting for initial delay before first sync)
-    Starting {
-        /// The public key this status is for
-        pubky: PublicKey,
-    },
+    Starting,
     /// Controller is actively syncing data
     Syncing {
-        /// The public key this status is for
-        pubky: PublicKey,
-        /// Number of events processed in this sync batch
+        /// Number of events processed in this sync cycle so far
         events_processed: usize,
     },
     /// Controller is idle, waiting for next sync interval
-    Idle {
-        /// The public key this status is for
-        pubky: PublicKey,
-    },
+    Idle,
     /// Controller has been stopped gracefully
-    Ended {
-        /// The public key this status is for
-        pubky: PublicKey,
-    },
+    Ended,
     /// Controller encountered an error (will retry on next sync interval)
     Error {
-        /// The public key this status is for
-        pubky: PublicKey,
         /// Human-readable error message
         message: String,
     },
@@ -105,25 +97,9 @@ pub enum ControllerStatus {
     /// The controller leaves the stored session secret in place, and doesn't use
     /// it again. Whoever manages the pubky's sessions decides what to do with it.
     SessionRejected {
-        /// The public key this status is for
-        pubky: PublicKey,
         /// The stored session secret that was rejected
         secret: SessionSecret,
     },
-}
-
-impl ControllerStatus {
-    /// Get the public key associated with this status.
-    pub fn pubky(&self) -> &PublicKey {
-        match self {
-            Self::Starting { pubky }
-            | Self::Syncing { pubky, .. }
-            | Self::Idle { pubky }
-            | Self::Ended { pubky }
-            | Self::Error { pubky, .. }
-            | Self::SessionRejected { pubky, .. } => pubky,
-        }
-    }
 }
 
 /// Main backup controller which manages the backup process for a Pubky user.
@@ -164,18 +140,19 @@ impl ControllerStatus {
 ///
 ///     // Listen for status updates
 ///     tokio::spawn(async move {
-///         while let Ok(status) = status_rx.recv().await {
-///             match status {
-///                 ControllerStatus::Starting { pubky } => println!("{}: Starting...", pubky),
-///                 ControllerStatus::Syncing { pubky, events_processed } => {
+///         while let Ok(update) = status_rx.recv().await {
+///             let pubky = update.pubky;
+///             match update.status {
+///                 ControllerStatus::Starting => println!("{}: Starting...", pubky),
+///                 ControllerStatus::Syncing { events_processed } => {
 ///                     println!("{}: Syncing... ({} events)", pubky, events_processed)
 ///                 },
-///                 ControllerStatus::Idle { pubky } => println!("{}: Idle", pubky),
-///                 ControllerStatus::Ended { pubky } => println!("{}: Ended", pubky),
-///                 ControllerStatus::Error { pubky, message, .. } => {
+///                 ControllerStatus::Idle => println!("{}: Idle", pubky),
+///                 ControllerStatus::Ended => println!("{}: Ended", pubky),
+///                 ControllerStatus::Error { message } => {
 ///                     println!("{}: Error: {}", pubky, message)
 ///                 },
-///                 ControllerStatus::SessionRejected { pubky, .. } => {
+///                 ControllerStatus::SessionRejected { .. } => {
 ///                     println!("{}: Session rejected", pubky)
 ///                 },
 ///             }
@@ -191,16 +168,22 @@ pub struct BackupController {
     pubky: PublicKey,
     storage: Arc<AppStorage>,
     pubky_client: Arc<Pubky>,
-    control_rx: Option<tokio::sync::mpsc::Receiver<ControllerCommand>>,
-    status_tx: Option<broadcast::Sender<ControllerStatus>>,
+    control_rx: Option<mpsc::Receiver<ControllerCommand>>,
+    status_tx: Option<broadcast::Sender<ControllerUpdate>>,
     /// Initial delay before starting the first sync (for staggering multiple controllers)
     initial_delay: Duration,
     /// Shared sync interval receiver - reads current interval dynamically
     sync_interval_rx: watch::Receiver<u64>,
+    /// Make no network calls: syncs find no events and no session is restored
+    offline: bool,
     /// Session of a signed-in pubky, restored from the stored session secret
     session: Option<RestoredSession>,
     /// A stored session secret the homeserver rejected, which is not used again
     rejected_secret: Option<String>,
+    /// Whether a sync is due now, rather than at the next interval
+    sync_now: bool,
+    /// The sync cycle in progress, which may take several batches
+    cycle: Option<SyncCycle>,
 }
 
 /// Progress through a sync cycle, which syncs public data to the end, then
@@ -239,17 +222,12 @@ impl BackupController {
     /// # Returns
     ///
     /// A new `BackupController` ready to be run via [`BackupController::run`]
-    ///
-    /// # Developer Mode
-    ///
-    /// Enable developer mode (offline/no-network mode) for tests.
-    /// In developer mode, the controller uses mock data instead of real network calls.
     pub fn new(
         pubky: PublicKey,
         storage: Arc<AppStorage>,
         pubky_client: Arc<Pubky>,
-        control_rx: Option<tokio::sync::mpsc::Receiver<ControllerCommand>>,
-        status_tx: Option<broadcast::Sender<ControllerStatus>>,
+        control_rx: Option<mpsc::Receiver<ControllerCommand>>,
+        status_tx: Option<broadcast::Sender<ControllerUpdate>>,
         sync_interval_rx: watch::Receiver<u64>,
     ) -> Self {
         Self {
@@ -260,8 +238,11 @@ impl BackupController {
             status_tx,
             initial_delay: Duration::ZERO,
             sync_interval_rx,
+            offline: false,
             session: None,
             rejected_secret: None,
+            sync_now: false,
+            cycle: None,
         }
     }
 
@@ -276,6 +257,16 @@ impl BackupController {
     /// - `ForceSync`: Skips the remaining delay and starts syncing
     pub fn with_initial_delay(mut self, delay: Duration) -> Self {
         self.initial_delay = delay;
+        self
+    }
+
+    /// Make no network calls.
+    ///
+    /// Offline, every sync finds no events and no session is restored, so the
+    /// controller only keeps the data already on disk. For tests and for
+    /// working on the sync loop without a network.
+    pub fn offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
         self
     }
 
@@ -300,163 +291,78 @@ impl BackupController {
     ///
     /// On errors, the controller logs the error and retries on the next sync interval.
     ///
-    /// During the starting phase, the controller responds to commands:
-    /// - `Cancel`: Stops immediately
-    /// - `ForceSync`: Skips the remaining delay and starts syncing
-    ///
-    /// # Panics
-    ///
-    /// This method should not panic under normal circumstances. All errors are
-    /// logged and result in an `Error` status being sent before the controller stops.
+    /// Commands are handled between batches, so a long sync stays responsive:
+    /// - `Cancel`: Stops after the current batch
+    /// - `ForceSync`: Starts a new sync cycle right away
     pub async fn run(mut self) {
-        self.send_status(ControllerStatus::Starting {
-            pubky: self.pubky.clone(),
-        });
-
-        // Starting phase - wait for delay but respond to commands
-        if !self.initial_delay.is_zero() {
-            tokio::select! {
-                _ = tokio::time::sleep(self.initial_delay) => {
-                    // Delay complete, proceed to sync loop
-                }
-                msg = async {
-                    if let Some(ref mut rx) = self.control_rx {
-                        rx.recv().await
-                    } else {
-                        std::future::pending().await
-                    }
-                } => {
-                    match msg {
-                        Some(ControllerCommand::Cancel) => {
-                            info!("Backup controller cancelled during starting phase");
-                            self.send_status(ControllerStatus::Ended {
-                                pubky: self.pubky.clone(),
-                            });
-                            return;
-                        }
-                        Some(ControllerCommand::ForceSync) => {
-                            info!("Force sync during starting phase - skipping delay");
-                            // Skip remaining delay, proceed to sync loop
-                        }
-                        None => {
-                            warn!("Backup controller control channel closed during starting phase");
-                            self.send_status(ControllerStatus::Ended {
-                                pubky: self.pubky.clone(),
-                            });
-                            return;
-                        }
-                    }
-                }
-            }
+        self.send_status(ControllerStatus::Starting);
+        if self.wait_initial_delay().await.is_break() {
+            return;
         }
 
-        // Main sync loop - sync immediately on first iteration, then wait
-        let mut sync_now = true;
-        // The sync cycle in progress, which may take several batches
-        let mut cycle: Option<SyncCycle> = None;
-
+        // Sync right away, then on every interval
+        self.sync_now = true;
         loop {
-            // Check for pending commands before each operation.
             if let Some(command) = self.try_recv_command() {
-                match command {
-                    ControllerCommand::Cancel => {
-                        info!("Backup controller task cancelled");
-                        self.send_status(ControllerStatus::Ended {
-                            pubky: self.pubky.clone(),
-                        });
-                        break;
-                    }
-                    ControllerCommand::ForceSync => {
-                        info!("Force sync triggered");
-                        sync_now = true;
-                        cycle = None;
-                    }
+                if self.handle_command(Some(command)).is_break() {
+                    return;
                 }
             }
 
-            if sync_now {
-                sync_now = false;
-
-                let current = cycle.get_or_insert_with(|| self.start_cycle());
-                match self.perform_sync_batch(&mut current.scope).await {
-                    Ok(ControlFlow::Continue(batch_count)) => {
-                        // More to sync in this cycle, send accumulated total and loop back.
-                        current.events += batch_count;
-                        self.send_status(ControllerStatus::Syncing {
-                            pubky: self.pubky.clone(),
-                            events_processed: current.events,
-                        });
-                        sync_now = true;
-                        continue;
-                    }
-                    Ok(ControlFlow::Break(batch_count)) => {
-                        // Sync complete for this cycle
-                        current.events += batch_count;
-                        if current.events > 0 {
-                            self.send_status(ControllerStatus::Syncing {
-                                pubky: self.pubky.clone(),
-                                events_processed: current.events,
-                            });
-                        }
-                        self.send_status(ControllerStatus::Idle {
-                            pubky: self.pubky.clone(),
-                        });
-                        cycle = None;
-                    }
-                    Err(e) => {
-                        let error_msg = format!("Sync error: {}", e);
-                        error!("{}: {}", self.pubky, error_msg);
-                        self.send_status(ControllerStatus::Error {
-                            pubky: self.pubky.clone(),
-                            message: error_msg,
-                        });
-                        cycle = None;
-                        // Wait for next sync interval, then retry
-                    }
+            if self.sync_now {
+                self.sync_now = false;
+                if self.sync_batch().await.is_continue() {
+                    // More to sync in this cycle: go on without waiting
+                    self.sync_now = true;
+                    continue;
                 }
             }
 
-            // Idle phase: wait for next sync interval, control command, or interval change
-            let sleep = time::sleep(self.sync_interval());
-            tokio::pin!(sleep);
-
-            tokio::select! {
-                _ = &mut sleep => {
-                    sync_now = true;
-                }
-                _ = self.sync_interval_rx.changed() => {
-                    // Interval changed - just loop back and sleep with the new value
-                }
-                msg = async {
-                    if let Some(ref mut rx) = self.control_rx {
-                        rx.recv().await
-                    } else {
-                        std::future::pending().await
-                    }
-                } => {
-                    match msg {
-                        Some(ControllerCommand::Cancel) => {
-                            info!("Backup controller task cancelled");
-                            self.send_status(ControllerStatus::Ended {
-                                pubky: self.pubky.clone(),
-                            });
-                            break;
-                        }
-                        Some(ControllerCommand::ForceSync) => {
-                            info!("Force sync triggered");
-                            sync_now = true;
-                            cycle = None;
-                        }
-                        None => {
-                            warn!("Backup controller control channel closed");
-                            self.send_status(ControllerStatus::Ended {
-                                pubky: self.pubky.clone(),
-                            });
-                            break;
-                        }
-                    }
-                }
+            if self.wait_for_next_sync().await.is_break() {
+                return;
             }
+        }
+    }
+
+    /// Wait out the initial delay, while responding to commands.
+    ///
+    /// Returns `Break` if the controller is to stop.
+    async fn wait_initial_delay(&mut self) -> ControlFlow<()> {
+        if self.initial_delay.is_zero() {
+            return ControlFlow::Continue(());
+        }
+        tokio::select! {
+            _ = time::sleep(self.initial_delay) => ControlFlow::Continue(()),
+            // A ForceSync skips the rest of the delay
+            command = Self::recv_command(&mut self.control_rx) => self.handle_command(command),
+        }
+    }
+
+    /// Wait for the next sync interval, a change of the interval, or a command.
+    ///
+    /// Returns `Break` if the controller is to stop.
+    async fn wait_for_next_sync(&mut self) -> ControlFlow<()> {
+        let sleep = time::sleep(self.sync_interval());
+        tokio::pin!(sleep);
+
+        tokio::select! {
+            _ = &mut sleep => {
+                self.sync_now = true;
+                ControlFlow::Continue(())
+            }
+            // Interval changed: loop back and sleep with the new value
+            _ = self.sync_interval_rx.changed() => ControlFlow::Continue(()),
+            command = Self::recv_command(&mut self.control_rx) => self.handle_command(command),
+        }
+    }
+
+    /// Wait for the next command, or forever if there is no control channel.
+    async fn recv_command(
+        control_rx: &mut Option<mpsc::Receiver<ControllerCommand>>,
+    ) -> Option<ControllerCommand> {
+        match control_rx {
+            Some(rx) => rx.recv().await,
+            None => std::future::pending().await,
         }
     }
 
@@ -465,9 +371,40 @@ impl BackupController {
         self.control_rx.as_mut().and_then(|rx| rx.try_recv().ok())
     }
 
+    /// Act on a command, or on the control channel having closed (`None`).
+    ///
+    /// Returns `Break` if the controller is to stop.
+    fn handle_command(&mut self, command: Option<ControllerCommand>) -> ControlFlow<()> {
+        match command {
+            Some(ControllerCommand::ForceSync) => {
+                info!("Force sync triggered for {}", self.pubky);
+                self.sync_now = true;
+                self.cycle = None;
+                ControlFlow::Continue(())
+            }
+            Some(ControllerCommand::Cancel) => {
+                info!("Backup controller for {} cancelled", self.pubky);
+                self.send_status(ControllerStatus::Ended);
+                ControlFlow::Break(())
+            }
+            None => {
+                warn!(
+                    "Control channel of backup controller for {} closed",
+                    self.pubky
+                );
+                self.send_status(ControllerStatus::Ended);
+                ControlFlow::Break(())
+            }
+        }
+    }
+
     fn send_status(&self, status: ControllerStatus) {
         if let Some(tx) = &self.status_tx {
-            if let Err(e) = tx.send(status.clone()) {
+            let update = ControllerUpdate {
+                pubky: self.pubky.clone(),
+                status,
+            };
+            if let Err(e) = tx.send(update) {
                 warn!(
                     "Failed to send status update (no receivers or lagging): {:?}",
                     e
@@ -476,11 +413,49 @@ impl BackupController {
         }
     }
 
+    /// Sync one batch of the cycle in progress, starting a cycle if there is none.
+    ///
+    /// Returns `Continue` if the cycle has more to sync, or `Break` once it is
+    /// complete or has failed.
+    async fn sync_batch(&mut self) -> ControlFlow<()> {
+        let mut cycle = match self.cycle.take() {
+            Some(cycle) => cycle,
+            None => self.start_cycle(),
+        };
+
+        match self.perform_sync_batch(&mut cycle.scope).await {
+            Ok(ControlFlow::Continue(batch_count)) => {
+                cycle.events += batch_count;
+                self.send_status(ControllerStatus::Syncing {
+                    events_processed: cycle.events,
+                });
+                self.cycle = Some(cycle);
+                ControlFlow::Continue(())
+            }
+            Ok(ControlFlow::Break(batch_count)) => {
+                cycle.events += batch_count;
+                if cycle.events > 0 {
+                    self.send_status(ControllerStatus::Syncing {
+                        events_processed: cycle.events,
+                    });
+                }
+                self.send_status(ControllerStatus::Idle);
+                ControlFlow::Break(())
+            }
+            Err(e) => {
+                let message = format!("Sync error: {}", e);
+                error!("{}: {}", self.pubky, message);
+                self.send_status(ControllerStatus::Error { message });
+                // Retried on the next sync interval
+                ControlFlow::Break(())
+            }
+        }
+    }
+
     /// Start a sync cycle, which begins with public data.
     fn start_cycle(&self) -> SyncCycle {
         info!("Syncing key: {}", self.pubky);
         self.send_status(ControllerStatus::Syncing {
-            pubky: self.pubky.clone(),
             events_processed: 0,
         });
         SyncCycle {
@@ -549,8 +524,8 @@ impl BackupController {
             .await;
     }
 
-    /// Process events of one scope by streaming from the homeserver (or empty stream
-    /// in developer mode).
+    /// Process events of one scope by streaming from the homeserver (or an
+    /// empty stream offline).
     ///
     /// Fetches events from the scope's cursor position and processes them.
     async fn perform_scope_batch(
@@ -562,8 +537,7 @@ impl BackupController {
             .read_cursor(&self.pubky, scope.data_scope())
             .await?;
 
-        // Get event stream - empty stream in developer mode (offline), real stream otherwise
-        let event_stream: EventStream = if is_developer_mode() {
+        let event_stream: EventStream = if self.offline {
             Box::pin(futures_util::stream::empty())
         } else {
             events::create_event_stream(&self.pubky_client, &self.pubky, scope, cursor).await?
@@ -578,7 +552,7 @@ impl BackupController {
     /// it, and the controller picks that up on its next sync.
     async fn resolve_session(&mut self) -> Result<Option<RestoredSession>, SyncError> {
         // Restoring validates the session with the homeserver, so skip it when offline
-        if is_developer_mode() {
+        if self.offline {
             return Ok(None);
         }
 
@@ -623,7 +597,6 @@ impl BackupController {
         self.session = None;
         self.rejected_secret = Some(secret.clone());
         self.send_status(ControllerStatus::SessionRejected {
-            pubky: self.pubky.clone(),
             secret: SessionSecret::new(secret),
         });
     }
@@ -707,6 +680,10 @@ impl BackupController {
         }
 
         match event.event_type {
+            // Offline there is nothing to fetch the data from. An offline sync
+            // finds no events, so this only matters for a stream fed directly,
+            // as the tests do.
+            EventType::Put { .. } if self.offline => {}
             EventType::Put { .. } => {
                 debug!("Processing PUT event for: {}", event.resource);
                 match fetcher::fetch_resource_data(&self.pubky_client, scope, &event.resource).await
@@ -746,76 +723,93 @@ mod tests {
     use pubky::PubkyResource;
     use std::str::FromStr;
     use tempfile::TempDir;
+    use tokio::sync::mpsc;
 
-    /// Helper to enable developer mode (offline/no-network) for tests
-    fn enable_developer_mode() {
-        std::env::set_var("PUBKY_DEVELOPER_MODE", "1");
-    }
-
-    fn create_test_interval_rx() -> (watch::Sender<u64>, watch::Receiver<u64>) {
-        watch::channel(DEFAULT_SYNC_INTERVAL_SECONDS)
+    fn test_pubky() -> PublicKey {
+        PublicKey::from_str(TEST_PUBKY).unwrap()
     }
 
     // Test helper to create a storage instance with a temporary directory
     fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let storage = AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap();
+        let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
         (Arc::new(storage), temp_dir)
     }
 
-    // Test helper to create a Pubky client (only used in tests that need it)
-    fn create_test_pubky_client() -> Arc<Pubky> {
-        Arc::new(Pubky::testnet().expect("Failed to create testnet client"))
+    /// An offline controller for the test key, so that tests make no network calls.
+    fn create_test_controller(
+        storage: Arc<AppStorage>,
+        control_rx: Option<mpsc::Receiver<ControllerCommand>>,
+        status_tx: Option<broadcast::Sender<ControllerUpdate>>,
+    ) -> BackupController {
+        let (interval_tx, interval_rx) = watch::channel(DEFAULT_SYNC_INTERVAL_SECONDS);
+        // Keep the interval channel open for as long as the controller runs
+        std::mem::forget(interval_tx);
+        BackupController::new(
+            test_pubky(),
+            storage,
+            Arc::new(Pubky::testnet().expect("Failed to create testnet client")),
+            control_rx,
+            status_tx,
+            interval_rx,
+        )
+        .offline(true)
+    }
+
+    /// An offline controller without channels, for calling its methods directly.
+    fn create_detached_controller(storage: Arc<AppStorage>) -> BackupController {
+        create_test_controller(storage, None, None)
+    }
+
+    /// An offline controller to run as a task, with the channels to control it
+    /// and to observe its status.
+    fn create_controlled_controller(
+        storage: Arc<AppStorage>,
+    ) -> (
+        BackupController,
+        mpsc::Sender<ControllerCommand>,
+        broadcast::Receiver<ControllerUpdate>,
+    ) {
+        let (control_tx, control_rx) = mpsc::channel(5);
+        let (status_tx, status_rx) = broadcast::channel(10);
+        let controller = create_test_controller(storage, Some(control_rx), Some(status_tx));
+        (controller, control_tx, status_rx)
+    }
+
+    /// The controller's next status, which must arrive within `timeout`.
+    async fn next_status(
+        status_rx: &mut broadcast::Receiver<ControllerUpdate>,
+        timeout: Duration,
+    ) -> ControllerStatus {
+        tokio::time::timeout(timeout, status_rx.recv())
+            .await
+            .expect("Should receive status")
+            .unwrap()
+            .status
     }
 
     #[tokio::test]
     async fn test_controller_runs_and_can_be_cancelled() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
+        let (controller, control_tx, mut status_rx) = create_controlled_controller(storage);
 
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
-        let (status_tx, mut status_rx) = broadcast::channel(10);
-
-        let controller = BackupController::new(
-            pubky,
-            storage,
-            pubky_client,
-            Some(control_rx),
-            Some(status_tx),
-            create_test_interval_rx().1,
-        );
-
-        // Spawn the controller
         let handle = tokio::spawn(controller.run());
 
-        // First status should be Starting
-        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
-            .await
-            .expect("Should receive status")
-            .unwrap();
+        let status = next_status(&mut status_rx, Duration::from_secs(5)).await;
         assert!(
-            matches!(status, ControllerStatus::Starting { .. }),
+            matches!(status, ControllerStatus::Starting),
             "First status should be Starting, got {:?}",
             status
         );
 
-        // Wait for sync status (Syncing or Idle)
-        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
-            .await
-            .expect("Should receive status")
-            .unwrap();
-
+        let status = next_status(&mut status_rx, Duration::from_secs(5)).await;
         match status {
-            ControllerStatus::Syncing { .. } | ControllerStatus::Idle { .. } => {}
+            ControllerStatus::Syncing { .. } | ControllerStatus::Idle => {}
             _ => panic!("Unexpected ControllerStatus after Starting: {:?}", status),
         }
 
-        // Send cancel message
         control_tx.send(ControllerCommand::Cancel).await.unwrap();
 
-        // Controller should finish
         tokio::time::timeout(Duration::from_secs(2), handle)
             .await
             .expect("Controller should finish")
@@ -824,67 +818,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_controller_force_sync() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
-        let (status_tx, mut status_rx) = broadcast::channel(10);
-
-        let controller = BackupController::new(
-            pubky,
-            storage,
-            pubky_client,
-            Some(control_rx),
-            Some(status_tx),
-            create_test_interval_rx().1,
-        );
+        let (controller, control_tx, mut status_rx) = create_controlled_controller(storage);
 
         tokio::spawn(controller.run());
 
-        // First status should be Starting
-        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
-            .await
-            .expect("Should receive status")
-            .unwrap();
-        assert!(matches!(status, ControllerStatus::Starting { .. }));
+        let status = next_status(&mut status_rx, Duration::from_secs(5)).await;
+        assert!(matches!(status, ControllerStatus::Starting));
 
-        // Trigger force sync
         control_tx.send(ControllerCommand::ForceSync).await.unwrap();
 
-        // Should receive Syncing status
-        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
-            .await
-            .expect("Should receive status")
-            .unwrap();
-
+        let status = next_status(&mut status_rx, Duration::from_secs(5)).await;
         assert!(
             matches!(status, ControllerStatus::Syncing { .. }),
             "Expected Syncing status after force sync, got {:?}",
             status
         );
 
-        // Cleanup
         control_tx.send(ControllerCommand::Cancel).await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_process_event_stream_initial_sync() {
+    async fn test_partial_batch_completes_and_saves_cursor() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
+        let controller = create_detached_controller(storage.clone());
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            pubky_client,
-            None,
-            None,
-            create_test_interval_rx().1,
-        );
-
-        // Batch of 3 events (< EVENT_BATCH_SIZE) should return Break (caught up)
+        // A partial batch (< EVENT_BATCH_SIZE) returns Break: caught up, no re-fetch needed
         let stream = events::test_helpers::create_test_event_stream(None);
         let result = controller
             .process_event_stream(stream, None, SyncScope::Public)
@@ -892,181 +851,173 @@ mod tests {
             .unwrap();
         assert!(matches!(result, ControlFlow::Break(_)));
 
-        // Cursor should have been updated
         let cursor = storage
-            .read_cursor(&pubky, DataScope::Public)
+            .read_cursor(&test_pubky(), DataScope::Public)
             .await
             .unwrap();
         assert_eq!(cursor, Some(3));
     }
 
     #[tokio::test]
-    async fn test_process_event_stream_completes() {
+    async fn test_process_single_event_skips_put_offline() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
+        let controller = create_detached_controller(storage.clone());
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            pubky_client,
-            None,
-            None,
-            create_test_interval_rx().1,
-        );
-
-        // A partial batch (< EVENT_BATCH_SIZE) returns Break immediately — no re-fetch needed
-        let stream = events::test_helpers::create_test_event_stream(None);
-        let result = controller
-            .process_event_stream(stream, None, SyncScope::Public)
-            .await
-            .unwrap();
-        assert!(matches!(result, ControlFlow::Break(_)));
-
-        // Cursor should have been saved
-        let cursor = storage
-            .read_cursor(&pubky, DataScope::Public)
-            .await
-            .unwrap();
-        assert_eq!(cursor, Some(3));
-    }
-
-    #[tokio::test]
-    async fn test_process_single_event_handles_put() {
-        let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-
-        // Write data directly to storage (simulating what fetch_resource_data + write does)
-        let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
-        storage
-            .write(&resource, b"test data".to_vec())
-            .await
-            .unwrap();
-
-        // Verify data was written
-        let data = storage.read(&resource).await.unwrap();
-        assert!(!data.is_empty());
-        assert_eq!(data, b"test data");
-    }
-
-    #[tokio::test]
-    async fn test_process_single_event_handles_delete() {
-        let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            pubky_client,
-            None,
-            None,
-            create_test_interval_rx().1,
-        );
-
-        // First create a resource
-        let resource = PubkyResource::new(pubky.clone(), "/pub/test.json").unwrap();
-        storage
-            .write(&resource, b"test data".to_vec())
-            .await
-            .unwrap();
-
-        // Verify it exists
-        assert!(storage.read(&resource).await.is_ok());
-
-        // Create a DELETE event
-        let event = Event {
-            event_type: EventType::Delete,
-            resource: resource.clone(),
-            cursor: pubky::EventCursor::new(1),
-        };
-
-        // Process event
-        controller
-            .process_single_event(&event, SyncScope::Public)
-            .await
-            .unwrap();
-
-        // Verify data was deleted
-        assert!(storage.read(&resource).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_process_single_event_skips_other_pubky() {
-        let (storage, _temp_dir) = create_test_storage();
-        let pubky1 = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky2 =
-            PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let controller = BackupController::new(
-            pubky1.clone(),
-            storage.clone(),
-            pubky_client,
-            None,
-            None,
-            create_test_interval_rx().1,
-        );
-
-        // Create event for a different pubky
-        let resource = PubkyResource::new(pubky2.clone(), "/pub/test.json").unwrap();
+        let resource = PubkyResource::new(test_pubky(), "/pub/test.json").unwrap();
         let event = Event {
             event_type: events::test_helpers::put_event_type(),
             resource: resource.clone(),
             cursor: pubky::EventCursor::new(1),
         };
 
-        // Process event
         controller
             .process_single_event(&event, SyncScope::Public)
             .await
             .unwrap();
 
-        // Verify data was NOT written for the other pubky
+        // Offline there is nothing to fetch, so nothing is written
         assert!(storage.read(&resource).await.is_err());
     }
 
     #[tokio::test]
-    async fn test_stream_error_saves_cursor_progress() {
-        enable_developer_mode();
+    async fn test_process_single_event_handles_delete() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
+        let controller = create_detached_controller(storage.clone());
 
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            pubky_client,
+        let resource = PubkyResource::new(test_pubky(), "/pub/test.json").unwrap();
+        storage
+            .write(&resource, b"test data".to_vec())
+            .await
+            .unwrap();
+        assert!(storage.read(&resource).await.is_ok());
+
+        let event = Event {
+            event_type: EventType::Delete,
+            resource: resource.clone(),
+            cursor: pubky::EventCursor::new(1),
+        };
+
+        controller
+            .process_single_event(&event, SyncScope::Public)
+            .await
+            .unwrap();
+
+        assert!(storage.read(&resource).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_process_single_event_skips_other_pubky() {
+        let (storage, _temp_dir) = create_test_storage();
+        // Online, so that a PUT for the controller's own key would be fetched
+        let controller = create_detached_controller(storage.clone()).offline(false);
+        let other_pubky =
+            PublicKey::from_str("o4dksfbqk85ogzdb5osziw6befigbuxmuxkuxq8434q89uj56uxo").unwrap();
+
+        let resource = PubkyResource::new(other_pubky, "/pub/test.json").unwrap();
+        let event = Event {
+            event_type: events::test_helpers::put_event_type(),
+            resource: resource.clone(),
+            cursor: pubky::EventCursor::new(1),
+        };
+
+        controller
+            .process_single_event(&event, SyncScope::Public)
+            .await
+            .unwrap();
+
+        assert!(storage.read(&resource).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_waiting_for_the_next_sync_wakes_on_an_interval_change() {
+        let (storage, _temp_dir) = create_test_storage();
+        let (interval_tx, interval_rx) = watch::channel(DEFAULT_SYNC_INTERVAL_SECONDS);
+        let mut controller = BackupController::new(
+            test_pubky(),
+            storage,
+            Arc::new(Pubky::testnet().expect("Failed to create testnet client")),
             None,
             None,
-            create_test_interval_rx().1,
+            interval_rx,
+        )
+        .offline(true);
+
+        let woken = tokio::time::timeout(Duration::from_millis(500), async {
+            let change = async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                interval_tx.send(MIN_SYNC_INTERVAL_SECONDS).unwrap();
+            };
+            tokio::join!(controller.wait_for_next_sync(), change).0
+        })
+        .await
+        .expect("A change of interval should end the wait");
+
+        assert!(woken.is_continue());
+        // The change is not a sync: the loop goes back to waiting with the new interval
+        assert!(!controller.sync_now);
+    }
+
+    #[tokio::test]
+    async fn test_force_sync_restarts_the_cycle() {
+        let (storage, _temp_dir) = create_test_storage();
+        let mut controller = create_detached_controller(storage);
+        controller.cycle = Some(SyncCycle {
+            events: 5,
+            scope: DataScope::Private,
+        });
+
+        let flow = controller.handle_command(Some(ControllerCommand::ForceSync));
+
+        assert!(flow.is_continue());
+        assert!(controller.sync_now);
+        assert!(
+            controller.cycle.is_none(),
+            "The next sync should start a fresh cycle from public data"
         );
+    }
 
-        // Create a stream that yields 3 events then fails
+    #[tokio::test]
+    async fn test_cancel_and_a_closed_control_channel_end_the_controller() {
+        let (storage, _temp_dir) = create_test_storage();
+        let (mut controller, _control_tx, mut status_rx) = create_controlled_controller(storage);
+
+        assert!(controller
+            .handle_command(Some(ControllerCommand::Cancel))
+            .is_break());
+        assert!(matches!(
+            status_rx.try_recv().unwrap().status,
+            ControllerStatus::Ended
+        ));
+
+        assert!(controller.handle_command(None).is_break());
+        assert!(matches!(
+            status_rx.try_recv().unwrap().status,
+            ControllerStatus::Ended
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_stream_error_saves_cursor_progress() {
+        let (storage, _temp_dir) = create_test_storage();
+        let controller = create_detached_controller(storage.clone());
+
+        // A stream that yields 3 events then fails
         let failing_stream = events::test_helpers::create_failing_test_event_stream(3);
 
-        // Process the stream - should handle error gracefully (log and continue)
         let result = controller
             .process_event_stream(failing_stream, None, SyncScope::Public)
             .await;
 
-        // Should return Ok (stream errors are handled gracefully, not propagated)
-        assert!(
-            result.is_ok(),
-            "Stream errors should be handled gracefully, not propagated"
-        );
-
-        // Partial batch (3 events < EVENT_BATCH_SIZE) should return Break (caught up)
-        let flow = result.unwrap();
+        // Stream errors are handled gracefully, not propagated
+        let flow = result.expect("Stream errors should be handled gracefully, not propagated");
         assert!(
             matches!(flow, ControlFlow::Break(_)),
             "Partial batch should return Break, got {:?}",
             flow
         );
 
-        // Cursor should have been saved at the last successful event (cursor=3)
         let saved_cursor = storage
-            .read_cursor(&pubky, DataScope::Public)
+            .read_cursor(&test_pubky(), DataScope::Public)
             .await
             .unwrap();
         assert_eq!(
@@ -1082,17 +1033,7 @@ mod tests {
         // the caller can accumulate counts across batches, and the final Break
         // batch adds to the total. This mirrors the accumulation logic in run().
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            pubky_client,
-            None,
-            None,
-            create_test_interval_rx().1,
-        );
+        let controller = create_detached_controller(storage.clone());
 
         let mut cycle_events: usize = 0;
 
@@ -1113,7 +1054,7 @@ mod tests {
 
         // Second batch: 7 events (< EVENT_BATCH_SIZE) → should return Break
         let cursor = storage
-            .read_cursor(&pubky, DataScope::Public)
+            .read_cursor(&test_pubky(), DataScope::Public)
             .await
             .unwrap();
         let stream = events::test_helpers::create_sized_test_event_stream(7, cursor.unwrap_or(0));
@@ -1129,7 +1070,6 @@ mod tests {
             ControlFlow::Continue(_) => panic!("Partial batch should return Break"),
         }
 
-        // Total accumulated across both batches
         assert_eq!(
             cycle_events,
             EVENT_BATCH_SIZE as usize + 7,
@@ -1139,78 +1079,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_controller_runs_without_channels() {
-        // Test that controller works when no channels are provided (uses pending futures)
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
+        let controller = create_detached_controller(storage);
 
-        // Create controller without any channels
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage.clone(),
-            pubky_client,
-            None,
-            None,
-            create_test_interval_rx().1,
-        );
+        // Without a control channel the controller loops forever, so bound the run
+        let result = tokio::time::timeout(Duration::from_millis(500), controller.run()).await;
 
-        // Spawn and let it run briefly - it should process events without panicking
-        let handle = tokio::spawn(async move {
-            // Use a timeout to prevent hanging - controller will loop forever without cancel
-            tokio::time::timeout(Duration::from_millis(500), controller.run()).await
-        });
-
-        // Should timeout (no way to cancel without control channel), not panic
-        let result = handle.await.unwrap();
         assert!(result.is_err(), "Should timeout since no cancel signal");
     }
 
     #[tokio::test]
     async fn test_controller_status_ended_on_cancel() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
-        let (status_tx, mut status_rx) = broadcast::channel(10);
-
-        let controller = BackupController::new(
-            pubky,
-            storage,
-            pubky_client,
-            Some(control_rx),
-            Some(status_tx),
-            create_test_interval_rx().1,
-        );
+        let (controller, control_tx, mut status_rx) = create_controlled_controller(storage);
 
         let handle = tokio::spawn(controller.run());
 
-        // Wait for initial status
-        let _ = tokio::time::timeout(Duration::from_secs(2), status_rx.recv())
-            .await
-            .expect("Should receive initial status");
+        next_status(&mut status_rx, Duration::from_secs(2)).await;
 
-        // Cancel the controller
         control_tx.send(ControllerCommand::Cancel).await.unwrap();
 
-        // Wait for the Ended status
         let mut received_ended = false;
         for _ in 0..5 {
             if let Ok(Ok(status)) =
                 tokio::time::timeout(Duration::from_millis(500), status_rx.recv()).await
             {
-                if matches!(status, ControllerStatus::Ended { .. }) {
+                if matches!(status.status, ControllerStatus::Ended) {
                     received_ended = true;
                     break;
                 }
             }
         }
-
         assert!(received_ended, "Should receive Ended status after cancel");
 
-        // Controller should finish
         tokio::time::timeout(Duration::from_secs(1), handle)
             .await
             .expect("Controller should finish")
@@ -1218,105 +1119,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_developer_mode() {
-        // Test with env var not set
-        std::env::remove_var("PUBKY_DEVELOPER_MODE");
-        // Note: is_developer_mode caches the value, so we can only test the initial state
-        // This test documents the expected behavior
-
-        // Enable developer mode
-        std::env::set_var("PUBKY_DEVELOPER_MODE", "1");
-        // Due to once_cell caching, this won't change the result within the same test run
-        // The actual behavior is tested indirectly through other tests that call enable_developer_mode()
-    }
-
-    #[tokio::test]
     async fn test_controller_emits_starting_status() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
-        let (status_tx, mut status_rx) = broadcast::channel(10);
-
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage,
-            pubky_client,
-            Some(control_rx),
-            Some(status_tx),
-            create_test_interval_rx().1,
-        );
+        let (controller, control_tx, mut status_rx) = create_controlled_controller(storage);
 
         tokio::spawn(controller.run());
 
-        // First status should always be Starting
-        let status = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
+        let update = tokio::time::timeout(Duration::from_secs(5), status_rx.recv())
             .await
             .expect("Should receive status")
             .unwrap();
+        assert_eq!(update.pubky, test_pubky());
+        assert!(
+            matches!(update.status, ControllerStatus::Starting),
+            "First status should be Starting, got {:?}",
+            update.status
+        );
 
-        match status {
-            ControllerStatus::Starting {
-                pubky: status_pubky,
-            } => {
-                assert_eq!(status_pubky, pubky);
-            }
-            _ => panic!("First status should be Starting, got {:?}", status),
-        }
-
-        // Cleanup
         control_tx.send(ControllerCommand::Cancel).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_controller_with_initial_delay_responds_to_cancel() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
-        let (status_tx, mut status_rx) = broadcast::channel(10);
-
-        // Create controller with a long initial delay
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage,
-            pubky_client,
-            Some(control_rx),
-            Some(status_tx),
-            create_test_interval_rx().1,
-        )
-        .with_initial_delay(Duration::from_secs(60)); // Long delay
+        let (controller, control_tx, mut status_rx) = create_controlled_controller(storage);
+        let controller = controller.with_initial_delay(Duration::from_secs(60));
 
         let handle = tokio::spawn(controller.run());
 
-        // Wait for Starting status
-        let status = tokio::time::timeout(Duration::from_secs(1), status_rx.recv())
-            .await
-            .expect("Should receive Starting status quickly")
-            .unwrap();
+        let status = next_status(&mut status_rx, Duration::from_secs(1)).await;
         assert!(
-            matches!(status, ControllerStatus::Starting { .. }),
+            matches!(status, ControllerStatus::Starting),
             "Should receive Starting status"
         );
 
-        // Send cancel during the starting phase
+        // Cancel during the starting phase
         control_tx.send(ControllerCommand::Cancel).await.unwrap();
 
-        // Should receive Ended status
-        let status = tokio::time::timeout(Duration::from_secs(1), status_rx.recv())
-            .await
-            .expect("Should receive Ended status quickly")
-            .unwrap();
+        let status = next_status(&mut status_rx, Duration::from_secs(1)).await;
         assert!(
-            matches!(status, ControllerStatus::Ended { .. }),
+            matches!(status, ControllerStatus::Ended),
             "Should receive Ended status after cancel during starting phase"
         );
 
-        // Controller should finish quickly (not wait for the 60 second delay)
+        // The controller finishes without waiting out the delay
         tokio::time::timeout(Duration::from_secs(1), handle)
             .await
             .expect("Controller should finish quickly after cancel during starting phase")
@@ -1325,116 +1171,53 @@ mod tests {
 
     #[tokio::test]
     async fn test_controller_with_initial_delay_responds_to_force_sync() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
-        let (status_tx, mut status_rx) = broadcast::channel(10);
-
-        // Create controller with a long initial delay
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage,
-            pubky_client,
-            Some(control_rx),
-            Some(status_tx),
-            create_test_interval_rx().1,
-        )
-        .with_initial_delay(Duration::from_secs(60)); // Long delay
+        let (controller, control_tx, mut status_rx) = create_controlled_controller(storage);
+        let controller = controller.with_initial_delay(Duration::from_secs(60));
 
         tokio::spawn(controller.run());
 
-        // Wait for Starting status
-        let status = tokio::time::timeout(Duration::from_secs(1), status_rx.recv())
-            .await
-            .expect("Should receive Starting status")
-            .unwrap();
-        assert!(matches!(status, ControllerStatus::Starting { .. }));
+        let status = next_status(&mut status_rx, Duration::from_secs(1)).await;
+        assert!(matches!(status, ControllerStatus::Starting));
 
-        // Send ForceSync during the starting phase
+        // ForceSync during the starting phase skips the delay
         control_tx.send(ControllerCommand::ForceSync).await.unwrap();
 
-        // Should skip delay and receive Syncing status quickly
-        let status = tokio::time::timeout(Duration::from_secs(2), status_rx.recv())
-            .await
-            .expect("Should receive Syncing status quickly after ForceSync")
-            .unwrap();
+        let status = next_status(&mut status_rx, Duration::from_secs(2)).await;
         assert!(
             matches!(status, ControllerStatus::Syncing { .. }),
             "Should receive Syncing status after ForceSync during starting phase, got {:?}",
             status
         );
 
-        // Cleanup
         control_tx.send(ControllerCommand::Cancel).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_controller_with_zero_delay_proceeds_immediately() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let pubky_client = create_test_pubky_client();
-
-        let (control_tx, control_rx) = tokio::sync::mpsc::channel(5);
-        let (status_tx, mut status_rx) = broadcast::channel(10);
-
-        // Create controller with zero delay (default)
-        let controller = BackupController::new(
-            pubky.clone(),
-            storage,
-            pubky_client,
-            Some(control_rx),
-            Some(status_tx),
-            create_test_interval_rx().1,
-        );
+        let (controller, control_tx, mut status_rx) = create_controlled_controller(storage);
 
         tokio::spawn(controller.run());
 
-        // Should receive Starting status
-        let status = tokio::time::timeout(Duration::from_millis(100), status_rx.recv())
-            .await
-            .expect("Should receive Starting status immediately")
-            .unwrap();
-        assert!(matches!(status, ControllerStatus::Starting { .. }));
+        let status = next_status(&mut status_rx, Duration::from_millis(100)).await;
+        assert!(matches!(status, ControllerStatus::Starting));
 
-        // Should immediately proceed to Syncing (no delay)
-        let status = tokio::time::timeout(Duration::from_millis(500), status_rx.recv())
-            .await
-            .expect("Should receive Syncing status quickly with zero delay")
-            .unwrap();
+        let status = next_status(&mut status_rx, Duration::from_millis(500)).await;
         assert!(
             matches!(status, ControllerStatus::Syncing { .. }),
             "Should proceed to Syncing immediately with zero delay, got {:?}",
             status
         );
 
-        // Cleanup
         control_tx.send(ControllerCommand::Cancel).await.unwrap();
-    }
-
-    /// Create a controller whose status updates can be observed.
-    fn create_test_controller(
-        storage: Arc<AppStorage>,
-    ) -> (BackupController, broadcast::Receiver<ControllerStatus>) {
-        let (status_tx, status_rx) = broadcast::channel(10);
-        let controller = BackupController::new(
-            PublicKey::from_str(TEST_PUBKY).unwrap(),
-            storage,
-            create_test_pubky_client(),
-            None,
-            Some(status_tx),
-            create_test_interval_rx().1,
-        );
-        (controller, status_rx)
     }
 
     #[tokio::test]
     async fn test_resolve_session_without_stored_secret() {
         let (storage, _temp_dir) = create_test_storage();
-        let (mut controller, _status_rx) = create_test_controller(storage);
+        // Online, so that a stored secret would be restored
+        let mut controller = create_detached_controller(storage).offline(false);
 
         let session = controller.resolve_session().await.unwrap();
 
@@ -1443,38 +1226,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_session_offline_keeps_stored_secret() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        storage.write_session_secret(&pubky, "secret").unwrap();
-        let (mut controller, mut status_rx) = create_test_controller(storage.clone());
+        storage
+            .write_session_secret(&test_pubky(), "secret")
+            .unwrap();
+        let (mut controller, _control_tx, mut status_rx) =
+            create_controlled_controller(storage.clone());
 
         let session = controller.resolve_session().await.unwrap();
 
         // Offline the session can't be validated, but that must not sign the key out
         assert!(session.is_none());
-        assert!(storage.read_session_secret(&pubky).unwrap().is_some());
+        assert!(storage
+            .read_session_secret(&test_pubky())
+            .unwrap()
+            .is_some());
         assert!(status_rx.try_recv().is_err());
     }
 
     #[tokio::test]
     async fn test_reject_session_reports_secret_and_leaves_it_stored() {
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        storage.write_session_secret(&pubky, "secret").unwrap();
-        let (mut controller, mut status_rx) = create_test_controller(storage.clone());
+        storage
+            .write_session_secret(&test_pubky(), "secret")
+            .unwrap();
+        let (mut controller, _control_tx, mut status_rx) =
+            create_controlled_controller(storage.clone());
 
         controller.reject_session("secret".to_string());
 
-        match status_rx.try_recv().unwrap() {
-            ControllerStatus::SessionRejected { secret, .. } => {
+        match status_rx.try_recv().unwrap().status {
+            ControllerStatus::SessionRejected { secret } => {
                 assert_eq!(secret, SessionSecret::new("secret".to_string()));
             }
             other => panic!("Expected SessionRejected, got {:?}", other),
         }
         // Whoever manages the session decides what happens to the stored secret
         assert_eq!(
-            storage.read_session_secret(&pubky).unwrap().as_deref(),
+            storage
+                .read_session_secret(&test_pubky())
+                .unwrap()
+                .as_deref(),
             Some("secret")
         );
         assert_eq!(controller.rejected_secret.as_deref(), Some("secret"));
@@ -1489,10 +1281,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_cycle_moves_from_public_to_private_data() {
-        enable_developer_mode();
         let (storage, _temp_dir) = create_test_storage();
-        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
-        let (mut controller, _status_rx) = create_test_controller(storage.clone());
+        let mut controller = create_detached_controller(storage.clone());
         let mut scope = DataScope::Public;
 
         // Public data is caught up, so the cycle moves on to private data
@@ -1505,7 +1295,7 @@ mod tests {
         assert_eq!(private, ControlFlow::Break(0));
         assert_eq!(
             storage
-                .read_cursor(&pubky, DataScope::Private)
+                .read_cursor(&test_pubky(), DataScope::Private)
                 .await
                 .unwrap(),
             None

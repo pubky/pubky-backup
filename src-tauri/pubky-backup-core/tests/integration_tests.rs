@@ -16,7 +16,8 @@
 use pubky::{Capabilities, ClientId, Keypair, PubkyResource, PubkySession, PubkySigner, PublicKey};
 use pubky_backup_core::{
     AppStorage, AuthStatus, BackupController, BackupManager, BackupManagerConfig,
-    ControllerCommand, ControllerStatus, DataScope, KeyState, KeyStatus, OrchestratorError,
+    ControllerCommand, ControllerStatus, ControllerUpdate, DataScope, KeyState, KeyStatus,
+    OrchestratorError,
 };
 use pubky_testnet::{docker_postgres::DockerPostgres, EphemeralTestnet};
 use serial_test::serial;
@@ -34,7 +35,7 @@ fn create_test_interval_rx() -> (watch::Sender<u64>, watch::Receiver<u64>) {
 /// Helper to create a storage instance with a temporary directory
 fn create_test_storage() -> (Arc<AppStorage>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    let storage = AppStorage::new_with_path(&temp_dir.path().to_path_buf()).unwrap();
+    let storage = AppStorage::new_with_path(temp_dir.path()).unwrap();
     (Arc::new(storage), temp_dir)
 }
 
@@ -116,7 +117,10 @@ async fn run_controller_until_idle(
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             match status_rx.recv().await {
-                Ok(ControllerStatus::Idle { .. }) => break,
+                Ok(ControllerUpdate {
+                    status: ControllerStatus::Idle,
+                    ..
+                }) => break,
                 Ok(_) => continue,
                 Err(_) => panic!("Status channel closed unexpectedly"),
             }
@@ -292,10 +296,8 @@ async fn test_backup_controller_run_loop() {
         .expect("Should receive status within timeout")
         .unwrap();
 
-    match status {
-        ControllerStatus::Starting { .. }
-        | ControllerStatus::Syncing { .. }
-        | ControllerStatus::Idle { .. } => {}
+    match status.status {
+        ControllerStatus::Starting | ControllerStatus::Syncing { .. } | ControllerStatus::Idle => {}
         other => panic!("Unexpected initial status: {:?}", other),
     }
 
@@ -306,7 +308,10 @@ async fn test_backup_controller_run_loop() {
     let mut saw_syncing = false;
     for _ in 0..10 {
         match tokio::time::timeout(Duration::from_secs(5), status_rx.recv()).await {
-            Ok(Ok(ControllerStatus::Syncing { .. })) => {
+            Ok(Ok(ControllerUpdate {
+                status: ControllerStatus::Syncing { .. },
+                ..
+            })) => {
                 saw_syncing = true;
                 break;
             }

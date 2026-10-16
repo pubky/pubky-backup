@@ -75,8 +75,8 @@ let config = BackupManagerConfig {
     data_dir: Some(PathBuf::from("/custom/backup/path")),
     // Timeout for key validation/homeserver discovery in seconds (default: 30)
     validation_timeout_secs: 30,
-    // Enable developer mode / offline mode (default: false)
-    developer_mode: false,
+    // Make no network calls, keeping only the data already on disk (default: false)
+    offline: false,
     // Name shown to users among the apps they granted access to (default: "pubky-backup")
     client_id: ClientId::new("my-backup-cli")?,
     // Remaining options: sync_interval_secs, http_relay
@@ -92,6 +92,7 @@ let config = BackupManagerConfig {
 | `testnet(config)` | Like `new`, but backs up from a local Pubky testnet instead of mainnet |
 | `with_client(config, pubky_client)` | Like `new`, but with your own Pubky client |
 | `add_key(pubky)` | Add a key to backup (validates and discovers homeserver) |
+| `ensure_backed_up(pubky)` | Add a key unless it is backed up already, or retry it if its backup is in error |
 | `remove_key(pubky)` | Stop syncing but preserve data on disk |
 | `delete_key(pubky)` | Stop syncing AND delete all backed-up data |
 | `start_sign_in(pubky)` | Start signing in to a key, to back up its private data too |
@@ -124,7 +125,7 @@ while let Ok(update) = rx.recv().await {
         KeyStatus::Idle => println!("Up to date, waiting for next sync"),
         KeyStatus::Error => {
             if let Some(err) = &update.state.error {
-                println!("Error: {} (recoverable: {})", err.message, err.recoverable);
+                println!("Error: {}", err.message);
             }
         }
         KeyStatus::Stopped => println!("Backup stopped"),
@@ -200,12 +201,6 @@ PUBKY_TESTNET=1 cargo run -p pubky-backup-core --example dev_signer -- approve '
 
 Create the manager with `BackupManager::testnet(config)` to back up from that network. `is_testnet_mode()` reports whether `PUBKY_TESTNET` is set, for applications that want to switch on it.
 
-## Developer Mode (Offline/No-Network)
+## Offline Mode
 
-Enable developer mode to skip network validation and work offline:
-
-```bash
-PUBKY_DEVELOPER_MODE=1 cargo run
-```
-
-In this mode, any valid pubky key is accepted without homeserver validation, and sync operations return empty data (no network calls). Existing backed-up data on disk remains readable. This is useful for GUI development and testing without needing a real homeserver.
+Set `BackupManagerConfig::offline` to make no network calls. Any valid pubky is then accepted without homeserver validation, syncs find no events, and signing in is unavailable. Existing backed-up data on disk remains readable. The crate's own unit tests run this way; for anything that should behave like a real homeserver, use the testnet instead.

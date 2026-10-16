@@ -25,7 +25,6 @@ describe("SettingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(services.getConfig).mockResolvedValue({
-      developer_mode: false,
       sync_interval_secs: 300,
       keys_dir: "/home/user/.pubky-backup/keys",
     });

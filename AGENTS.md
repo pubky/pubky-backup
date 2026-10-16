@@ -37,8 +37,8 @@ Serialized field names are snake_case on both sides (`data_size`, `last_sync`), 
 Run `cargo` from `src-tauri/` (the workspace root for both crates). Run `npm` from the repo root.
 
 ```bash
-# Run the app; PUBKY_DEVELOPER_MODE=1 skips the network and accepts any valid pubky
-PUBKY_DEVELOPER_MODE=1 cargo tauri dev
+# Run the app against mainnet
+cargo tauri dev
 
 # Run the app against a local Pubky network, for real syncing and sign-in without mainnet
 # (start the network and a test user first: see "Testnet mode" in README.md)

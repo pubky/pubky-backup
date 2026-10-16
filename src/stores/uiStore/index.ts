@@ -13,6 +13,5 @@ export type {
   KeyStatus,
   AuthStatus,
   KeyError,
-  KeyErrorCode,
   KeyUpdate,
 } from "./uiStore.types";

@@ -8,7 +8,6 @@
 //! - [`BackupManager`] - Thread-safe manager for multiple pubky backups
 //! - [`types`] - Configuration and state types for the manager
 //! - [`discovery`] - Homeserver discovery
-//! - [`session`] - Session persistence (last used pubky)
 //!
 //! # Architecture
 //!
@@ -24,7 +23,7 @@
 //!
 //! The orchestrator communicates with sync controllers via:
 //! - [`ControllerCommand`](crate::sync::ControllerCommand): Commands sent to controllers
-//! - [`ControllerStatus`](crate::sync::ControllerStatus): Status updates from controllers
+//! - [`ControllerUpdate`](crate::sync::ControllerUpdate): Status updates from controllers
 //!
 //! It then transforms these into [`KeyUpdate`] messages for external consumers.
 //!
@@ -57,8 +56,6 @@ mod auth;
 pub mod discovery;
 pub mod error;
 mod manager;
-pub mod session;
-mod status;
 mod sync_interval;
 pub mod types;
 
@@ -66,6 +63,6 @@ pub use auth::SignInRequest;
 pub use error::OrchestratorError;
 pub use manager::{BackupManager, MAX_KEYS};
 pub use types::{
-    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyErrorCode, KeyState,
-    KeyStatus, KeyUpdate,
+    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyState, KeyStatus,
+    KeyUpdate,
 };

@@ -63,7 +63,7 @@
 //! For more control, use [`BackupController`] directly:
 //!
 //! ```no_run
-//! use pubky_backup_core::{AppStorage, BackupController, ControllerCommand, ControllerStatus};
+//! use pubky_backup_core::{AppStorage, BackupController, ControllerCommand, ControllerUpdate};
 //! use pubky::{Pubky, PublicKey};
 //! use std::sync::Arc;
 //! use std::str::FromStr;
@@ -76,7 +76,7 @@
 //!     let pubky = PublicKey::from_str("your_pubky_here")?;
 //!
 //!     let (_control_tx, control_rx) = mpsc::channel::<ControllerCommand>(5);
-//!     let (status_tx, _status_rx) = broadcast::channel::<ControllerStatus>(5);
+//!     let (status_tx, _status_rx) = broadcast::channel::<ControllerUpdate>(5);
 //!     let (_interval_tx, interval_rx) = watch::channel(30u64);
 //!
 //!     let controller = BackupController::new(
@@ -94,11 +94,11 @@
 //! }
 //! ```
 //!
-//! # Developer Mode (Offline/No-Network Mode)
+//! # Offline Mode
 //!
-//! Enable developer mode by setting the `PUBKY_DEVELOPER_MODE` environment variable.
-//! This skips network validation and returns empty data instead of making real network
-//! calls, useful for offline development and testing with arbitrary pubky keys.
+//! Set [`BackupManagerConfig::offline`] to make no network calls: keys are
+//! not validated and syncs find no events, so only the data already on disk is
+//! kept. Useful for tests and for working on the manager's behaviour offline.
 
 pub mod orchestrator;
 pub mod storage;
@@ -108,7 +108,7 @@ mod utils;
 // Re-export main types from orchestrator module
 pub use orchestrator::{
     ActivityEntry, ActivityType, AuthStatus, BackupManager, BackupManagerConfig, KeyError,
-    KeyErrorCode, KeyState, KeyStatus, KeyUpdate, OrchestratorError, SignInRequest,
+    KeyState, KeyStatus, KeyUpdate, OrchestratorError, SignInRequest,
 };
 
 // Re-export main types from storage module
@@ -116,8 +116,8 @@ pub use storage::{get_data_directory, AppStorage, DataScope, StorageError};
 
 // Re-export main types from sync module
 pub use sync::{
-    BackupController, ControllerCommand, ControllerStatus, SessionSecret, SyncError,
-    DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS,
+    BackupController, ControllerCommand, ControllerStatus, ControllerUpdate, SessionSecret,
+    SyncError, DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS,
 };
 
 // Re-export utility functions
@@ -131,21 +131,6 @@ use std::env;
 /// Test-only pubky constant (for unit tests that need a valid pubky string)
 #[cfg(test)]
 pub const TEST_PUBKY: &str = "g1b6wp8bhhxtsksy3td7rj6mgg7s5k8c68663sajkfscshwj8g5y";
-
-/// Check if developer mode is enabled via environment variable.
-///
-/// Developer mode skips network validation and returns empty data instead of
-/// making real network calls, allowing offline development with arbitrary keys.
-/// Enable by setting `PUBKY_DEVELOPER_MODE` environment variable.
-///
-/// # Example
-///
-/// ```bash
-/// PUBKY_DEVELOPER_MODE=1 cargo run
-/// ```
-pub fn is_developer_mode() -> bool {
-    env::var("PUBKY_DEVELOPER_MODE").is_ok()
-}
 
 /// Check if testnet mode is enabled via environment variable.
 ///

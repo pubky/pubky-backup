@@ -12,7 +12,6 @@ import { isBackendError } from "@/types/backend-errors";
  * App config returned from backend
  */
 export interface AppConfig {
-  developer_mode: boolean;
   sync_interval_secs: number;
   keys_dir: string;
 }

@@ -26,18 +26,8 @@ export interface ToastState {
 }
 
 // Types matching Rust KeyState/KeyUpdate from pubky-backup-core
-export type KeyErrorCode =
-  | "HomeserverUnreachable"
-  | "HomeserverNotFound"
-  | "StorageFull"
-  | "NetworkError"
-  | "Timeout"
-  | "Internal";
-
 export interface KeyError {
-  code: KeyErrorCode;
   message: string;
-  recoverable: boolean;
 }
 
 export type KeyStatus =
@@ -61,9 +51,6 @@ export interface KeyState {
   last_sync: number | null;
   next_sync: number | null;
   error: KeyError | null;
-  total_files: number | null;
-  files_synced: number | null;
-  bytes_downloaded: number | null;
   auth: AuthStatus;
 }
 
@@ -81,7 +68,6 @@ export interface UIState {
   // App state from backend
   keyStates: Record<string, KeyState>;
   lastPubky: string | null;
-  developerMode: boolean;
   navDisabled: boolean;
 }
 
@@ -98,7 +84,6 @@ export interface UIActions {
   setAllKeyStates: (states: Record<string, KeyState>) => void;
   removeKeyState: (pubky: string) => void;
   setLastPubky: (pubky: string | null) => void;
-  setDeveloperMode: (enabled: boolean) => void;
   setNavDisabled: (disabled: boolean) => void;
 }
 
@@ -117,7 +102,6 @@ export const uiInitialState: UIState = {
   },
   keyStates: {},
   lastPubky: null,
-  developerMode: false,
   navDisabled: false,
 };
 
@@ -133,6 +117,5 @@ export enum UIActionTypes {
   SET_ALL_KEY_STATES = "SET_ALL_KEY_STATES",
   REMOVE_KEY_STATE = "REMOVE_KEY_STATE",
   SET_LAST_PUBKY = "SET_LAST_PUBKY",
-  SET_DEVELOPER_MODE = "SET_DEVELOPER_MODE",
   SET_NAV_DISABLED = "SET_NAV_DISABLED",
 }

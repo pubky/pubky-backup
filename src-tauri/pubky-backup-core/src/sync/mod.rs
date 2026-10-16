@@ -27,10 +27,11 @@
 //!
 //! # Channel Architecture
 //!
-//! The controller uses two broadcast channels for communication with the orchestrator:
+//! The controller uses two channels for communication with the orchestrator:
 //! - `ControllerCommand`: Commands sent TO the controller (Cancel, ForceSync)
-//! - `ControllerStatus`: Status updates sent FROM the controller (Syncing, Idle, Ended,
-//!   Error, SessionRejected)
+//! - `ControllerUpdate`: Status updates sent FROM the controller, each carrying
+//!   the `ControllerStatus` (Syncing, Idle, Ended, Error, SessionRejected) of
+//!   the pubky it names
 //!
 //! The [`BackupController`] runs as an async task and can be controlled via
 //! message channels for cancellation and force-sync triggers.
@@ -43,8 +44,8 @@ mod scope;
 pub(crate) mod session;
 
 pub use controller::{
-    BackupController, ControllerCommand, ControllerStatus, DEFAULT_SYNC_INTERVAL_SECONDS,
-    MIN_SYNC_INTERVAL_SECONDS,
+    BackupController, ControllerCommand, ControllerStatus, ControllerUpdate,
+    DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS,
 };
 pub use error::SyncError;
 pub(crate) use scope::PRIVATE_PATH;
