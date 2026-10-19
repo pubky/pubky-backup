@@ -20,7 +20,6 @@ export { useSetLastPubky } from "./useSetLastPubky";
 // Utility hooks
 export { useLastSyncTime } from "./useLastSyncTime";
 export { useCountdown } from "./useCountdown";
-export { useAutoWindowResize } from "./useAutoWindowResize";
 
 // Composite hooks
 export { useDashboardState } from "./useDashboardState";

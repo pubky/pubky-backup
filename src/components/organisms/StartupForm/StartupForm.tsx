@@ -20,8 +20,8 @@ export function StartupForm() {
     keys.length > 0 ? "Enter your pubky..." : "g1b6wp8bhhxt...";
 
   return (
-    <main className="flex flex-col items-center justify-start text-center relative">
-      <Atoms.Card>
+    <main className="flex flex-1 flex-col items-center justify-start text-center relative">
+      <Atoms.Card className="flex-1 justify-start">
         <div className="flex flex-col items-stretch gap-6">
           {/* Header */}
           <div className="flex flex-col items-center gap-2 pt-4">
