@@ -20,31 +20,27 @@ export function StartupForm() {
     keys.length > 0 ? "Enter your pubky..." : "g1b6wp8bhhxt...";
 
   return (
-    <main className="flex flex-col items-center justify-start text-center relative">
-      <Atoms.Card>
-        <div className="flex flex-col items-stretch gap-6">
-          {/* Header */}
-          <div className="flex flex-col items-center gap-2 pt-4">
-            <Atoms.PubkyLogo />
-            <h1 className="text-xl font-normal text-text-secondary m-0">
-              Securely mirror your Pubky data.
-            </h1>
-          </div>
+    <div className="flex flex-col items-stretch gap-6">
+      {/* Header */}
+      <div className="flex flex-col items-center gap-2 pt-4">
+        <Atoms.PubkyLogo />
+        <h1 className="text-xl font-normal text-text-secondary m-0">
+          Securely mirror your Pubky data.
+        </h1>
+      </div>
 
-          {isResuming ? (
-            <div className="flex items-center justify-center gap-3 py-8 text-text-secondary">
-              <Atoms.Spinner />
-              <span className="text-sm">Opening your backup...</span>
-            </div>
-          ) : (
-            <AddKeyForm
-              onAdded={handleAdded}
-              suggestions={keys}
-              placeholder={placeholder}
-            />
-          )}
+      {isResuming ? (
+        <div className="flex items-center justify-center gap-3 py-8 text-text-secondary">
+          <Atoms.Spinner />
+          <span className="text-sm">Opening your backup...</span>
         </div>
-      </Atoms.Card>
-    </main>
+      ) : (
+        <AddKeyForm
+          onAdded={handleAdded}
+          suggestions={keys}
+          placeholder={placeholder}
+        />
+      )}
+    </div>
   );
 }

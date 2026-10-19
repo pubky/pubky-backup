@@ -50,7 +50,7 @@ export function ActivityPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 text-left self-stretch">
+    <div className="flex flex-1 min-h-0 flex-col gap-4 text-left self-stretch">
       <div className="flex flex-col gap-1">
         <h2 className="text-xl font-bold text-white m-0">Activity</h2>
         <p className="text-base font-medium text-text-light m-0">
@@ -58,7 +58,7 @@ export function ActivityPage() {
           and displayed here for review.
         </p>
       </div>
-      <div className="flex flex-col gap-0.5 overflow-y-auto max-h-[300px] pr-2">
+      <div className="flex flex-1 min-h-0 flex-col gap-0.5 overflow-y-auto pr-2">
         {entries.length === 0 ? (
           <p className="text-sm text-text-secondary text-center py-8">
             No activity yet

@@ -57,26 +57,27 @@ function DashboardPageContent() {
 
 export function App() {
   const currentScreen = Stores.useUIStore((s) => s.currentScreen);
-  const containerRef = Hooks.useAutoWindowResize();
 
   // Bootstrap app state from backend
   useBootstrap();
 
   return (
-    <div ref={containerRef}>
-      {currentScreen === "startup" ? (
-        <Organisms.StartupForm />
-      ) : (
-        <main className="flex flex-col items-center justify-start text-center relative">
-          <Atoms.Card className="justify-start">
+    // The window has a fixed size and every screen fills it, so pages are the
+    // same height, and a screen taller than the window scrolls inside the card
+    <main className="flex h-screen flex-col text-center">
+      <Atoms.Card>
+        {currentScreen === "startup" ? (
+          <Organisms.StartupForm />
+        ) : (
+          <>
             <div className="flex justify-end">
               <Molecules.NavBar />
             </div>
             <DashboardPageContent />
-          </Atoms.Card>
-        </main>
-      )}
+          </>
+        )}
+      </Atoms.Card>
       <Molecules.Toast />
-    </div>
+    </main>
   );
 }
