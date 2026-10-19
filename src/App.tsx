@@ -62,21 +62,22 @@ export function App() {
   useBootstrap();
 
   return (
-    // The window has a fixed size; every screen fills it, so pages are the same height
-    <div className="flex min-h-screen flex-col">
-      {currentScreen === "startup" ? (
-        <Organisms.StartupForm />
-      ) : (
-        <main className="flex flex-1 flex-col items-center justify-start text-center relative">
-          <Atoms.Card className="flex-1 justify-start">
+    // The window has a fixed size and every screen fills it, so pages are the
+    // same height, and a screen taller than the window scrolls inside the card
+    <main className="flex h-screen flex-col text-center">
+      <Atoms.Card>
+        {currentScreen === "startup" ? (
+          <Organisms.StartupForm />
+        ) : (
+          <>
             <div className="flex justify-end">
               <Molecules.NavBar />
             </div>
             <DashboardPageContent />
-          </Atoms.Card>
-        </main>
-      )}
+          </>
+        )}
+      </Atoms.Card>
       <Molecules.Toast />
-    </div>
+    </main>
   );
 }
