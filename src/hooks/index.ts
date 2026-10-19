@@ -12,6 +12,7 @@ export { useResumeLastPubky } from "./useResumeLastPubky";
 export { useForceSync } from "./useForceSync";
 export { useSignIn } from "./useSignIn";
 export { useNewKeySignIn, type NewKeySignInState } from "./useNewKeySignIn";
+export { useMirror } from "./useMirror";
 export { useCreateSnapshot } from "./useCreateSnapshot";
 export { useOpenDataDir } from "./useOpenDataDir";
 export { useSetLastPubky } from "./useSetLastPubky";

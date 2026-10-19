@@ -5,7 +5,11 @@ export type ActivityType =
   | "sync_failed"
   | "signed_in"
   | "signed_out"
-  | "session_expired";
+  | "session_expired"
+  | "mirror_started"
+  | "mirror_stopped"
+  | "mirror_session_expired"
+  | "mirror_failed";
 
 export interface ActivityEntry {
   type: ActivityType;
@@ -45,6 +49,15 @@ export type AuthStatus =
   | { type: "SessionExpired" }
   | { type: "SignInFailed"; message: string };
 
+// Whether a key's backup is also copied to a second homeserver (z32 key).
+export type MirrorStatus =
+  | { type: "NotMirrored" }
+  | { type: "AwaitingApproval"; homeserver: string; authorization_url: string }
+  | { type: "Mirroring"; homeserver: string }
+  | { type: "SessionExpired"; homeserver: string }
+  | { type: "Failing"; homeserver: string; message: string }
+  | { type: "SetupFailed"; homeserver: string; message: string };
+
 export interface KeyState {
   status: KeyStatus;
   data_size: number;
@@ -52,6 +65,7 @@ export interface KeyState {
   next_sync: number | null;
   error: KeyError | null;
   auth: AuthStatus;
+  mirror: MirrorStatus;
 }
 
 export interface KeyUpdate {

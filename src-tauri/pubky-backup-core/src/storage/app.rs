@@ -7,7 +7,8 @@ use super::config::ConfigStorage;
 use super::error::StorageError;
 use super::keys::{DataScope, KeyStorage, KeysStorage};
 use super::migration::remove_legacy_data;
-use super::sessions::SessionStorage;
+use super::mirrors::{MirrorStorage, StoredMirror};
+use super::secrets::{SecretStorage, SESSIONS_DIR_NAME};
 use crate::orchestrator::types::ActivityEntry;
 use log::{error, info, warn};
 use pubky::{PubkyResource, PublicKey};
@@ -44,11 +45,13 @@ pub fn get_data_directory() -> Result<PathBuf, StorageError> {
     }
 }
 
-/// Storage for application-level data (config, global logs, sessions).
+/// Storage for application-level data (config, global logs, sessions, mirrors).
 struct AppDataStorage {
     config: ConfigStorage,
     logs_storage: Storage,
-    sessions: SessionStorage,
+    /// Session secrets of signed-in keys
+    sessions: SecretStorage,
+    mirrors: MirrorStorage,
 }
 
 impl AppDataStorage {
@@ -58,7 +61,8 @@ impl AppDataStorage {
         Ok(AppDataStorage {
             config: ConfigStorage::new(data_dir)?,
             logs_storage: Storage::new(&logs_dir)?,
-            sessions: SessionStorage::new(data_dir)?,
+            sessions: SecretStorage::new(data_dir, SESSIONS_DIR_NAME, "session secret")?,
+            mirrors: MirrorStorage::new(data_dir)?,
         })
     }
 
@@ -103,6 +107,8 @@ impl AppDataStorage {
 /// │   └── error.log              # Global error log
 /// ├── sessions/                  # Session secrets of signed-in keys, which
 /// │   └── <pubky>                # stay here when the keys directory moves
+/// ├── mirrors/                   # Mirrors of keys, with the sessions on them,
+/// │   └── <pubky>                # which stay here as well
 /// └── keys/                      # Per-key data
 ///     └── <pubky>/
 ///         ├── state/             # Backup state/metadata
@@ -287,6 +293,63 @@ impl AppStorage {
     /// Delete the stored session secret of a pubky. Does nothing if there is none.
     pub(crate) fn delete_session_secret(&self, pubky: &PublicKey) -> Result<(), StorageError> {
         self.app_data.sessions.delete(pubky)
+    }
+
+    /// Store a pubky's mirror, for a [`BackupController`] to copy its backup to.
+    ///
+    /// Storing a different homeserver than before forgets how far the previous
+    /// mirror was synced, so copying to the new one starts from the beginning.
+    ///
+    /// Not for pubkys a [`BackupManager`] backs up: set their mirrors up
+    /// through the manager instead, which keeps their mirror status in step
+    /// with this record.
+    ///
+    /// [`BackupController`]: crate::BackupController
+    /// [`BackupManager`]: crate::BackupManager
+    pub fn write_mirror(
+        &self,
+        pubky: &PublicKey,
+        mirror: &StoredMirror,
+    ) -> Result<(), StorageError> {
+        let previous = self.read_mirror(pubky)?;
+        if previous.is_some_and(|previous| previous.homeserver != mirror.homeserver) {
+            self.key_storage(pubky)?.delete_mirror_cursors()?;
+        }
+        self.app_data.mirrors.write(pubky, mirror)
+    }
+
+    /// Read a pubky's mirror, or `None` if it has none.
+    pub fn read_mirror(&self, pubky: &PublicKey) -> Result<Option<StoredMirror>, StorageError> {
+        self.app_data.mirrors.read(pubky)
+    }
+
+    /// Forget a pubky's mirror and how far it was synced. Does nothing if it has none.
+    pub fn delete_mirror(&self, pubky: &PublicKey) -> Result<(), StorageError> {
+        self.app_data.mirrors.delete(pubky)?;
+        self.key_storage(pubky)?.delete_mirror_cursors()
+    }
+
+    /// Write the cursor tracking how far one scope of a pubky's data is copied
+    /// to its mirror.
+    pub async fn write_mirror_cursor(
+        &self,
+        pubky: &PublicKey,
+        scope: DataScope,
+        cursor_value: u64,
+    ) -> Result<(), StorageError> {
+        self.key_storage(pubky)?
+            .write_mirror_cursor(scope, cursor_value)
+            .await
+    }
+
+    /// Read the cursor tracking how far one scope of a pubky's data is copied
+    /// to its mirror, or `None` if nothing was copied yet.
+    pub async fn read_mirror_cursor(
+        &self,
+        pubky: &PublicKey,
+        scope: DataScope,
+    ) -> Result<Option<u64>, StorageError> {
+        self.key_storage(pubky)?.read_mirror_cursor(scope).await
     }
 
     /// Write an error to the global error log file.

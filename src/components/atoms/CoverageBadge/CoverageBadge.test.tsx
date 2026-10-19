@@ -12,4 +12,11 @@ describe("CoverageBadge", () => {
 
     expect(screen.getByText(label)).toBeInTheDocument();
   });
+
+  it("should mark a mirrored backup", () => {
+    render(<CoverageBadge coverage="public-only" isMirrored />);
+
+    expect(screen.getByText("Public only, mirrored")).toBeInTheDocument();
+    expect(screen.getByTitle(/copied to a mirror/i)).toBeInTheDocument();
+  });
 });

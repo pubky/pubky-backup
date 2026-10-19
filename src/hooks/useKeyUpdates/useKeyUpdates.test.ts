@@ -27,6 +27,7 @@ describe("useKeyUpdates", () => {
     next_sync: 1672531230,
     error: null,
     auth: { type: "SignedOut" },
+    mirror: { type: "NotMirrored" },
   };
 
   beforeEach(() => {
@@ -155,6 +156,7 @@ describe("useKeyUpdates", () => {
         message: "Connection failed",
       },
       auth: { type: "SignedOut" },
+      mirror: { type: "NotMirrored" },
     };
 
     act(() => {

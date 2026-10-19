@@ -59,10 +59,10 @@ mod manager;
 mod sync_interval;
 pub mod types;
 
-pub use auth::SignInRequest;
+pub use auth::ApprovalRequest;
 pub use error::OrchestratorError;
 pub use manager::{BackupManager, MAX_KEYS};
 pub use types::{
     ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyState, KeyStatus,
-    KeyUpdate,
+    KeyUpdate, MirrorStatus,
 };

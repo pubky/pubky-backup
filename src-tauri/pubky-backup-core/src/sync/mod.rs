@@ -10,6 +10,7 @@
 //! - [`fetcher`] - Resource data fetching with retry logic
 //! - [`scope`] - The public and private scopes a key's data is synced in
 //! - [`session`] - Restoring the session a signed-in key's private data is synced with
+//! - [`mirror`] - Copying to the second homeserver a key may be mirrored to
 //!
 //! # Architecture
 //!
@@ -23,7 +24,9 @@
 //! Each sync cycle syncs a key's public data, then, if a session secret is stored
 //! for the key, its private data. A session the homeserver rejects is reported
 //! with `ControllerStatus::SessionRejected` and not used again, while public data
-//! keeps syncing.
+//! keeps syncing. If a mirror is stored for the key, the cycle ends by copying
+//! what was backed up to it; problems with the mirror are reported with their
+//! own statuses and never hold up the backup.
 //!
 //! # Channel Architecture
 //!
@@ -40,6 +43,7 @@ mod controller;
 pub mod error;
 mod events;
 mod fetcher;
+pub(crate) mod mirror;
 mod scope;
 pub(crate) mod session;
 
@@ -48,5 +52,5 @@ pub use controller::{
     DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS,
 };
 pub use error::SyncError;
-pub(crate) use scope::PRIVATE_PATH;
+pub(crate) use scope::{PRIVATE_PATH, PUBLIC_PATH};
 pub use session::SessionSecret;

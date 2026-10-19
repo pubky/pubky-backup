@@ -12,6 +12,7 @@ export type {
   KeyState,
   KeyStatus,
   AuthStatus,
+  MirrorStatus,
   KeyError,
   KeyUpdate,
 } from "./uiStore.types";

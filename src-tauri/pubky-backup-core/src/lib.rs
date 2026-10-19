@@ -58,6 +58,22 @@
 //!
 //! See [`AuthStatus`] for the states a key can be in.
 //!
+//! # Mirroring
+//!
+//! A mirror is a second homeserver that follows the key's backup, so that it
+//! holds the same data as the key's own. It is set up the same way, and
+//! [`MirrorStatus`] has the states it can be in:
+//!
+//! ```no_run
+//! # use pubky_backup_core::{BackupManager, OrchestratorError};
+//! # async fn example(manager: BackupManager, pubky: pubky::PublicKey, mirror: pubky::PublicKey) -> Result<(), OrchestratorError> {
+//! let request = manager.start_mirror(&pubky, &mirror).await?;
+//! println!("Approve in Pubky Ring: {}", request.authorization_url());
+//! request.approved().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Low-Level API
 //!
 //! For more control, use [`BackupController`] directly:
@@ -107,12 +123,12 @@ mod utils;
 
 // Re-export main types from orchestrator module
 pub use orchestrator::{
-    ActivityEntry, ActivityType, AuthStatus, BackupManager, BackupManagerConfig, KeyError,
-    KeyState, KeyStatus, KeyUpdate, OrchestratorError, SignInRequest,
+    ActivityEntry, ActivityType, ApprovalRequest, AuthStatus, BackupManager, BackupManagerConfig,
+    KeyError, KeyState, KeyStatus, KeyUpdate, MirrorStatus, OrchestratorError,
 };
 
 // Re-export main types from storage module
-pub use storage::{get_data_directory, AppStorage, DataScope, StorageError};
+pub use storage::{get_data_directory, AppStorage, DataScope, StorageError, StoredMirror};
 
 // Re-export main types from sync module
 pub use sync::{

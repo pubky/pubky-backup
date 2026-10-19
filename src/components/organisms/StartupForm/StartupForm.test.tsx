@@ -21,6 +21,7 @@ describe("StartupForm", () => {
     next_sync: 1672531230,
     error: null,
     auth: { type: "SignedOut" },
+    mirror: { type: "NotMirrored" },
   };
 
   beforeEach(() => {
@@ -141,7 +142,9 @@ describe("StartupForm", () => {
       });
     });
 
-    it("should navigate to dashboard on successful add", async () => {
+    it("should navigate to the dashboard's sync page on successful add", async () => {
+      // The dashboard may have been left on another page by a removed key
+      useUIStore.setState({ currentPage: "keys" });
       render(<StartupForm />);
       fireEvent.change(await screen.findByPlaceholderText(/g1b6wp8bhhxt/i), {
         target: { value: "my-pubky" },
@@ -160,6 +163,7 @@ describe("StartupForm", () => {
       await waitFor(() => {
         expect(useUIStore.getState().currentScreen).toBe("dashboard");
       });
+      expect(useUIStore.getState().currentPage).toBe("sync");
     });
 
     it("should trim whitespace from input before submitting", async () => {
