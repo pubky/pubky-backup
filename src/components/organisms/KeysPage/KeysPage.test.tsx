@@ -115,6 +115,27 @@ describe("KeysPage", () => {
       ).toBeInTheDocument();
     });
 
+    it("should mark keys whose backup is in error", () => {
+      useUIStore.setState({
+        keyStates: {
+          g1b6wp8bhhxt1234567890abcdef: {
+            ...mockKeyState,
+            status: { type: "Error" },
+            error: { message: "Sync error: disk full" },
+          },
+          a2c7xq9ciiyv0987654321fedcba: mockKeyState,
+        },
+      });
+
+      render(<KeysPage />);
+
+      const marker = screen.getByTitle("Backup failed");
+      const errored = screen.getByText(/g1b6w/i).closest('[role="button"]');
+      const healthy = screen.getByText(/a2c7x/i).closest('[role="button"]');
+      expect(errored).toContainElement(marker);
+      expect(healthy).not.toContainElement(marker);
+    });
+
     it("should show 'Add another pubky' button", () => {
       render(<KeysPage />);
 

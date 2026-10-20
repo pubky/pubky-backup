@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { DashboardForm } from "./DashboardForm";
 import { useUIStore } from "@/stores/uiStore";
 import type { KeyState } from "@/stores/uiStore";
 import * as services from "@/services";
+import * as Utils from "@/utils";
 
 // Mock services
 vi.mock("@/services", () => ({
@@ -40,6 +47,12 @@ describe("DashboardForm", () => {
     error: null,
     auth: { type: "SignedOut" },
     mirror: { type: "NotMirrored" },
+  };
+
+  const erroredKeyState: KeyState = {
+    ...mockKeyState,
+    status: { type: "Error" },
+    error: { message: "Sync error: Storage error: disk full" },
   };
 
   beforeEach(() => {
@@ -145,6 +158,164 @@ describe("DashboardForm", () => {
     });
   });
 
+  describe("error state", () => {
+    beforeEach(() => {
+      useUIStore.setState({
+        keyStates: { "pk:test-pubky": erroredKeyState },
+        lastPubky: "pk:test-pubky",
+      });
+    });
+
+    it("should show the error badge instead of synced", () => {
+      render(<DashboardForm />);
+
+      expect(screen.getByText("ERROR")).toBeInTheDocument();
+      expect(screen.queryByText("SYNCED")).not.toBeInTheDocument();
+    });
+
+    it("should show the error message instead of the countdown", () => {
+      render(<DashboardForm />);
+
+      expect(
+        screen.getByText("Sync error: Storage error: disk full"),
+      ).toHaveClass("text-pubky-red");
+      expect(screen.queryByText(/next backup/i)).not.toBeInTheDocument();
+    });
+
+    it("should show a fallback message when the error has none", () => {
+      useUIStore.setState({
+        keyStates: { "pk:test-pubky": { ...erroredKeyState, error: null } },
+      });
+
+      render(<DashboardForm />);
+
+      expect(screen.getByText("Backup failed")).toBeInTheDocument();
+    });
+
+    it("should retry the backup by forcing a sync", async () => {
+      vi.mocked(services.forceSyncNow).mockResolvedValue(undefined);
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+      await waitFor(() => {
+        expect(services.forceSyncNow).toHaveBeenCalledWith("pk:test-pubky");
+      });
+    });
+
+    it("should go back to synced once the retried backup succeeds", async () => {
+      render(<DashboardForm />);
+      expect(screen.getByText("ERROR")).toBeInTheDocument();
+
+      act(() => {
+        useUIStore.getState().setKeyState("pk:test-pubky", mockKeyState);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("SYNCED")).toBeInTheDocument();
+      });
+      expect(
+        screen.queryByText("Sync error: Storage error: disk full"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Retry" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("should show an error toast when the retry fails", async () => {
+      vi.mocked(services.forceSyncNow).mockRejectedValue({
+        type: "Internal",
+        message: "Failed to send force sync message",
+      });
+      useUIStore.setState({
+        toast: { visible: false, pubkyText: "", type: "success", message: "" },
+      });
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+      await waitFor(() => {
+        expect(useUIStore.getState().toast).toMatchObject({
+          visible: true,
+          type: "error",
+        });
+      });
+    });
+
+    it("should show syncing and hide retry once the retried backup syncs", async () => {
+      render(<DashboardForm />);
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+
+      act(() => {
+        useUIStore.getState().setKeyState("pk:test-pubky", syncingKeyState);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("SYNCING")).toBeInTheDocument();
+      });
+      expect(
+        screen.queryByRole("button", { name: "Retry" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("should keep the error badge when a snapshot fails", async () => {
+      vi.mocked(services.createSnapshot).mockRejectedValue(
+        new Error("Disk full"),
+      );
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/failed to create snapshot/i),
+        ).toBeInTheDocument();
+      });
+      expect(screen.getByText("ERROR")).toBeInTheDocument();
+      expect(screen.queryByText("SYNCED")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Retry" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("should not offer a retry while the backup is healthy", () => {
+      useUIStore.setState({
+        keyStates: { "pk:test-pubky": mockKeyState },
+      });
+
+      render(<DashboardForm />);
+
+      expect(
+        screen.queryByRole("button", { name: "Retry" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("should mark the errored key in the key switcher", () => {
+      useUIStore.setState({
+        keyStates: {
+          "pk:test-pubky": erroredKeyState,
+          "pk:other-pubky": mockKeyState,
+        },
+      });
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByTitle("Switch key"));
+
+      const marker = screen.getByTitle("Backup failed");
+      const [errored, healthy] = ["pk:test-pubky", "pk:other-pubky"].map((k) =>
+        screen
+          .getAllByRole("option")
+          .find((o) => o.textContent?.includes(Utils.displayPubky(k))),
+      );
+      expect(errored).toContainElement(marker);
+      expect(healthy).not.toContainElement(marker);
+    });
+  });
+
   describe("copy functionality", () => {
     it("should copy pubky to clipboard when copy button is clicked", async () => {
       render(<DashboardForm />);
@@ -185,6 +356,27 @@ describe("DashboardForm", () => {
 
       await waitFor(() => {
         expect(services.forceSyncNow).toHaveBeenCalledWith("pk:test-pubky");
+      });
+    });
+
+    it("should show an error toast when force sync fails", async () => {
+      vi.mocked(services.forceSyncNow).mockRejectedValue({
+        type: "Internal",
+        message: "Failed to send force sync message",
+      });
+      useUIStore.setState({
+        toast: { visible: false, pubkyText: "", type: "success", message: "" },
+      });
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: /force sync/i }));
+
+      await waitFor(() => {
+        expect(useUIStore.getState().toast).toMatchObject({
+          visible: true,
+          type: "error",
+        });
       });
     });
   });

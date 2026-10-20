@@ -41,6 +41,12 @@ describe("StatusBadge", () => {
     expect(badge).toHaveClass("bg-pubky-blue");
   });
 
+  it("should display ERROR with a red background when status is error", () => {
+    render(<StatusBadge status="error" />);
+    const badge = screen.getByText("ERROR");
+    expect(badge).toHaveClass("bg-pubky-red");
+  });
+
   it("should apply custom className", () => {
     render(<StatusBadge status="synced" className="custom-class" />);
     const badge = screen.getByText("SYNCED");

@@ -422,20 +422,30 @@ impl BackupManager {
 
     /// Retry a key that is currently in error state.
     ///
-    /// Tears down the errored controller, re-validates (homeserver discovery),
-    /// and restarts the controller. If re-validation fails, the error propagates to the caller
-    /// instead of silently leaving the key in error state.
+    /// Re-validates (homeserver discovery), then replaces the errored controller
+    /// with a new one. If re-validation fails, the error propagates to the caller
+    /// and the errored controller keeps running, so the key is still backed up
+    /// and retried on the next sync interval.
     ///
     /// # Errors
     ///
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     /// Returns validation errors if re-validation fails.
     pub async fn retry_errored_key(&self, pubky: &PublicKey) -> Result<(), OrchestratorError> {
-        // Remove the errored controller
-        self.stop_controller(pubky)?;
+        if !self.inner.read().keys.contains_key(pubky) {
+            return Err(OrchestratorError::KeyNotFound(pubky.to_string()));
+        }
 
-        // Re-validate
+        // Re-validate before touching the errored controller
         self.validate_key(pubky).await?;
+
+        // Remove the errored controller and let it end, so that it no longer
+        // writes the key's files and its last status comes before any of the
+        // new controller's
+        let handle = self.stop_controller(pubky)?;
+        if let Err(e) = handle.await {
+            warn!("Controller task for {} finished with error: {}", pubky, e);
+        }
 
         // Restart the controller
         self.start_controller(pubky.clone(), false).await?;
@@ -991,6 +1001,56 @@ mod tests {
         assert_ne!(
             manager.get_key_state(&pubky).unwrap().status,
             KeyStatus::Error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_failed_retry_keeps_the_errored_key_backed_up() {
+        let temp_dir = TempDir::new().unwrap();
+        // Validated against a testnet that isn't running, so discovery fails
+        let config = BackupManagerConfig {
+            offline: false,
+            validation_timeout_secs: 1,
+            ..create_test_config(&temp_dir)
+        };
+        let manager = BackupManager::with_client(config, create_test_client())
+            .await
+            .unwrap();
+        let pubky = test_pubky();
+        manager
+            .start_controller(pubky.clone(), false)
+            .await
+            .unwrap();
+        let errored = SyncState {
+            status: KeyStatus::Error,
+            error: Some(KeyError {
+                message: "boom".to_string(),
+            }),
+            ..Default::default()
+        };
+        manager.inner.write().apply_sync_state(&pubky, errored);
+        let before = control_tx(&manager, &pubky);
+
+        let result = manager.retry_errored_key(&pubky).await;
+
+        assert!(
+            matches!(result, Err(OrchestratorError::HomeserverNotFound(_))),
+            "Unexpected result: {result:?}"
+        );
+        // The errored controller is still there to retry on the next interval
+        assert!(before.same_channel(&control_tx(&manager, &pubky)));
+        assert!(!before.is_closed());
+    }
+
+    #[tokio::test]
+    async fn test_retry_of_an_untracked_key_is_refused() {
+        let (_dir, manager) = setup().await;
+
+        let result = manager.retry_errored_key(&test_pubky()).await;
+
+        assert!(
+            matches!(result, Err(OrchestratorError::KeyNotFound(_))),
+            "Unexpected result: {result:?}"
         );
     }
 

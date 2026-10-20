@@ -70,7 +70,6 @@ describe("useAppState", () => {
     const { result } = renderHook(() => useAppState());
 
     expect(result.current.is_syncing).toBe(true);
-    expect(result.current.backup_running).toBe(true);
   });
 
   it("should return error message when in error state", () => {
@@ -96,7 +95,6 @@ describe("useAppState", () => {
     const { result } = renderHook(() => useAppState());
 
     expect(result.current.backup_controller_error).toBe("Connection failed");
-    expect(result.current.backup_running).toBe(false);
   });
 
   it("should return is_syncing true when lastPubky set but keyState not yet received", () => {
@@ -112,7 +110,6 @@ describe("useAppState", () => {
 
     expect(result.current.pubky).toBe("pk:newkey");
     expect(result.current.is_syncing).toBe(true);
-    expect(result.current.backup_running).toBe(true);
     expect(result.current.keyState).toBeNull();
   });
 
@@ -137,7 +134,6 @@ describe("useAppState", () => {
     const { result } = renderHook(() => useAppState());
 
     expect(result.current.is_syncing).toBe(true);
-    expect(result.current.backup_running).toBe(true);
   });
 
   it("should re-render when keyState changes from Idle to Syncing via setKeyState", () => {

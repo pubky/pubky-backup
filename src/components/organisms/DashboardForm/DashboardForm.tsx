@@ -13,6 +13,7 @@ export function DashboardForm() {
     lastSyncTime,
     backupLocation,
     keys,
+    erroredKeys,
     statusInfo,
   } = Hooks.useDashboardState();
 
@@ -41,6 +42,7 @@ export function DashboardForm() {
           pubky: k,
           isSelected: k === pubky,
           coverage: coverageByKey[k],
+          hasError: erroredKeys.includes(k),
         }))}
         onSelectKey={handleSelectKey}
       />
@@ -49,6 +51,19 @@ export function DashboardForm() {
       <Molecules.SyncMessage
         status={statusInfo.message}
         message={statusInfo.text}
+        action={
+          // An errored key's controller is still running, so a forced sync retries it
+          statusInfo.retryable ? (
+            <Atoms.Button
+              variant="secondary"
+              onClick={() => void handleForceSync(pubky)}
+              disabled={isForceSyncing}
+              className="py-2 px-4 shrink-0"
+            >
+              <span className="text-sm font-bold text-white">Retry</span>
+            </Atoms.Button>
+          ) : undefined
+        }
       />
 
       {/* Info cards */}

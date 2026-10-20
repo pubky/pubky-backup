@@ -55,6 +55,34 @@ describe("SyncMessage", () => {
     expect(spinner).not.toBeInTheDocument();
   });
 
+  it("should show an alert icon instead of a check when there is an error", () => {
+    const { container } = render(
+      <SyncMessage status="error" message="Sync failed" />,
+    );
+    // AlertIcon draws a <circle>, CheckIcon does not
+    expect(container.querySelector("svg circle")).toBeInTheDocument();
+    expect(container.querySelector("svg")).toHaveClass("text-pubky-red");
+  });
+
+  it("should show the action in place of the status icon", () => {
+    const { container } = render(
+      <SyncMessage
+        status="error"
+        message="Sync failed"
+        action={<button type="button">Retry</button>}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(container.querySelector("svg")).not.toBeInTheDocument();
+  });
+
+  it("should keep the full message in a tooltip", () => {
+    const message =
+      "Sync error: Events error: Failed to fetch events: Failed to subscribe";
+    render(<SyncMessage status="error" message={message} />);
+    expect(screen.getByText(message)).toHaveAttribute("title", message);
+  });
+
   it("should apply custom className", () => {
     const { container } = render(
       <SyncMessage message="Test" className="custom-class" />,

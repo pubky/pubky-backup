@@ -1,5 +1,6 @@
 export { StatusBadge, type StatusBadgeProps } from "./StatusBadge";
 export { CoverageBadge, type CoverageBadgeProps } from "./CoverageBadge";
+export { ErrorMarker, type ErrorMarkerProps } from "./ErrorMarker";
 export { IconButton, type IconButtonProps } from "./IconButton";
 export { PubkyLogo } from "./PubkyLogo";
 export { Spinner, type SpinnerProps } from "./Spinner";
@@ -27,4 +28,5 @@ export {
   TrashIcon,
   LockIcon,
   GlobeIcon,
+  AlertIcon,
 } from "./Icons";

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import * as Stores from "@/stores";
 import * as Hooks from "@/hooks";
+import * as Utils from "@/utils";
 import { Logger } from "@/lib";
 
 const SNAPSHOT_MESSAGE_DURATION_MS = 3000;
@@ -104,6 +105,7 @@ export function useDashboardActions(): DashboardActions {
         Logger.debug("DashboardActions", "Force sync triggered");
       } catch (error: unknown) {
         Logger.error("DashboardActions", "Force sync failed", { error });
+        Utils.handleBackendError(error);
       }
     },
     [forceSync],
