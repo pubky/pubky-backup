@@ -19,4 +19,5 @@ export {
   TrashIcon,
   LockIcon,
   GlobeIcon,
+  AlertIcon,
 } from "./Icons";

@@ -55,6 +55,28 @@ describe("SyncMessage", () => {
     expect(spinner).not.toBeInTheDocument();
   });
 
+  it("should show the action in place of the status icon", () => {
+    const { container } = render(
+      <SyncMessage
+        status="error"
+        message="Sync failed"
+        action={<button type="button">Retry</button>}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(container.querySelector("svg")).not.toBeInTheDocument();
+  });
+
+  it("should wrap a long message instead of overflowing", () => {
+    render(
+      <SyncMessage
+        status="error"
+        message="Sync error: Storage error: Failed to write /a/very/long/path/cursor.tmp"
+      />,
+    );
+    expect(screen.getByText(/very\/long\/path/)).toHaveClass("break-words");
+  });
+
   it("should apply custom className", () => {
     const { container } = render(
       <SyncMessage message="Test" className="custom-class" />,

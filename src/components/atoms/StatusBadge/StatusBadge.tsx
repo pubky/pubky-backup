@@ -9,6 +9,7 @@ const statusBadgeVariants = cva(
         synced: "bg-pubky-green text-surface-dark",
         syncing: "bg-pubky-purple text-white",
         snapshot: "bg-pubky-blue text-surface-dark",
+        error: "bg-pubky-red text-white",
       },
     },
     defaultVariants: {
@@ -26,6 +27,7 @@ const statusTextMap = {
   syncing: "SYNCING",
   snapshot: "SNAPSHOT!",
   synced: "SYNCED",
+  error: "ERROR",
 } as const;
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {

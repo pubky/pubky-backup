@@ -9,9 +9,11 @@ import { Logger } from "@/lib";
  * Status information for the dashboard display
  */
 export interface StatusInfo {
-  badge: "snapshot" | "syncing" | "synced";
+  badge: "snapshot" | "syncing" | "synced" | "error";
   message: "snapshot-success" | "error" | "syncing" | "synced";
   text: string;
+  /** Set when the message is a backup error that a retry can clear */
+  retryable?: true;
 }
 
 /**
@@ -26,6 +28,8 @@ export interface DashboardState {
   countdownText: string;
   backupLocation: string | null;
   keys: string[];
+  /** The keys whose backup is in error */
+  erroredKeys: string[];
   statusInfo: StatusInfo;
 }
 
@@ -56,6 +60,11 @@ export function useDashboardState(): DashboardState {
 
   const appState = Hooks.useAppState();
   const keys = Hooks.useKeys();
+  const erroredKeys = Stores.useUIStore(
+    useShallow((s) =>
+      keys.filter((k) => s.keyStates[k]?.status.type === "Error"),
+    ),
+  );
 
   const [backupLocation, setBackupLocation] = useState<string | null>(null);
   useEffect(() => {
@@ -73,6 +82,8 @@ export function useDashboardState(): DashboardState {
   const nextSyncTime = appState.next_sync_time;
   const dataSize = appState.data_dir_size;
   const lastSyncTime = appState.last_sync_time;
+  const hasError = appState.keyState?.status.type === "Error";
+  const errorMessage = appState.backup_controller_error;
 
   const countdownText = Hooks.useCountdown(nextSyncTime, isSyncing);
 
@@ -87,7 +98,7 @@ export function useDashboardState(): DashboardState {
     }
     if (statusMessageMode === "snapshot-error") {
       return {
-        badge: "synced",
+        badge: hasError ? "error" : "synced",
         message: "error",
         text: "Failed to create snapshot",
       };
@@ -99,12 +110,20 @@ export function useDashboardState(): DashboardState {
         text: "Syncing data...",
       };
     }
+    if (hasError) {
+      return {
+        badge: "error",
+        message: "error",
+        text: errorMessage ?? "Backup failed",
+        retryable: true,
+      };
+    }
     return {
       badge: "synced",
       message: "synced",
       text: countdownText,
     };
-  }, [statusMessageMode, isSyncing, countdownText]);
+  }, [statusMessageMode, isSyncing, hasError, errorMessage, countdownText]);
 
   return {
     pubky,
@@ -115,6 +134,7 @@ export function useDashboardState(): DashboardState {
     countdownText,
     backupLocation,
     keys,
+    erroredKeys,
     statusInfo,
   };
 }

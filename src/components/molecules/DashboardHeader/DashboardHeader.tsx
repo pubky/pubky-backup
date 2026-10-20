@@ -8,6 +8,8 @@ interface KeyOption {
   pubky: string;
   isSelected: boolean;
   coverage?: BackupCoverage;
+  /** Whether the key's backup is in error */
+  hasError?: boolean;
 }
 
 export interface DashboardHeaderProps {
@@ -200,6 +202,7 @@ export function DashboardHeader({
                           />
                         </span>
                       )}
+                      {key.hasError && <Atoms.ErrorMarker size={12} />}
                       {key.isSelected && (
                         <Atoms.CheckIcon
                           size={14}

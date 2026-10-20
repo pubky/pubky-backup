@@ -33,6 +33,12 @@ describe("DashboardHeader", () => {
     expect(screen.getByText("SNAPSHOT!")).toBeInTheDocument();
   });
 
+  it("should render the status badge with error status", () => {
+    render(<DashboardHeader {...defaultProps} status="error" />);
+
+    expect(screen.getByText("ERROR")).toBeInTheDocument();
+  });
+
   it("should call onCopy when copy button is clicked", () => {
     const onCopy = vi.fn();
     render(<DashboardHeader {...defaultProps} onCopy={onCopy} />);
@@ -292,6 +298,30 @@ describe("DashboardHeader", () => {
         within(options[1]!).queryByTitle(
           "Public and private data are backed up",
         ),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("backup errors", () => {
+    it("should mark keys whose backup is in error in the key switcher", () => {
+      render(
+        <DashboardHeader
+          {...defaultProps}
+          keys={[
+            { pubky: "errored-key", isSelected: true, hasError: true },
+            { pubky: "healthy-key", isSelected: false },
+          ]}
+        />,
+      );
+
+      fireEvent.click(screen.getByTitle("Switch key"));
+      const options = screen.getAllByRole("option");
+
+      expect(
+        within(options[0]!).getByTitle("Backup failed"),
+      ).toBeInTheDocument();
+      expect(
+        within(options[1]!).queryByTitle("Backup failed"),
       ).not.toBeInTheDocument();
     });
   });
