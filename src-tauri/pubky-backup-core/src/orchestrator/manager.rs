@@ -439,8 +439,13 @@ impl BackupManager {
         // Re-validate before touching the errored controller
         self.validate_key(pubky).await?;
 
-        // Remove the errored controller
-        self.stop_controller(pubky)?;
+        // Remove the errored controller and let it end, so that it no longer
+        // writes the key's files and its last status comes before any of the
+        // new controller's
+        let handle = self.stop_controller(pubky)?;
+        if let Err(e) = handle.await {
+            warn!("Controller task for {} finished with error: {}", pubky, e);
+        }
 
         // Restart the controller
         self.start_controller(pubky.clone(), false).await?;

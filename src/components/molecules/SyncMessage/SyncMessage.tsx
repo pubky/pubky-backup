@@ -65,8 +65,14 @@ export function SyncMessage({
   return (
     <div className={cn(syncMessageVariants({ status }), className)}>
       <div className="flex flex-col items-start gap-0.5 flex-1 min-w-0">
+        {/* A long message, such as a raw backend error, is cut to three
+            lines so it can't push the rest of the screen out of the window */}
         <span
-          className={cn(textVariants({ status }), "break-words max-w-full")}
+          title={message}
+          className={cn(
+            textVariants({ status }),
+            "break-words max-w-full text-left line-clamp-3",
+          )}
         >
           {message}
         </span>
