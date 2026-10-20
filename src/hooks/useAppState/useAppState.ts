@@ -12,7 +12,6 @@ export interface DerivedAppState {
   last_sync_time: number | null;
   data_dir_size: number;
   backup_controller_error: string | null;
-  backup_running: boolean;
   keyState: KeyState | null;
 }
 
@@ -38,7 +37,6 @@ function deriveAppState(
       last_sync_time: null,
       data_dir_size: 0,
       backup_controller_error: null,
-      backup_running: false,
       keyState: null,
     };
   }
@@ -53,15 +51,12 @@ function deriveAppState(
       last_sync_time: null,
       data_dir_size: 0,
       backup_controller_error: null,
-      backup_running: true,
       keyState: null,
     };
   }
 
   const isSyncing =
     keyState.status.type === "Syncing" || keyState.status.type === "Starting";
-  const isError = keyState.status.type === "Error";
-  const isStopped = keyState.status.type === "Stopped";
 
   return {
     pubky: lastPubky,
@@ -70,7 +65,6 @@ function deriveAppState(
     last_sync_time: keyState.last_sync,
     data_dir_size: keyState.data_size,
     backup_controller_error: keyState.error?.message ?? null,
-    backup_running: !isStopped && !isError,
     keyState,
   };
 }

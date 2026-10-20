@@ -75,6 +75,8 @@ export function SyncMessage({
         {action ??
           (status === "syncing" ? (
             <Atoms.Spinner className={iconVariants({ status })} size={24} />
+          ) : status === "error" ? (
+            <Atoms.AlertIcon className={iconVariants({ status })} size={24} />
           ) : (
             <Atoms.CheckIcon className={iconVariants({ status })} size={24} />
           ))}
