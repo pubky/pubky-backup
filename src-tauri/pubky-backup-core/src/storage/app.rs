@@ -297,8 +297,9 @@ impl AppStorage {
 
     /// Store a pubky's mirror, for a [`BackupController`] to copy its backup to.
     ///
-    /// Storing a different homeserver than before forgets how far the previous
-    /// mirror was synced, so copying to the new one starts from the beginning.
+    /// Storing a mirror where there was none, or a different homeserver than
+    /// before, forgets how far any previous mirror was synced, so copying to
+    /// the new one starts from the beginning.
     ///
     /// Not for pubkys a [`BackupManager`] backs up: set their mirrors up
     /// through the manager instead, which keeps their mirror status in step
@@ -312,7 +313,7 @@ impl AppStorage {
         mirror: &StoredMirror,
     ) -> Result<(), StorageError> {
         let previous = self.read_mirror(pubky)?;
-        if previous.is_some_and(|previous| previous.homeserver != mirror.homeserver) {
+        if previous.is_none_or(|previous| previous.homeserver != mirror.homeserver) {
             self.key_storage(pubky)?.delete_mirror_cursors()?;
         }
         self.app_data.mirrors.write(pubky, mirror)
@@ -1151,5 +1152,88 @@ mod tests {
             "key directory should be listed without a manager"
         );
         assert_eq!(dirs[0], pubky.z32());
+    }
+
+    const MIRROR_HOMESERVER: &str = "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo";
+    const OTHER_HOMESERVER: &str = "z4e8s17cou9qmuia76iczxkwakp8xnck5qrfbzh8rbpiq1sugbuo";
+
+    fn stored_mirror(homeserver: &str) -> StoredMirror {
+        StoredMirror {
+            homeserver: PublicKey::from_str(homeserver).unwrap(),
+            session: Some("secret".to_string()),
+        }
+    }
+
+    async fn mirror_cursors(storage: &AppStorage, pubky: &PublicKey) -> [Option<u64>; 2] {
+        [
+            storage
+                .read_mirror_cursor(pubky, DataScope::Public)
+                .await
+                .unwrap(),
+            storage
+                .read_mirror_cursor(pubky, DataScope::Private)
+                .await
+                .unwrap(),
+        ]
+    }
+
+    async fn write_mirror_cursors(
+        storage: &AppStorage,
+        pubky: &PublicKey,
+        [public, private]: [u64; 2],
+    ) {
+        storage
+            .write_mirror_cursor(pubky, DataScope::Public, public)
+            .await
+            .unwrap();
+        storage
+            .write_mirror_cursor(pubky, DataScope::Private, private)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_write_mirror_without_previous_mirror_resets_cursors() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        // Left behind by a mirror batch that finished after its mirror was deleted
+        write_mirror_cursors(&storage, &pubky, [5, 6]).await;
+
+        storage
+            .write_mirror(&pubky, &stored_mirror(MIRROR_HOMESERVER))
+            .unwrap();
+
+        assert_eq!(mirror_cursors(&storage, &pubky).await, [None, None]);
+    }
+
+    #[tokio::test]
+    async fn test_write_mirror_with_other_homeserver_resets_cursors() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        storage
+            .write_mirror(&pubky, &stored_mirror(MIRROR_HOMESERVER))
+            .unwrap();
+        write_mirror_cursors(&storage, &pubky, [5, 6]).await;
+
+        storage
+            .write_mirror(&pubky, &stored_mirror(OTHER_HOMESERVER))
+            .unwrap();
+
+        assert_eq!(mirror_cursors(&storage, &pubky).await, [None, None]);
+    }
+
+    #[tokio::test]
+    async fn test_write_mirror_with_same_homeserver_keeps_cursors() {
+        let (storage, _temp_dir) = create_test_storage();
+        let pubky = PublicKey::from_str(TEST_PUBKY).unwrap();
+        let stored = stored_mirror(MIRROR_HOMESERVER);
+        storage.write_mirror(&pubky, &stored).unwrap();
+        write_mirror_cursors(&storage, &pubky, [5, 6]).await;
+
+        storage
+            .write_mirror(&pubky, &stored.without_session())
+            .unwrap();
+
+        assert_eq!(mirror_cursors(&storage, &pubky).await, [Some(5), Some(6)]);
     }
 }
