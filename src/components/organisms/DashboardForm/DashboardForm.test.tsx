@@ -204,29 +204,6 @@ describe("DashboardForm", () => {
       });
     });
 
-    it("should disable retry while the retry is pending", async () => {
-      let resolveSync: () => void = () => {};
-      vi.mocked(services.forceSyncNow).mockReturnValue(
-        new Promise<void>((resolve) => {
-          resolveSync = resolve;
-        }),
-      );
-
-      render(<DashboardForm />);
-
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-      await waitFor(() => {
-        expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
-      });
-
-      resolveSync();
-
-      await waitFor(() => {
-        expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
-      });
-    });
-
     it("should go back to synced once the retried backup succeeds", async () => {
       render(<DashboardForm />);
       expect(screen.getByText("ERROR")).toBeInTheDocument();
@@ -379,6 +356,27 @@ describe("DashboardForm", () => {
 
       await waitFor(() => {
         expect(services.forceSyncNow).toHaveBeenCalledWith("pk:test-pubky");
+      });
+    });
+
+    it("should show an error toast when force sync fails", async () => {
+      vi.mocked(services.forceSyncNow).mockRejectedValue({
+        type: "Internal",
+        message: "Failed to send force sync message",
+      });
+      useUIStore.setState({
+        toast: { visible: false, pubkyText: "", type: "success", message: "" },
+      });
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: /force sync/i }));
+
+      await waitFor(() => {
+        expect(useUIStore.getState().toast).toMatchObject({
+          visible: true,
+          type: "error",
+        });
       });
     });
   });

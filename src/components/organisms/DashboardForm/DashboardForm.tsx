@@ -20,7 +20,6 @@ export function DashboardForm() {
   const {
     handleCopy,
     handleForceSync,
-    handleRetry,
     handleSnapshot,
     handleOpenDataDir,
     handleSelectKey,
@@ -53,10 +52,11 @@ export function DashboardForm() {
         status={statusInfo.message}
         message={statusInfo.text}
         action={
+          // An errored key's controller is still running, so a forced sync retries it
           statusInfo.retryable ? (
             <Atoms.Button
               variant="secondary"
-              onClick={() => void handleRetry(pubky)}
+              onClick={() => void handleForceSync(pubky)}
               disabled={isForceSyncing}
               className="py-2 px-4 shrink-0"
             >

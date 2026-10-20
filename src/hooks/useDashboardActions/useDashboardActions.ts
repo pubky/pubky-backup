@@ -12,7 +12,6 @@ const SNAPSHOT_MESSAGE_DURATION_MS = 3000;
 export interface DashboardActions {
   handleCopy: (pubky: string | null) => void;
   handleForceSync: (pubky: string | null) => Promise<void>;
-  handleRetry: (pubky: string | null) => Promise<void>;
   handleSnapshot: (pubky: string | null) => Promise<void>;
   handleOpenDataDir: () => Promise<void>;
   handleSelectKey: (selectedPubky: string) => void;
@@ -106,20 +105,6 @@ export function useDashboardActions(): DashboardActions {
         Logger.debug("DashboardActions", "Force sync triggered");
       } catch (error: unknown) {
         Logger.error("DashboardActions", "Force sync failed", { error });
-      }
-    },
-    [forceSync],
-  );
-
-  // An errored key's controller is still running, so a forced sync retries it
-  const handleRetry = useCallback(
-    async (pubky: string | null) => {
-      if (pubky === null) return;
-      try {
-        await forceSync(pubky);
-        Logger.debug("DashboardActions", "Retry triggered");
-      } catch (error: unknown) {
-        Logger.error("DashboardActions", "Retry failed", { error });
         Utils.handleBackendError(error);
       }
     },
@@ -161,7 +146,6 @@ export function useDashboardActions(): DashboardActions {
   return {
     handleCopy,
     handleForceSync,
-    handleRetry,
     handleSnapshot,
     handleOpenDataDir,
     handleSelectKey,
