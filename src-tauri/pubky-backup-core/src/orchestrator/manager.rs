@@ -888,7 +888,7 @@ mod tests {
     use super::*;
     use crate::orchestrator::types::KeyError;
     use crate::storage::AppStorage;
-    use crate::sync::{DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS};
+    use crate::sync::{ControllerStatus, DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS};
     use crate::TEST_PUBKY;
     use std::str::FromStr;
     use std::time::Duration;
@@ -1113,6 +1113,54 @@ mod tests {
             .unwrap();
 
         assert_eq!(update.pubky, pubky);
+    }
+
+    #[tokio::test]
+    async fn test_ended_from_a_replaced_controller_does_not_stop_the_key() {
+        let (_dir, manager) = setup().await;
+        let pubky = test_pubky();
+        manager.add_key(pubky.clone()).await.unwrap();
+        let mut rx = manager.subscribe();
+        let send = |status| {
+            manager
+                .status_tx
+                .send(ControllerUpdate {
+                    pubky: pubky.clone(),
+                    status,
+                })
+                .unwrap();
+        };
+
+        // What the old controller sends when a retry has replaced it
+        send(ControllerStatus::Ended);
+        // The listener handles updates in order, so once this marker is
+        // broadcast, the Ended has been handled
+        const MARKER_EVENTS: usize = 4242;
+        send(ControllerStatus::Syncing {
+            events_processed: MARKER_EVENTS,
+        });
+
+        let statuses = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut statuses = Vec::new();
+            loop {
+                let update = rx.recv().await.unwrap();
+                let status = update.state.status;
+                statuses.push(status.clone());
+                if status
+                    == (KeyStatus::Syncing {
+                        events_processed: MARKER_EVENTS,
+                    })
+                {
+                    return statuses;
+                }
+            }
+        })
+        .await
+        .expect("The marker update should be broadcast");
+        assert!(
+            !statuses.contains(&KeyStatus::Stopped),
+            "Broadcast statuses: {statuses:?}"
+        );
     }
 
     #[tokio::test]

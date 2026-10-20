@@ -295,6 +295,14 @@ impl StatusListener {
             _ => {}
         }
 
+        // A controller ends only after `stop_controller` has stopped tracking it,
+        // so its Ended never describes the key's current controller: the key is
+        // gone, or was retried or re-added with a new controller since
+        if matches!(status, ControllerStatus::Ended) {
+            debug!("Ignoring end of an untracked controller of {}", pubky);
+            return;
+        }
+
         // Skip updates for keys that have been removed
         let Some(previous) = self.inner.read().sync_state(&pubky) else {
             debug!("Ignoring status update for removed key {}", pubky);
