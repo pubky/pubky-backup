@@ -520,15 +520,6 @@ impl BackupManager {
             .any(|k| matches!(k.sync.status, KeyStatus::Error))
     }
 
-    /// Check if any key is running (not stopped).
-    pub fn any_running(&self) -> bool {
-        let inner = self.inner.read();
-        inner
-            .keys
-            .values()
-            .any(|k| !matches!(k.sync.status, KeyStatus::Stopped))
-    }
-
     /// Create a snapshot (zip) for a key.
     ///
     /// Saves to `{data_dir}/keys/{pubky}/snapshots/{timestamp}.zip`.
@@ -888,7 +879,7 @@ mod tests {
     use super::*;
     use crate::orchestrator::types::KeyError;
     use crate::storage::AppStorage;
-    use crate::sync::{DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS};
+    use crate::sync::{ControllerStatus, DEFAULT_SYNC_INTERVAL_SECONDS, MIN_SYNC_INTERVAL_SECONDS};
     use crate::TEST_PUBKY;
     use std::str::FromStr;
     use std::time::Duration;
@@ -1116,6 +1107,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_ended_of_a_replaced_controller_is_not_broadcast() {
+        let (_dir, manager) = setup().await;
+        let pubky = test_pubky();
+        let mut rx = manager.subscribe();
+        manager.add_key(pubky.clone()).await.unwrap();
+        async fn next_status(rx: &mut broadcast::Receiver<KeyUpdate>) -> KeyStatus {
+            tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("A status update should be broadcast")
+                .unwrap()
+                .state
+                .status
+        }
+        // Once the first sync is done, the key's controller sends nothing
+        // until the next interval
+        while next_status(&mut rx).await != KeyStatus::Idle {}
+        let send = |status| {
+            manager
+                .status_tx
+                .send(ControllerUpdate {
+                    pubky: pubky.clone(),
+                    status,
+                })
+                .unwrap();
+        };
+
+        // What the old controller sends when a retry has replaced it
+        send(ControllerStatus::Ended);
+        // The listener handles updates in order, so if it handled the Ended,
+        // the key's update would be broadcast before this marker
+        const MARKER_EVENTS: usize = 4242;
+        send(ControllerStatus::Syncing {
+            events_processed: MARKER_EVENTS,
+        });
+
+        assert_eq!(
+            next_status(&mut rx).await,
+            KeyStatus::Syncing {
+                events_processed: MARKER_EVENTS,
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn test_manager_resumes_stored_keys() {
         let temp_dir = TempDir::new().unwrap();
 
@@ -1242,20 +1277,6 @@ mod tests {
             !manager.any_syncing(),
             "Should not be syncing after initial sync completes in dev mode"
         );
-    }
-
-    #[tokio::test]
-    async fn test_manager_any_running() {
-        let (_dir, manager) = setup().await;
-
-        // No keys - none running
-        assert!(!manager.any_running());
-
-        let pubky = test_pubky();
-        manager.add_key(pubky).await.unwrap();
-
-        // After adding, should be running
-        assert!(manager.any_running());
     }
 
     #[tokio::test]
