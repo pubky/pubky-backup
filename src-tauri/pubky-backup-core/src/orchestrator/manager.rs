@@ -520,15 +520,6 @@ impl BackupManager {
             .any(|k| matches!(k.sync.status, KeyStatus::Error))
     }
 
-    /// Check if any key is running (not stopped).
-    pub fn any_running(&self) -> bool {
-        let inner = self.inner.read();
-        inner
-            .keys
-            .values()
-            .any(|k| !matches!(k.sync.status, KeyStatus::Stopped))
-    }
-
     /// Create a snapshot (zip) for a key.
     ///
     /// Saves to `{data_dir}/keys/{pubky}/snapshots/{timestamp}.zip`.
@@ -1116,11 +1107,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ended_from_a_replaced_controller_does_not_stop_the_key() {
+    async fn test_ended_of_a_replaced_controller_is_not_broadcast() {
         let (_dir, manager) = setup().await;
         let pubky = test_pubky();
-        manager.add_key(pubky.clone()).await.unwrap();
         let mut rx = manager.subscribe();
+        manager.add_key(pubky.clone()).await.unwrap();
+        async fn next_status(rx: &mut broadcast::Receiver<KeyUpdate>) -> KeyStatus {
+            tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("A status update should be broadcast")
+                .unwrap()
+                .state
+                .status
+        }
+        // Once the first sync is done, the key's controller sends nothing
+        // until the next interval
+        while next_status(&mut rx).await != KeyStatus::Idle {}
         let send = |status| {
             manager
                 .status_tx
@@ -1133,33 +1135,18 @@ mod tests {
 
         // What the old controller sends when a retry has replaced it
         send(ControllerStatus::Ended);
-        // The listener handles updates in order, so once this marker is
-        // broadcast, the Ended has been handled
+        // The listener handles updates in order, so if it handled the Ended,
+        // the key's update would be broadcast before this marker
         const MARKER_EVENTS: usize = 4242;
         send(ControllerStatus::Syncing {
             events_processed: MARKER_EVENTS,
         });
 
-        let statuses = tokio::time::timeout(Duration::from_secs(5), async {
-            let mut statuses = Vec::new();
-            loop {
-                let update = rx.recv().await.unwrap();
-                let status = update.state.status;
-                statuses.push(status.clone());
-                if status
-                    == (KeyStatus::Syncing {
-                        events_processed: MARKER_EVENTS,
-                    })
-                {
-                    return statuses;
-                }
+        assert_eq!(
+            next_status(&mut rx).await,
+            KeyStatus::Syncing {
+                events_processed: MARKER_EVENTS,
             }
-        })
-        .await
-        .expect("The marker update should be broadcast");
-        assert!(
-            !statuses.contains(&KeyStatus::Stopped),
-            "Broadcast statuses: {statuses:?}"
         );
     }
 
@@ -1290,20 +1277,6 @@ mod tests {
             !manager.any_syncing(),
             "Should not be syncing after initial sync completes in dev mode"
         );
-    }
-
-    #[tokio::test]
-    async fn test_manager_any_running() {
-        let (_dir, manager) = setup().await;
-
-        // No keys - none running
-        assert!(!manager.any_running());
-
-        let pubky = test_pubky();
-        manager.add_key(pubky).await.unwrap();
-
-        // After adding, should be running
-        assert!(manager.any_running());
     }
 
     #[tokio::test]

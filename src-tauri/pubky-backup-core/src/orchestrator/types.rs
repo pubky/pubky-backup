@@ -206,8 +206,6 @@ pub enum KeyStatus {
     },
     /// Key is idle, waiting for next sync interval
     Idle,
-    /// Key backup has been stopped
-    Stopped,
     /// Key backup encountered an error
     Error,
 }

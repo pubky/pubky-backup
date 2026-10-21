@@ -133,7 +133,6 @@ while let Ok(update) = rx.recv().await {
                 println!("Error: {}", err.message);
             }
         }
-        KeyStatus::Stopped => println!("Backup stopped"),
     }
 }
 ```

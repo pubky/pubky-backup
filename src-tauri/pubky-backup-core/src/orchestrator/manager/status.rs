@@ -113,12 +113,12 @@ impl StatusHandler {
                     ..self.base_state(KeyStatus::Idle)
                 }
             }
-            ControllerStatus::Ended => self.base_state(KeyStatus::Stopped),
             // Never reached: the listener handles notices about the key's
-            // session or mirror with its sign-in or mirror status instead of
-            // calling `handle`. Returning the previous state keeps the match
-            // exhaustive without a panic.
-            ControllerStatus::SessionRejected { .. }
+            // session or mirror with its sign-in or mirror status, and ignores
+            // the end of a controller, instead of calling `handle`. Returning
+            // the previous state keeps the match exhaustive without a panic.
+            ControllerStatus::Ended
+            | ControllerStatus::SessionRejected { .. }
             | ControllerStatus::MirrorSessionRejected { .. }
             | ControllerStatus::MirrorFailed { .. }
             | ControllerStatus::MirrorRecovered => self.previous.clone(),
@@ -585,18 +585,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_starting_and_ended_write_no_activity() {
+    async fn test_starting_writes_no_activity() {
         let (_dir, storage, pubky) = setup();
 
         let h = handler(&pubky, &storage, 0, None, KeyStatus::Starting);
 
         h.handle(&ControllerStatus::Starting).await;
-        h.handle(&ControllerStatus::Ended).await;
 
         let entries = storage.read_activity(&pubky, 10).await;
         assert!(
             entries.is_empty(),
-            "Starting and Ended should not produce activity entries"
+            "Starting should not produce activity entries"
         );
     }
 

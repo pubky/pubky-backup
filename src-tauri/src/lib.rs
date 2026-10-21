@@ -410,7 +410,7 @@ fn update_tray_icon(app: &AppHandle, manager: &BackupManager) {
             KeyStatus::Syncing { .. } => has_syncing = true,
             KeyStatus::Starting => has_starting = true,
             KeyStatus::Error => has_error = true,
-            KeyStatus::Idle | KeyStatus::Stopped => {}
+            KeyStatus::Idle => {}
         }
     }
 

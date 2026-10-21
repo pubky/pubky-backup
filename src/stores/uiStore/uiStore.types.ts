@@ -38,7 +38,6 @@ export type KeyStatus =
   | { type: "Starting" }
   | { type: "Syncing"; events_processed: number }
   | { type: "Idle" }
-  | { type: "Stopped" }
   | { type: "Error" };
 
 // Whether a key is signed in. Private data is backed up only while SignedIn.
