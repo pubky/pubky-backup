@@ -5,7 +5,7 @@
 
 use super::common::Storage;
 use super::error::StorageError;
-use crate::orchestrator::types::ActivityEntry;
+use crate::orchestrator::types::{ActivityEntry, StackedActivity};
 use futures_lite::StreamExt;
 use log::{debug, error, info, warn};
 use pubky::{PubkyResource, PublicKey};
@@ -226,10 +226,11 @@ impl KeyStorage {
         Ok(())
     }
 
-    /// Read activity entries, newest first, up to `limit`.
+    /// Read activity, newest first, up to `limit` stacks of entries that
+    /// recurred back to back (see [`StackedActivity`]).
     ///
     /// Reads from the end of the file to avoid loading the entire log into memory.
-    pub async fn read_activity(&self, limit: usize) -> Vec<ActivityEntry> {
+    pub async fn read_activity(&self, limit: usize) -> Vec<StackedActivity> {
         let path = self
             .key_dir
             .join(STATE_DIR_NAME)
@@ -239,8 +240,8 @@ impl KeyStorage {
             .unwrap_or_default()
     }
 
-    /// Read the last `limit` lines from the activity log, newest first.
-    fn read_activity_blocking(path: &Path, limit: usize) -> Vec<ActivityEntry> {
+    /// Read the last `limit` stacks from the activity log, newest first.
+    fn read_activity_blocking(path: &Path, limit: usize) -> Vec<StackedActivity> {
         let mut file = match File::open(path) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
@@ -278,16 +279,17 @@ impl KeyStorage {
             let text = String::from_utf8_lossy(&buf);
             // If we started mid-line (start > 0), the first partial line
             // is correctly skipped by filter_map since it won't parse as JSON.
-            let entries: Vec<ActivityEntry> = text
-                .lines()
-                .rev()
-                .filter_map(|line| serde_json::from_str(line).ok())
-                .take(limit)
-                .collect();
+            let mut stacks = StackedActivity::stack(
+                text.lines()
+                    .rev()
+                    .filter_map(|line| serde_json::from_str::<ActivityEntry>(line).ok()),
+            );
 
-            // If we got enough entries or already read the whole file, return.
-            if entries.len() >= limit || chunk_size >= file_len {
-                return entries;
+            // The oldest stack may go on in the part of the file not read yet,
+            // so the ones before it are complete only once there is one more
+            if stacks.len() > limit || chunk_size >= file_len {
+                stacks.truncate(limit);
+                return stacks;
             }
 
             // Double the chunk and retry.
@@ -731,9 +733,9 @@ mod tests {
 
         let entries = storage.read_activity(10).await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].activity_type, ActivityType::InitialBackup);
-        assert_eq!(entries[0].message, "Initial backup successful");
-        assert_eq!(entries[0].timestamp, 1000);
+        assert_eq!(entries[0].latest.activity_type, ActivityType::InitialBackup);
+        assert_eq!(entries[0].latest.message, "Initial backup successful");
+        assert_eq!(entries[0].latest.timestamp, 1000);
     }
 
     #[tokio::test]
@@ -755,9 +757,9 @@ mod tests {
         let entries = storage.read_activity(10).await;
         assert_eq!(entries.len(), 5);
         // Newest (highest timestamp) first
-        assert_eq!(entries[0].timestamp, 500);
-        assert_eq!(entries[1].timestamp, 400);
-        assert_eq!(entries[4].timestamp, 100);
+        assert_eq!(entries[0].latest.timestamp, 500);
+        assert_eq!(entries[1].latest.timestamp, 400);
+        assert_eq!(entries[4].latest.timestamp, 100);
     }
 
     #[tokio::test]
@@ -779,9 +781,76 @@ mod tests {
         let entries = storage.read_activity(3).await;
         assert_eq!(entries.len(), 3);
         // Should be the 3 newest
-        assert_eq!(entries[0].timestamp, 1000);
-        assert_eq!(entries[1].timestamp, 900);
-        assert_eq!(entries[2].timestamp, 800);
+        assert_eq!(entries[0].latest.timestamp, 1000);
+        assert_eq!(entries[1].latest.timestamp, 900);
+        assert_eq!(entries[2].latest.timestamp, 800);
+    }
+
+    /// Write an activity entry with the given type, message and timestamp.
+    async fn write_entry(
+        storage: &KeyStorage,
+        activity_type: crate::orchestrator::types::ActivityType,
+        message: &str,
+        timestamp: u64,
+    ) {
+        storage
+            .write_activity(&ActivityEntry {
+                activity_type,
+                message: message.to_string(),
+                timestamp,
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_activity_stacks_entries_repeated_back_to_back() {
+        use crate::orchestrator::types::ActivityType;
+        let (storage, _temp_dir) = create_test_key_storage();
+        for timestamp in [100, 200, 300] {
+            write_entry(&storage, ActivityType::SyncFailed, "Offline", timestamp).await;
+        }
+
+        let stacks = storage.read_activity(10).await;
+
+        assert_eq!(stacks.len(), 1);
+        assert_eq!(stacks[0].latest.message, "Offline");
+        assert_eq!(stacks[0].count, 3);
+        assert_eq!(stacks[0].latest.timestamp, 300);
+        assert_eq!(stacks[0].first_timestamp, 100);
+    }
+
+    #[tokio::test]
+    async fn test_read_activity_stacks_only_identical_neighbours() {
+        use crate::orchestrator::types::ActivityType;
+        let (storage, _temp_dir) = create_test_key_storage();
+        write_entry(&storage, ActivityType::SyncFailed, "Offline", 100).await;
+        write_entry(&storage, ActivityType::FilesBackedUp, "Offline", 200).await;
+        write_entry(&storage, ActivityType::SyncFailed, "Offline", 300).await;
+        write_entry(&storage, ActivityType::SyncFailed, "Rate limited", 400).await;
+
+        let stacks = storage.read_activity(10).await;
+
+        let timestamps: Vec<_> = stacks.iter().map(|s| s.latest.timestamp).collect();
+        assert_eq!(timestamps, [400, 300, 200, 100]);
+        assert!(stacks.iter().all(|s| s.count == 1));
+    }
+
+    #[tokio::test]
+    async fn test_read_activity_counts_a_stack_longer_than_the_first_read() {
+        use crate::orchestrator::types::ActivityType;
+        let (storage, _temp_dir) = create_test_key_storage();
+        write_entry(&storage, ActivityType::InitialBackup, "Initial backup", 1).await;
+        // Far more than the 512 bytes read first for a limit of one
+        for timestamp in 2..=41 {
+            write_entry(&storage, ActivityType::SyncFailed, "Offline", timestamp).await;
+        }
+
+        let stacks = storage.read_activity(1).await;
+
+        assert_eq!(stacks.len(), 1);
+        assert_eq!(stacks[0].count, 40);
+        assert_eq!(stacks[0].first_timestamp, 2);
     }
 
     #[tokio::test]
@@ -830,8 +899,8 @@ mod tests {
 
         let entries = storage.read_activity(10).await;
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].timestamp, 2000);
-        assert_eq!(entries[1].timestamp, 1000);
+        assert_eq!(entries[0].latest.timestamp, 2000);
+        assert_eq!(entries[1].latest.timestamp, 1000);
     }
 
     #[tokio::test]
@@ -906,7 +975,10 @@ mod tests {
 
         let entries = storage.read_activity(types.len()).await;
         // Newest first
-        let read_back: Vec<ActivityType> = entries.into_iter().map(|e| e.activity_type).collect();
+        let read_back: Vec<ActivityType> = entries
+            .into_iter()
+            .map(|e| e.latest.activity_type)
+            .collect();
         let expected: Vec<ActivityType> = types.iter().rev().cloned().collect();
         assert_eq!(read_back, expected);
     }

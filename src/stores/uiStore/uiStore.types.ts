@@ -11,10 +11,19 @@ export type ActivityType =
   | "mirror_session_expired"
   | "mirror_failed";
 
-export interface ActivityEntry {
+/**
+ * An activity entry, stacked with the identical entries just before it, such
+ * as a sync that keeps failing the same way.
+ */
+export interface StackedActivity {
   type: ActivityType;
   message: string;
+  /** When it last occurred */
   timestamp: number;
+  /** How many times it occurred in a row */
+  count: number;
+  /** When it first occurred in this run */
+  first_timestamp: number;
 }
 
 export type Screen = "startup" | "dashboard";

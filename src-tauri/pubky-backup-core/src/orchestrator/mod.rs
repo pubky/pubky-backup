@@ -64,5 +64,5 @@ pub use error::OrchestratorError;
 pub use manager::{BackupManager, MAX_KEYS};
 pub use types::{
     ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyError, KeyState, KeyStatus,
-    KeyUpdate, MirrorStatus,
+    KeyUpdate, MirrorStatus, StackedActivity,
 };

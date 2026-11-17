@@ -252,6 +252,48 @@ pub struct ActivityEntry {
     pub timestamp: u64,
 }
 
+/// An activity entry that recurred back to back, such as a sync that keeps
+/// failing the same way, shown once with how often it happened.
+#[derive(Clone, Debug, Serialize)]
+pub struct StackedActivity {
+    /// The newest occurrence
+    #[serde(flatten)]
+    pub latest: ActivityEntry,
+    /// How many times it occurred in a row
+    pub count: usize,
+    /// When it first occurred in this run
+    pub first_timestamp: u64,
+}
+
+impl StackedActivity {
+    fn new(entry: ActivityEntry) -> Self {
+        Self {
+            first_timestamp: entry.timestamp,
+            latest: entry,
+            count: 1,
+        }
+    }
+
+    /// Stack entries, newest first, merging each into the one before it when
+    /// they have the same type and message.
+    pub(crate) fn stack(entries: impl IntoIterator<Item = ActivityEntry>) -> Vec<Self> {
+        let mut stacks: Vec<Self> = Vec::new();
+        for entry in entries {
+            match stacks.last_mut() {
+                Some(stack)
+                    if stack.latest.activity_type == entry.activity_type
+                        && stack.latest.message == entry.message =>
+                {
+                    stack.count += 1;
+                    stack.first_timestamp = entry.timestamp;
+                }
+                _ => stacks.push(Self::new(entry)),
+            }
+        }
+        stacks
+    }
+}
+
 fn serialize_pubky<S>(pubky: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,

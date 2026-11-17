@@ -26,8 +26,8 @@ use super::discovery;
 use super::error::OrchestratorError;
 use super::sync_interval::SyncInterval;
 use super::types::{
-    ActivityEntry, ActivityType, AuthStatus, BackupManagerConfig, KeyState, KeyStatus, KeyUpdate,
-    MirrorStatus,
+    ActivityType, AuthStatus, BackupManagerConfig, KeyState, KeyStatus, KeyUpdate, MirrorStatus,
+    StackedActivity,
 };
 use crate::storage::AppStorage;
 use crate::sync::{BackupController, ControllerCommand, ControllerUpdate};
@@ -553,8 +553,12 @@ impl BackupManager {
         Ok(path)
     }
 
-    /// Get recent activity entries for a key.
-    pub async fn get_activity(&self, pubky: &PublicKey, limit: usize) -> Vec<ActivityEntry> {
+    /// Get a key's recent activity, newest first, up to `limit` entries.
+    ///
+    /// Entries that recur back to back with the same type and message, such
+    /// as a sync that keeps failing the same way, come as one
+    /// [`StackedActivity`] with their count.
+    pub async fn get_activity(&self, pubky: &PublicKey, limit: usize) -> Vec<StackedActivity> {
         self.storage.read_activity(pubky, limit).await
     }
 

@@ -147,7 +147,7 @@ impl StatusHandler {
                         .read_activity(&self.pubky, INITIAL_BACKUP_SCAN_LIMIT)
                         .await
                         .iter()
-                        .any(|e| e.activity_type == ActivityType::InitialBackup);
+                        .any(|e| e.latest.activity_type == ActivityType::InitialBackup);
 
                 if is_initial {
                     let count = match &self.previous.status {
@@ -458,9 +458,9 @@ mod tests {
 
         let entries = storage.read_activity(&pubky, 10).await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].activity_type, ActivityType::InitialBackup);
+        assert_eq!(entries[0].latest.activity_type, ActivityType::InitialBackup);
         assert_eq!(
-            entries[0].message,
+            entries[0].latest.message,
             "Initial backup successful — 0 new files backed up"
         );
     }
@@ -478,9 +478,9 @@ mod tests {
 
         let entries = storage.read_activity(&pubky, 10).await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].activity_type, ActivityType::InitialBackup);
+        assert_eq!(entries[0].latest.activity_type, ActivityType::InitialBackup);
         assert_eq!(
-            entries[0].message,
+            entries[0].latest.message,
             "Initial backup successful — 18 new files backed up"
         );
     }
@@ -513,8 +513,8 @@ mod tests {
         let entries = storage.read_activity(&pubky, 10).await;
         assert_eq!(entries.len(), 2);
         // Newest should be FilesBackedUp, NOT a second InitialBackup
-        assert_eq!(entries[0].activity_type, ActivityType::FilesBackedUp);
-        assert_eq!(entries[0].message, "3 new files backed up");
+        assert_eq!(entries[0].latest.activity_type, ActivityType::FilesBackedUp);
+        assert_eq!(entries[0].latest.message, "3 new files backed up");
     }
 
     #[tokio::test]
@@ -530,8 +530,8 @@ mod tests {
 
         let entries = storage.read_activity(&pubky, 10).await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].activity_type, ActivityType::FilesBackedUp);
-        assert_eq!(entries[0].message, "5 new files backed up");
+        assert_eq!(entries[0].latest.activity_type, ActivityType::FilesBackedUp);
+        assert_eq!(entries[0].latest.message, "5 new files backed up");
     }
 
     #[tokio::test]
@@ -547,7 +547,7 @@ mod tests {
 
         let entries = storage.read_activity(&pubky, 10).await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].message, "1 new file backed up");
+        assert_eq!(entries[0].latest.message, "1 new file backed up");
     }
 
     #[tokio::test]
@@ -580,8 +580,8 @@ mod tests {
 
         let entries = storage.read_activity(&pubky, 10).await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].activity_type, ActivityType::SyncFailed);
-        assert_eq!(entries[0].message, "Connection refused");
+        assert_eq!(entries[0].latest.activity_type, ActivityType::SyncFailed);
+        assert_eq!(entries[0].latest.message, "Connection refused");
     }
 
     #[tokio::test]

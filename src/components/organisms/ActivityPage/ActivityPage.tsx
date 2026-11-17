@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useUIStore } from "@/stores/uiStore";
-import type { ActivityEntry, ActivityType } from "@/stores/uiStore";
+import type { ActivityType, StackedActivity } from "@/stores/uiStore";
 import { getActivity, openSnapshotsDir } from "@/services/tauri-commands";
 import { formatRelativeTime } from "@/utils/format";
 import * as Atoms from "@/components/atoms";
@@ -14,7 +14,7 @@ const FAILURE_TYPES: ActivityType[] = [
 ];
 
 export function ActivityPage() {
-  const [entries, setEntries] = useState<ActivityEntry[]>([]);
+  const [entries, setEntries] = useState<StackedActivity[]>([]);
   const lastPubky = useUIStore((s) => s.lastPubky);
   const keyState = useUIStore((s) =>
     s.lastPubky ? s.keyStates[s.lastPubky] : undefined,
@@ -102,6 +102,8 @@ export function ActivityPage() {
               </div>
               <span className="text-sm text-text-secondary leading-5 pl-6">
                 {formatRelativeTime(entry.timestamp)}
+                {entry.count > 1 &&
+                  ` · ${entry.count} times, first ${formatRelativeTime(entry.first_timestamp).toLowerCase()}`}
               </span>
             </div>
           ))
