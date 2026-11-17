@@ -5,12 +5,13 @@ use pubky::PublicKey;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_testnet_mode, parse_pubky, AppStorage, BackupManager, BackupManagerConfig, KeyState,
-    KeyStatus, StackedActivity,
+    is_testnet_mode, AppStorage, BackupManager, BackupManagerConfig, KeyState, KeyStatus,
+    StackedActivity,
 };
 use tauri::{
     ipc::Channel,
@@ -89,9 +90,13 @@ fn manager_if_ready(app: &AppHandle) -> Option<Arc<BackupManager>> {
         .and_then(|slot| slot.clone())
 }
 
-/// Parse a pubky z32 string, mapping errors to [`BackupAppError::InvalidPubkyFormat`].
+/// Parse a pubky, bare z32 or with the `pubky` prefix, mapping errors to
+/// [`BackupAppError::InvalidPubkyFormat`].
+///
+/// The SDK strips the prefix only when a full z32 key follows it, so a bare
+/// key that itself starts with `pubky` is kept whole.
 fn parse_pubky_for_command(pubky_str: &str) -> Result<PublicKey, BackupAppError> {
-    parse_pubky(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
+    PublicKey::from_str(pubky_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
         message: e.to_string(),
     })
 }
@@ -290,7 +295,7 @@ async fn start_mirror(
 ) -> Result<String, BackupAppError> {
     let pubky = parse_pubky_for_command(pubky_str)?;
     let homeserver =
-        parse_pubky(homeserver_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
+        PublicKey::from_str(homeserver_str).map_err(|e| BackupAppError::InvalidPubkyFormat {
             message: format!("Invalid homeserver key: {}", e),
         })?;
     let request = get_manager(&app)
@@ -534,4 +539,29 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BARE_PUBKY: &str = "gabri5dk51q1c1kzi53hjpqw5yhmw1nqsryzsfx5kubd7jpm63jy";
+
+    #[test]
+    fn test_parse_pubky_for_command_strips_pubky_prefix() {
+        let prefixed = format!("pubky{BARE_PUBKY}");
+
+        let pubky = parse_pubky_for_command(&prefixed).unwrap();
+
+        assert_eq!(pubky.z32(), BARE_PUBKY);
+    }
+
+    #[test]
+    fn test_parse_pubky_for_command_keeps_bare_key_that_starts_with_pubky() {
+        let bare = "pubkyydk51q1c1kzi53hjpqw5yhmw1nqsryzsfx5kubd7jpm63jy";
+
+        let pubky = parse_pubky_for_command(bare).unwrap();
+
+        assert_eq!(pubky.z32(), bare);
+    }
 }
