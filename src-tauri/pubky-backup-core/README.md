@@ -113,6 +113,7 @@ let config = BackupManagerConfig {
 | `get_keys()` | List all managed pubkys |
 | `subscribe()` | Subscribe to status updates for all keys |
 | `create_snapshot(pubky)` | Create a zip snapshot of a key's data |
+| `get_activity(pubky, limit)` | A key's recent activity, newest first; entries repeated back to back come stacked with their count |
 | `data_dir()` | Get the data directory path |
 | `shutdown()` | Gracefully stop all backups |
 

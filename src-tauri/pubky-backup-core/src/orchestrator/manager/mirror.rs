@@ -898,7 +898,7 @@ mod tests {
         let entries = manager.get_activity(&pubky, 10).await;
         assert!(entries
             .iter()
-            .any(|e| e.activity_type == ActivityType::MirrorStopped));
+            .any(|e| e.latest.activity_type == ActivityType::MirrorStopped));
         assert_eq!(
             rx.try_recv().unwrap().state.mirror,
             MirrorStatus::NotMirrored
@@ -930,7 +930,7 @@ mod tests {
         let entries = manager.get_activity(&pubky, 10).await;
         assert!(!entries
             .iter()
-            .any(|e| e.activity_type == ActivityType::MirrorStopped));
+            .any(|e| e.latest.activity_type == ActivityType::MirrorStopped));
     }
 
     #[tokio::test]

@@ -4,7 +4,7 @@
  */
 
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { ActivityEntry, KeyState } from "@/stores/uiStore";
+import type { KeyState, StackedActivity } from "@/stores/uiStore";
 import type { BackendError } from "@/types/backend-errors";
 import { isBackendError } from "@/types/backend-errors";
 
@@ -324,9 +324,11 @@ export async function setBackupLocation(newParent: string): Promise<string> {
  * @returns Array of activity entries, newest first
  * @throws {BackendError} If fetching activity fails
  */
-export async function getActivity(pubkyStr: string): Promise<ActivityEntry[]> {
+export async function getActivity(
+  pubkyStr: string,
+): Promise<StackedActivity[]> {
   try {
-    return await invoke<ActivityEntry[]>("get_activity", { pubkyStr });
+    return await invoke<StackedActivity[]>("get_activity", { pubkyStr });
   } catch (error: unknown) {
     throw normalizeError(error);
   }

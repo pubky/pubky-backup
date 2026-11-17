@@ -1,6 +1,6 @@
 export { useUIStore } from "./uiStore.store";
 export type {
-  ActivityEntry,
+  StackedActivity,
   ActivityType,
   Screen,
   Page,

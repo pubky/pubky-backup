@@ -9,7 +9,7 @@ use super::keys::{DataScope, KeyStorage, KeysStorage};
 use super::migration::remove_legacy_data;
 use super::mirrors::{MirrorStorage, StoredMirror};
 use super::secrets::{SecretStorage, SESSIONS_DIR_NAME};
-use crate::orchestrator::types::ActivityEntry;
+use crate::orchestrator::types::{ActivityEntry, StackedActivity};
 use log::{error, info, warn};
 use pubky::{PubkyResource, PublicKey};
 use std::path::{Path, PathBuf};
@@ -370,8 +370,9 @@ impl AppStorage {
         key_storage.write_activity(entry).await
     }
 
-    /// Read activity entries for a key, newest first, up to `limit`.
-    pub async fn read_activity(&self, pubky: &PublicKey, limit: usize) -> Vec<ActivityEntry> {
+    /// Read a key's activity, newest first, up to `limit` stacks of entries
+    /// that recurred back to back.
+    pub async fn read_activity(&self, pubky: &PublicKey, limit: usize) -> Vec<StackedActivity> {
         match self.key_storage(pubky) {
             Ok(key_storage) => key_storage.read_activity(limit).await,
             Err(_) => Vec::new(),

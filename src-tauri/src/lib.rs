@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_testnet_mode, parse_pubky, ActivityEntry, AppStorage, BackupManager, BackupManagerConfig,
-    KeyState, KeyStatus,
+    is_testnet_mode, parse_pubky, AppStorage, BackupManager, BackupManagerConfig, KeyState,
+    KeyStatus, StackedActivity,
 };
 use tauri::{
     ipc::Channel,
@@ -371,7 +371,7 @@ async fn get_activity(
     app: AppHandle,
     pubky_str: &str,
     limit: Option<usize>,
-) -> Result<Vec<ActivityEntry>, BackupAppError> {
+) -> Result<Vec<StackedActivity>, BackupAppError> {
     const DEFAULT_ACTIVITY_LIMIT: usize = 100;
     let pubky = parse_pubky_for_command(pubky_str)?;
     let manager = get_manager(&app).await?;

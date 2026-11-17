@@ -124,7 +124,7 @@ mod utils;
 // Re-export main types from orchestrator module
 pub use orchestrator::{
     ActivityEntry, ActivityType, ApprovalRequest, AuthStatus, BackupManager, BackupManagerConfig,
-    KeyError, KeyState, KeyStatus, KeyUpdate, MirrorStatus, OrchestratorError,
+    KeyError, KeyState, KeyStatus, KeyUpdate, MirrorStatus, OrchestratorError, StackedActivity,
 };
 
 // Re-export main types from storage module

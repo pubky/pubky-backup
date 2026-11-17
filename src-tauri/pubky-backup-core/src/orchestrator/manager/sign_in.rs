@@ -549,7 +549,7 @@ mod tests {
         let entries = manager.get_activity(&pubky, 10).await;
         assert!(entries
             .iter()
-            .any(|e| e.activity_type == ActivityType::SignedOut));
+            .any(|e| e.latest.activity_type == ActivityType::SignedOut));
 
         // Subscribers are told about the change
         let mut signed_out_broadcast = false;
@@ -581,7 +581,7 @@ mod tests {
         let entries = manager.get_activity(&pubky, 10).await;
         assert!(!entries
             .iter()
-            .any(|e| e.activity_type == ActivityType::SignedOut));
+            .any(|e| e.latest.activity_type == ActivityType::SignedOut));
     }
 
     #[tokio::test]
