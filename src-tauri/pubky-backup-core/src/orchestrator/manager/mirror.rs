@@ -145,8 +145,9 @@ impl BackupManager {
     /// Returns `OrchestratorError::KeyNotFound` if the key is not being backed up.
     /// Returns `OrchestratorError::AlreadyMirrored` if the key has a working
     /// mirror; stop it first to mirror somewhere else.
-    /// Returns `OrchestratorError::MirrorFailed` if `homeserver` is the key's
-    /// own homeserver, or the request cannot be started.
+    /// Returns `OrchestratorError::MirrorFailed` if mirroring is turned off
+    /// (see [`BackupManagerConfig::mirroring`](crate::BackupManagerConfig::mirroring)),
+    /// `homeserver` is the key's own homeserver, or the request cannot be started.
     pub async fn start_mirror(
         &self,
         pubky: &PublicKey,
@@ -154,6 +155,11 @@ impl BackupManager {
     ) -> Result<ApprovalRequest, OrchestratorError> {
         if self.mirror_status(pubky)?.is_active() {
             return Err(OrchestratorError::AlreadyMirrored(pubky.to_string()));
+        }
+        if !self.config.mirroring {
+            return Err(OrchestratorError::MirrorFailed(
+                "Mirroring is turned off for this backup".to_string(),
+            ));
         }
         if self.config.offline {
             return Err(OrchestratorError::MirrorFailed(
@@ -274,6 +280,10 @@ impl BackupManager {
     /// The controller finds out on its first sync whether the mirror still
     /// accepts the stored session.
     pub(super) fn stored_mirror_status(&self, pubky: &PublicKey) -> MirrorStatus {
+        // A stored mirror stays dormant while mirroring is off
+        if !self.config.mirroring {
+            return MirrorStatus::NotMirrored;
+        }
         match self.storage.read_mirror(pubky) {
             Ok(Some(stored)) => {
                 let homeserver = stored.homeserver.z32();
@@ -491,8 +501,11 @@ fn end_mirror_session(session: MirrorSession) {
 mod tests {
     use super::super::approval::test_helpers::pending_forever;
     use super::super::status::SyncState;
-    use super::super::tests::{setup, setup_with_dir, test_pubky};
+    use super::super::tests::{
+        create_test_client, create_test_config, setup, setup_with_dir, test_pubky,
+    };
     use super::*;
+    use crate::orchestrator::types::BackupManagerConfig;
     use crate::storage::DataScope;
     use std::str::FromStr;
     use tempfile::TempDir;
@@ -556,6 +569,17 @@ mod tests {
         (pubky, id)
     }
 
+    /// A manager on `temp_dir` with mirroring turned off.
+    async fn setup_without_mirroring(temp_dir: &TempDir) -> BackupManager {
+        let config = BackupManagerConfig {
+            mirroring: false,
+            ..create_test_config(temp_dir)
+        };
+        BackupManager::with_client(config, create_test_client())
+            .await
+            .unwrap()
+    }
+
     fn stored(manager: &BackupManager, pubky: &PublicKey) -> Option<StoredMirror> {
         manager.storage.read_mirror(pubky).unwrap()
     }
@@ -597,6 +621,28 @@ mod tests {
         assert_eq!(manager.mirror_status(&pubky).unwrap(), session_expired());
     }
 
+    #[tokio::test]
+    async fn test_stored_mirror_is_dormant_while_mirroring_is_off() {
+        let temp_dir = TempDir::new().unwrap();
+        let manager = setup_without_mirroring(&temp_dir).await;
+
+        let pubky = add_mirrored_key(&manager, Some("secret")).await;
+
+        assert_eq!(
+            manager.mirror_status(&pubky).unwrap(),
+            MirrorStatus::NotMirrored
+        );
+        assert_eq!(
+            stored(&manager, &pubky),
+            Some(stored_mirror(Some("secret")))
+        );
+        manager.shutdown().await;
+
+        // Turned on again, the mirror resumes
+        let (_, manager) = setup_with_dir(&temp_dir).await;
+        assert_eq!(manager.mirror_status(&pubky).unwrap(), mirroring());
+    }
+
     // --- Starting a mirror ---
 
     #[tokio::test]
@@ -634,6 +680,23 @@ mod tests {
     #[tokio::test]
     async fn test_start_mirror_unavailable_offline() {
         let (_dir, manager) = setup().await;
+        let pubky = test_pubky();
+        manager.add_key(pubky.clone()).await.unwrap();
+        let homeserver = PublicKey::from_str(MIRROR_HOMESERVER).unwrap();
+
+        let result = manager.start_mirror(&pubky, &homeserver).await;
+
+        assert!(matches!(result, Err(OrchestratorError::MirrorFailed(_))));
+        assert_eq!(
+            manager.mirror_status(&pubky).unwrap(),
+            MirrorStatus::NotMirrored
+        );
+    }
+
+    #[tokio::test]
+    async fn test_start_mirror_refused_while_mirroring_is_off() {
+        let temp_dir = TempDir::new().unwrap();
+        let manager = setup_without_mirroring(&temp_dir).await;
         let pubky = test_pubky();
         manager.add_key(pubky.clone()).await.unwrap();
         let homeserver = PublicKey::from_str(MIRROR_HOMESERVER).unwrap();

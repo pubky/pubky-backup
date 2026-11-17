@@ -685,12 +685,14 @@ async fn mirror_session_for(signer: &PubkySigner) -> PubkySession {
     restore_backup_session(&fields.join(":")).await.unwrap()
 }
 
-/// Start a manager that talks to the shared testnet and stores its data in `data_dir`.
+/// Start a manager that talks to the shared testnet and stores its data in
+/// `data_dir`, with mirroring on.
 async fn start_manager(data_dir: &TempDir) -> BackupManager {
     let testnet = get_shared_testnet().await;
     let config = BackupManagerConfig {
         data_dir: Some(data_dir.path().to_path_buf()),
         http_relay: Some(testnet.http_relay().local_link_url()),
+        mirroring: true,
         ..Default::default()
     };
     BackupManager::with_client(config, testnet.sdk().unwrap())

@@ -263,8 +263,9 @@ export interface CoverageCardProps {
 /**
  * Shows whether a pubky's private data is backed up and whether its backup is
  * mirrored to a second homeserver, and lets its owner sign in, sign out, and
- * set up or stop a mirror. Public data is always backed up, which the
- * dashboard header shows.
+ * set up or stop a mirror. The mirror row is left out in builds that don't
+ * offer mirroring. Public data is always backed up, which the dashboard header
+ * shows.
  */
 export function CoverageCard({ pubky }: CoverageCardProps) {
   const auth =
@@ -407,30 +408,34 @@ export function CoverageCard({ pubky }: CoverageCardProps) {
           />
         }
       />
-      <CoverageRow
-        title="Mirror"
-        description={mirrorCoverage.description}
-        tone={mirrorCoverage.tone}
-        isCovered={mirror.type === "Mirroring"}
-        action={
-          <div className="flex flex-col items-end gap-2 shrink-0">
-            <ActionButton
-              label={mirrorCoverage.actionLabel}
-              isPrimary={mirrorCoverage.action !== "stop"}
-              onClick={() => handleMirrorAction(mirrorCoverage.action)}
-              disabled={isPending}
-            />
-            {secondaryMirrorAction && (
+      {mirroring.isEnabled && (
+        <CoverageRow
+          title="Mirror"
+          description={mirrorCoverage.description}
+          tone={mirrorCoverage.tone}
+          isCovered={mirror.type === "Mirroring"}
+          action={
+            <div className="flex flex-col items-end gap-2 shrink-0">
               <ActionButton
-                label={secondaryMirrorAction.label}
-                isPrimary={false}
-                onClick={() => handleMirrorAction(secondaryMirrorAction.action)}
+                label={mirrorCoverage.actionLabel}
+                isPrimary={mirrorCoverage.action !== "stop"}
+                onClick={() => handleMirrorAction(mirrorCoverage.action)}
                 disabled={isPending}
               />
-            )}
-          </div>
-        }
-      />
+              {secondaryMirrorAction && (
+                <ActionButton
+                  label={secondaryMirrorAction.label}
+                  isPrimary={false}
+                  onClick={() =>
+                    handleMirrorAction(secondaryMirrorAction.action)
+                  }
+                  disabled={isPending}
+                />
+              )}
+            </div>
+          }
+        />
+      )}
     </CoverageCardFrame>
   );
 }

@@ -32,16 +32,27 @@ struct AppState {
     event_listener: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
+/// Whether the app offers mirroring to a second homeserver.
+///
+/// Off until Pubky Ring can approve mirror requests. Set it to `true` to try
+/// mirroring. Mirrors set up while it was on are kept, and resume when it is
+/// on again.
+const MIRRORING_ENABLED: bool = false;
+
 /// Config response for frontend
 #[derive(Clone, Serialize)]
 pub struct AppConfig {
     sync_interval_secs: u64,
     keys_dir: String,
+    mirroring: bool,
 }
 
 /// Create a BackupManager for mainnet, or for a local testnet in testnet mode.
 async fn create_manager() -> Result<BackupManager, BackupAppError> {
-    let config = BackupManagerConfig::default();
+    let config = BackupManagerConfig {
+        mirroring: MIRRORING_ENABLED,
+        ..Default::default()
+    };
     let manager = if is_testnet_mode() {
         BackupManager::testnet(config).await?
     } else {
@@ -146,6 +157,7 @@ async fn get_config(app: AppHandle) -> Result<AppConfig, BackupAppError> {
     Ok(AppConfig {
         sync_interval_secs: manager.get_sync_interval(),
         keys_dir: manager.keys_dir().to_string_lossy().to_string(),
+        mirroring: manager.mirroring_enabled(),
     })
 }
 

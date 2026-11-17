@@ -47,7 +47,7 @@ impl BackupController {
     /// Returns whether more changes are waiting to be copied.
     pub(super) async fn perform_mirror_batch(&mut self) -> bool {
         // Offline there is no mirror to reach
-        if self.offline {
+        if self.offline || !self.mirroring {
             return false;
         }
         let Some(restored) = self.resolve_mirror().await else {

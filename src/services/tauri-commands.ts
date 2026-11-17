@@ -14,6 +14,8 @@ import { isBackendError } from "@/types/backend-errors";
 export interface AppConfig {
   sync_interval_secs: number;
   keys_dir: string;
+  /** Whether this build offers mirroring to a second homeserver */
+  mirroring: boolean;
 }
 
 /**

@@ -637,6 +637,11 @@ impl BackupManager {
         info!("BackupManager shutdown complete");
     }
 
+    /// Whether this manager offers mirroring (see [`BackupManagerConfig::mirroring`]).
+    pub fn mirroring_enabled(&self) -> bool {
+        self.config.mirroring
+    }
+
     /// Get the current sync interval in seconds.
     pub fn get_sync_interval(&self) -> u64 {
         self.sync_interval.read().get()
@@ -814,7 +819,8 @@ impl BackupManager {
             self.sync_interval.read().subscribe(),
         )
         .with_initial_delay(initial_delay)
-        .offline(self.config.offline);
+        .offline(self.config.offline)
+        .mirroring(self.config.mirroring);
 
         let task_handle = tokio::spawn(async move {
             controller.run().await;
@@ -886,11 +892,13 @@ mod tests {
     use tempfile::TempDir;
     use url::Url;
 
-    /// An offline config, so that tests make no network calls.
+    /// An offline config, so that tests make no network calls, with mirroring
+    /// on so that it can be tested.
     pub(super) fn create_test_config(temp_dir: &TempDir) -> BackupManagerConfig {
         BackupManagerConfig {
             data_dir: Some(temp_dir.path().to_path_buf()),
             offline: true,
+            mirroring: true,
             ..Default::default()
         }
     }
