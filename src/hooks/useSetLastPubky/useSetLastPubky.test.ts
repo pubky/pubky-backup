@@ -4,6 +4,8 @@ import { useSetLastPubky } from "./useSetLastPubky";
 import { useUIStore } from "@/stores/uiStore";
 import * as services from "@/services";
 
+const PUBKY = "gabri5dk51q1c1kzi53hjpqw5yhmw1nqsryzsfx5kubd7jpm63jy";
+
 vi.mock("@/services", () => ({
   setLastPubky: vi.fn(),
 }));
@@ -160,13 +162,12 @@ describe("useSetLastPubky", () => {
     const { result } = renderHook(() => useSetLastPubky());
 
     await act(async () => {
-      await result.current.setLastPubky("pubkyabc123def456");
+      await result.current.setLastPubky(`pubky${PUBKY}`);
     });
 
-    // Should strip the "pubky" prefix
     const state = useUIStore.getState();
-    expect(state.lastPubky).toBe("abc123def456");
-    expect(services.setLastPubky).toHaveBeenCalledWith("abc123def456");
+    expect(state.lastPubky).toBe(PUBKY);
+    expect(services.setLastPubky).toHaveBeenCalledWith(PUBKY);
   });
 
   it("should not modify pubky without prefix", async () => {

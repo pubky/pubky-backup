@@ -10,6 +10,8 @@ import { AddKeyForm } from "./AddKeyForm";
 import { useUIStore } from "@/stores/uiStore";
 import * as services from "@/services";
 
+const PUBKY = "gabri5dk51q1c1kzi53hjpqw5yhmw1nqsryzsfx5kubd7jpm63jy";
+
 vi.mock("@/services", () => ({
   addKey: vi.fn(),
   signInNewKey: vi.fn(),
@@ -116,17 +118,17 @@ describe("AddKeyForm", () => {
     });
 
     it("should back up the trimmed pubky and report it", async () => {
-      vi.mocked(services.addKey).mockResolvedValue("pubkysome-pubky");
+      vi.mocked(services.addKey).mockResolvedValue(`pubky${PUBKY}`);
       const onAdded = vi.fn();
       render(<AddKeyForm onAdded={onAdded} />);
 
-      enterPubky("  some-pubky  ");
+      enterPubky(`  pubky${PUBKY}  `);
       fireEvent.click(backUpButton());
 
       await waitFor(() => {
-        expect(onAdded).toHaveBeenCalledWith("some-pubky");
+        expect(onAdded).toHaveBeenCalledWith(PUBKY);
       });
-      expect(services.addKey).toHaveBeenCalledWith("some-pubky");
+      expect(services.addKey).toHaveBeenCalledWith(`pubky${PUBKY}`);
     });
 
     it("should show an error and stay open if the pubky can't be added", async () => {

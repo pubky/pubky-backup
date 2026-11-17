@@ -4,6 +4,8 @@ import { useNewKeySignIn } from "./useNewKeySignIn";
 import { useUIStore } from "@/stores/uiStore";
 import * as services from "@/services";
 
+const PUBKY = "gabri5dk51q1c1kzi53hjpqw5yhmw1nqsryzsfx5kubd7jpm63jy";
+
 vi.mock("@/services", () => ({
   signInNewKey: vi.fn(),
   cancelSignInNewKey: vi.fn(),
@@ -54,10 +56,10 @@ describe("useNewKeySignIn", () => {
       authorization_url: AUTHORIZATION_URL,
     });
 
-    await act(async () => pending.approve("pubkyabc"));
+    await act(async () => pending.approve(`pubky${PUBKY}`));
 
-    expect(onSignedIn).toHaveBeenCalledWith("abc");
-    expect(useUIStore.getState().lastPubky).toBe("abc");
+    expect(onSignedIn).toHaveBeenCalledWith(PUBKY);
+    expect(useUIStore.getState().lastPubky).toBe(PUBKY);
     expect(result.current.state).toEqual({ type: "Idle" });
   });
 

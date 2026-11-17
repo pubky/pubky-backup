@@ -1,29 +1,37 @@
 import { describe, it, expect } from "vitest";
 import { displayPubky, stripPubkyPrefix } from "./pubky";
 
+const PUBKY = "gabri5dk51q1c1kzi53hjpqw5yhmw1nqsryzsfx5kubd7jpm63jy";
+/** A bare key that itself starts with "pubky" */
+const PUBKY_STARTING_WITH_PUBKY =
+  "pubkyydk51q1c1kzi53hjpqw5yhmw1nqsryzsfx5kubd7jpm63jy";
+
 describe("stripPubkyPrefix", () => {
-  it("should strip 'pubky' prefix from string", () => {
-    expect(stripPubkyPrefix("pubkyabc123")).toBe("abc123");
+  it("should strip 'pubky' prefix from a prefixed key", () => {
+    expect(stripPubkyPrefix(`pubky${PUBKY}`)).toBe(PUBKY);
   });
 
-  it("should return unchanged string if no 'pubky' prefix", () => {
-    expect(stripPubkyPrefix("abc123")).toBe("abc123");
+  it("should return a bare key unchanged", () => {
+    expect(stripPubkyPrefix(PUBKY)).toBe(PUBKY);
+  });
+
+  it("should keep a bare key that starts with 'pubky' whole", () => {
+    expect(stripPubkyPrefix(PUBKY_STARTING_WITH_PUBKY)).toBe(
+      PUBKY_STARTING_WITH_PUBKY,
+    );
+  });
+
+  it("should leave 'pubky' alone when no full key follows it", () => {
+    expect(stripPubkyPrefix("pubky")).toBe("pubky");
+    expect(stripPubkyPrefix("pubkyabc123")).toBe("pubkyabc123");
   });
 
   it("should handle empty string", () => {
     expect(stripPubkyPrefix("")).toBe("");
   });
 
-  it("should handle string that is exactly 'pubky'", () => {
-    expect(stripPubkyPrefix("pubky")).toBe("");
-  });
-
-  it("should only strip prefix, not occurrences elsewhere", () => {
-    expect(stripPubkyPrefix("pubkycontainspubky")).toBe("containspubky");
-  });
-
   it("should be case-sensitive (not strip PUBKY)", () => {
-    expect(stripPubkyPrefix("PUBKYabc")).toBe("PUBKYabc");
+    expect(stripPubkyPrefix(`PUBKY${PUBKY}`)).toBe(`PUBKY${PUBKY}`);
   });
 });
 
@@ -84,15 +92,10 @@ describe("displayPubky", () => {
   });
 
   it("should strip 'pubky' prefix before truncating", () => {
-    // With prefix: "pubkyabcdefghijklmnopqrstuvwxyz" (31 chars)
-    // After stripping: "abcdefghijklmnopqrstuvwxyz" (26 chars)
-    const pubkyPrefixed = "pubkyabcdefghijklmnopqrstuvwxyz";
-    const result = displayPubky(pubkyPrefixed);
-    expect(result).toBe("abcde...vwxyz");
+    expect(displayPubky(`pubky${PUBKY}`)).toBe("gabri...m63jy");
   });
 
-  it("should strip 'pubky' prefix for short strings too", () => {
-    // With prefix: "pubkyshort" -> "short" (5 chars, under threshold)
-    expect(displayPubky("pubkyshort")).toBe("short");
+  it("should keep a bare key that starts with 'pubky' whole", () => {
+    expect(displayPubky(PUBKY_STARTING_WITH_PUBKY)).toBe("pubky...m63jy");
   });
 });

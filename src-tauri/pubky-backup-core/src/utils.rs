@@ -1,16 +1,7 @@
 use log::warn;
 use pubky::errors::RequestError;
-use pubky::{PublicKey, StatusCode};
-use std::str::FromStr;
+use pubky::StatusCode;
 use std::time::Duration;
-
-/// Parse a z32-encoded pubky string into a [`PublicKey`].
-///
-/// Convenience wrapper around `PublicKey::from_str`.
-pub fn parse_pubky(pubky_str: &str) -> Result<PublicKey, pubky::pkarr::errors::PublicKeyError> {
-    let stripped = pubky_str.strip_prefix("pubky").unwrap_or(pubky_str);
-    PublicKey::from_str(stripped)
-}
 
 /// Maximum number of attempts at a request that keeps failing transiently.
 const MAX_ATTEMPTS: u32 = 3;
