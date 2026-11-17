@@ -43,7 +43,7 @@ jobs:
         run: cd src-tauri && cargo fmt --all -- --check
 
       - name: Run Clippy (Lint)
-        run: cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings
+        run: cd src-tauri && cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Build Project
         run: cd src-tauri && cargo build --verbose --tests
