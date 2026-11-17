@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
-import { cancelMirror, startMirror, stopMirror } from "@/services";
+import { useCallback, useEffect, useState } from "react";
+import { cancelMirror, getConfig, startMirror, stopMirror } from "@/services";
+import { Logger } from "@/lib";
 
 /**
  * useMirror
@@ -10,7 +11,10 @@ import { cancelMirror, startMirror, stopMirror } from "@/services";
  * the outcome arrive through the pubky's `mirror` state, so render that rather
  * than waiting on these functions.
  *
- * @returns Object with the mirror actions and a shared isPending state
+ * `isEnabled` says whether this build offers mirroring at all. It is false
+ * until the backend has answered, so mirroring is never offered by mistake.
+ *
+ * @returns Object with the mirror actions, a shared isPending state and isEnabled
  *
  * @example
  * ```tsx
@@ -25,6 +29,23 @@ import { cancelMirror, startMirror, stopMirror } from "@/services";
  */
 export function useMirror() {
   const [isPending, setIsPending] = useState(false);
+  const [isEnabled, setIsEnabled] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    getConfig()
+      .then((config) => {
+        if (isMounted) setIsEnabled(config.mirroring);
+      })
+      .catch((error: unknown) => {
+        Logger.error("useMirror", "Failed to read whether mirroring is on", {
+          error,
+        });
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const run = useCallback(async (command: () => Promise<unknown>) => {
     setIsPending(true);
@@ -54,5 +75,6 @@ export function useMirror() {
     cancelMirror: cancel,
     stopMirror: stop,
     isPending,
+    isEnabled,
   };
 }

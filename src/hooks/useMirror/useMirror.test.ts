@@ -4,6 +4,7 @@ import { useMirror } from "./useMirror";
 import * as services from "@/services";
 
 vi.mock("@/services", () => ({
+  getConfig: vi.fn(),
   startMirror: vi.fn(),
   cancelMirror: vi.fn(),
   stopMirror: vi.fn(),
@@ -12,6 +13,29 @@ vi.mock("@/services", () => ({
 describe("useMirror", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(services.getConfig).mockResolvedValue({
+      sync_interval_secs: 300,
+      keys_dir: "/home/user/.pubky-backup/keys",
+      mirroring: true,
+    });
+  });
+
+  it("should report whether mirroring is offered once the backend answers", async () => {
+    const { result } = renderHook(() => useMirror());
+    expect(result.current.isEnabled).toBe(false);
+
+    await act(async () => {});
+
+    expect(result.current.isEnabled).toBe(true);
+  });
+
+  it("should leave mirroring off when the backend can't be asked", async () => {
+    vi.mocked(services.getConfig).mockRejectedValue(new Error("Failed"));
+    const { result } = renderHook(() => useMirror());
+
+    await act(async () => {});
+
+    expect(result.current.isEnabled).toBe(false);
   });
 
   it("should call startMirror and toggle isPending", async () => {

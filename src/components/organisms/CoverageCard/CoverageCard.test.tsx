@@ -13,6 +13,7 @@ import * as services from "@/services";
 import { displayPubky } from "@/utils";
 
 vi.mock("@/services", () => ({
+  getConfig: vi.fn(),
   startSignIn: vi.fn(),
   cancelSignIn: vi.fn(),
   signOut: vi.fn(),
@@ -33,7 +34,14 @@ const AUTHORIZATION_URL = "pubkyauth://example?secret=abc";
 const HOMESERVER = "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo";
 const HOMESERVER_SHORT = displayPubky(HOMESERVER);
 
-function renderWithAuth(
+/** Render the card, waiting for it to learn whether mirroring is offered. */
+async function renderCard() {
+  const view = render(<CoverageCard pubky={PUBKY} />);
+  await act(async () => {});
+  return view;
+}
+
+async function renderWithAuth(
   auth: AuthStatus,
   mirror: MirrorStatus = { type: "NotMirrored" },
 ) {
@@ -47,27 +55,32 @@ function renderWithAuth(
     mirror,
   };
   useUIStore.setState({ keyStates: { [PUBKY]: keyState } });
-  return render(<CoverageCard pubky={PUBKY} />);
+  return renderCard();
 }
 
 describe("CoverageCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(services.getConfig).mockResolvedValue({
+      sync_interval_secs: 300,
+      keys_dir: "/home/user/.pubky-backup/keys",
+      mirroring: true,
+    });
     useUIStore.setState({
       keyStates: {},
       toast: { visible: false, pubkyText: "", type: "success", message: "" },
     });
   });
 
-  it("should treat a key without state yet as signed out", () => {
-    render(<CoverageCard pubky={PUBKY} />);
+  it("should treat a key without state yet as signed out", async () => {
+    await renderCard();
 
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 
   describe("signed out", () => {
-    it("should explain that private data is not backed up", () => {
-      renderWithAuth({ type: "SignedOut" });
+    it("should explain that private data is not backed up", async () => {
+      await renderWithAuth({ type: "SignedOut" });
 
       expect(
         screen.getByText(/Not backed up\. Sign in with Pubky Ring/i),
@@ -77,7 +90,7 @@ describe("CoverageCard", () => {
 
     it("should start a sign-in when Sign in is clicked", async () => {
       vi.mocked(services.startSignIn).mockResolvedValue(undefined);
-      renderWithAuth({ type: "SignedOut" });
+      await renderWithAuth({ type: "SignedOut" });
 
       fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
@@ -91,7 +104,7 @@ describe("CoverageCard", () => {
         type: "Internal",
         message: "Authentication failed: relay unreachable",
       });
-      renderWithAuth({ type: "SignedOut" });
+      await renderWithAuth({ type: "SignedOut" });
 
       fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
@@ -110,15 +123,15 @@ describe("CoverageCard", () => {
       authorization_url: AUTHORIZATION_URL,
     };
 
-    it("should show the QR code to scan", () => {
-      renderWithAuth(awaiting);
+    it("should show the QR code to scan", async () => {
+      await renderWithAuth(awaiting);
 
       expect(screen.getByTitle("Sign-in QR code")).toBeInTheDocument();
       expect(screen.getByText(/only grants read access/i)).toBeInTheDocument();
     });
 
-    it("should show only the approval step, to fit the window", () => {
-      renderWithAuth(awaiting);
+    it("should show only the approval step, to fit the window", async () => {
+      await renderWithAuth(awaiting);
 
       expect(
         screen.getByText("Sign in to back up private data"),
@@ -127,7 +140,7 @@ describe("CoverageCard", () => {
     });
 
     it("should copy the sign-in link", async () => {
-      renderWithAuth(awaiting);
+      await renderWithAuth(awaiting);
 
       fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
 
@@ -139,7 +152,7 @@ describe("CoverageCard", () => {
 
     it("should cancel the sign-in when Cancel is clicked", async () => {
       vi.mocked(services.cancelSignIn).mockResolvedValue(undefined);
-      renderWithAuth(awaiting);
+      await renderWithAuth(awaiting);
 
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -150,8 +163,8 @@ describe("CoverageCard", () => {
   });
 
   describe("signed in", () => {
-    it("should show private data as backed up", () => {
-      renderWithAuth({ type: "SignedIn" });
+    it("should show private data as backed up", async () => {
+      await renderWithAuth({ type: "SignedIn" });
 
       expect(
         screen.getByText(/Backed up while you stay signed in/i),
@@ -161,7 +174,7 @@ describe("CoverageCard", () => {
 
     it("should sign out when Sign out is clicked", async () => {
       vi.mocked(services.signOut).mockResolvedValue(undefined);
-      renderWithAuth({ type: "SignedIn" });
+      await renderWithAuth({ type: "SignedIn" });
 
       fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
@@ -174,7 +187,7 @@ describe("CoverageCard", () => {
   describe("session expired", () => {
     it("should ask to sign in again", async () => {
       vi.mocked(services.startSignIn).mockResolvedValue(undefined);
-      renderWithAuth({ type: "SessionExpired" });
+      await renderWithAuth({ type: "SessionExpired" });
 
       expect(screen.getByText(/your session expired/i)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Sign in again" }));
@@ -188,7 +201,7 @@ describe("CoverageCard", () => {
   describe("sign-in failed", () => {
     it("should show the reason and offer to try again", async () => {
       vi.mocked(services.startSignIn).mockResolvedValue(undefined);
-      renderWithAuth({
+      await renderWithAuth({
         type: "SignInFailed",
         message: "The sign-in was approved by a different key",
       });
@@ -204,8 +217,8 @@ describe("CoverageCard", () => {
     });
   });
 
-  it("should follow the key's state as the backend updates it", () => {
-    renderWithAuth({ type: "SignedOut" });
+  it("should follow the key's state as the backend updates it", async () => {
+    await renderWithAuth({ type: "SignedOut" });
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
 
     // The backend reports the approval through a key-update
@@ -224,8 +237,23 @@ describe("CoverageCard", () => {
   describe("mirror", () => {
     const signedOut: AuthStatus = { type: "SignedOut" };
 
-    it("should offer to add a mirror when there is none", () => {
-      renderWithAuth(signedOut);
+    it("should leave the mirror out when this build doesn't offer it", async () => {
+      vi.mocked(services.getConfig).mockResolvedValue({
+        sync_interval_secs: 300,
+        keys_dir: "/home/user/.pubky-backup/keys",
+        mirroring: false,
+      });
+      await renderWithAuth(signedOut);
+
+      expect(screen.getByText("Private data")).toBeInTheDocument();
+      expect(screen.queryByText("Mirror")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Add mirror" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("should offer to add a mirror when there is none", async () => {
+      await renderWithAuth(signedOut);
 
       expect(screen.getByText("Mirror")).toBeInTheDocument();
       expect(screen.getByText(/Not mirrored/i)).toBeInTheDocument();
@@ -236,7 +264,7 @@ describe("CoverageCard", () => {
 
     it("should ask for the homeserver and request approval", async () => {
       vi.mocked(services.startMirror).mockResolvedValue(AUTHORIZATION_URL);
-      renderWithAuth(signedOut);
+      await renderWithAuth(signedOut);
 
       fireEvent.click(screen.getByRole("button", { name: "Add mirror" }));
 
@@ -265,7 +293,7 @@ describe("CoverageCard", () => {
         type: "Internal",
         message: "Mirroring failed: own homeserver",
       });
-      renderWithAuth(signedOut);
+      await renderWithAuth(signedOut);
       fireEvent.click(screen.getByRole("button", { name: "Add mirror" }));
       fireEvent.change(screen.getByPlaceholderText("Homeserver key"), {
         target: { value: HOMESERVER },
@@ -279,8 +307,8 @@ describe("CoverageCard", () => {
       expect(screen.getByPlaceholderText("Homeserver key")).toBeInTheDocument();
     });
 
-    it("should close the form on cancel", () => {
-      renderWithAuth(signedOut);
+    it("should close the form on cancel", async () => {
+      await renderWithAuth(signedOut);
       fireEvent.click(screen.getByRole("button", { name: "Add mirror" }));
 
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -292,7 +320,7 @@ describe("CoverageCard", () => {
 
     it("should show the QR code while the mirror awaits approval", async () => {
       vi.mocked(services.cancelMirror).mockResolvedValue(undefined);
-      renderWithAuth(signedOut, {
+      await renderWithAuth(signedOut, {
         type: "AwaitingApproval",
         homeserver: HOMESERVER,
         authorization_url: AUTHORIZATION_URL,
@@ -309,8 +337,8 @@ describe("CoverageCard", () => {
       });
     });
 
-    it("should show the sign-in request first when both await approval", () => {
-      renderWithAuth(
+    it("should show the sign-in request first when both await approval", async () => {
+      await renderWithAuth(
         { type: "AwaitingApproval", authorization_url: AUTHORIZATION_URL },
         {
           type: "AwaitingApproval",
@@ -326,7 +354,10 @@ describe("CoverageCard", () => {
 
     it("should show a working mirror and let the user stop it", async () => {
       vi.mocked(services.stopMirror).mockResolvedValue(undefined);
-      renderWithAuth(signedOut, { type: "Mirroring", homeserver: HOMESERVER });
+      await renderWithAuth(signedOut, {
+        type: "Mirroring",
+        homeserver: HOMESERVER,
+      });
 
       expect(
         screen.getByText(`Copied to ${HOMESERVER_SHORT} after every sync.`),
@@ -340,7 +371,7 @@ describe("CoverageCard", () => {
 
     it("should ask to approve again when the mirror session expired", async () => {
       vi.mocked(services.startMirror).mockResolvedValue(AUTHORIZATION_URL);
-      renderWithAuth(signedOut, {
+      await renderWithAuth(signedOut, {
         type: "SessionExpired",
         homeserver: HOMESERVER,
       });
@@ -355,7 +386,7 @@ describe("CoverageCard", () => {
 
     it("should let the user stop a paused mirror instead of approving it again", async () => {
       vi.mocked(services.stopMirror).mockResolvedValue(undefined);
-      renderWithAuth(signedOut, {
+      await renderWithAuth(signedOut, {
         type: "SessionExpired",
         homeserver: HOMESERVER,
       });
@@ -368,8 +399,8 @@ describe("CoverageCard", () => {
       expect(services.startMirror).not.toHaveBeenCalled();
     });
 
-    it("should show why copying is failing", () => {
-      renderWithAuth(signedOut, {
+    it("should show why copying is failing", async () => {
+      await renderWithAuth(signedOut, {
         type: "Failing",
         homeserver: HOMESERVER,
         message: "The mirror responded with 507 Insufficient Storage",
@@ -381,8 +412,8 @@ describe("CoverageCard", () => {
       expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
     });
 
-    it("should reopen the form with the homeserver after a failed setup", () => {
-      renderWithAuth(signedOut, {
+    it("should reopen the form with the homeserver after a failed setup", async () => {
+      await renderWithAuth(signedOut, {
         type: "SetupFailed",
         homeserver: HOMESERVER,
         message: "The key has no account on this homeserver",

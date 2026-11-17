@@ -79,6 +79,8 @@ let config = BackupManagerConfig {
     validation_timeout_secs: 30,
     // Make no network calls, keeping only the data already on disk (default: false)
     offline: false,
+    // Offer mirroring to a second homeserver (default: false)
+    mirroring: true,
     // Name shown to users among the apps they granted access to (default: "pubky-backup")
     client_id: ClientId::new("my-backup-cli")?,
     // Remaining options: sync_interval_secs, http_relay
@@ -105,6 +107,7 @@ let config = BackupManagerConfig {
 | `start_mirror(pubky, homeserver)` | Start copying a key's backup to a second homeserver |
 | `cancel_mirror(pubky)` | Cancel a mirror request that is still awaiting approval |
 | `stop_mirror(pubky)` | Stop mirroring a key; what was copied stays on the mirror |
+| `mirroring_enabled()` | Whether this manager offers mirroring (`BackupManagerConfig::mirroring`) |
 | `force_sync(pubky)` | Trigger immediate sync for a specific key |
 | `get_key_state(pubky)` | Get current state of a specific key |
 | `get_keys()` | List all managed pubkys |
@@ -214,6 +217,8 @@ Follow `KeyState::mirror` in the status updates:
 Problems with the mirror never hold up the backup itself. The mirror pass copies in batches of 50 events after the backup's own passes, and never gets ahead of what is backed up locally, which is where the content comes from. Its progress is kept in `state/mirror_cursor` and `state/mirror_private_cursor` next to the backup's cursors, while the mirror itself and the session on it are stored with the sign-in sessions in the app data directory (`~/.pubky-backup/mirrors/`).
 
 Mirroring stops on its own if the mirror becomes the key's own homeserver, since every copy would then be a new change to copy.
+
+Mirroring is off unless `BackupManagerConfig::mirroring` is set to `true`. While it is off, `start_mirror` is refused with `MirrorFailed`, nothing is copied to a mirror, and every key reports `NotMirrored`. Mirrors stored earlier are kept, and resume when mirroring is turned on again. The desktop app leaves it off until Pubky Ring can approve mirror requests.
 
 ### ControllerCommand
 

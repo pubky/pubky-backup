@@ -20,6 +20,12 @@ pub struct BackupManagerConfig {
     /// unavailable, so only the data already on disk is kept. For tests and
     /// for developing against the manager's behaviour without a network.
     pub offline: bool,
+    /// Offer mirroring to a second homeserver (default: false).
+    ///
+    /// When off, `start_mirror` is refused, controllers copy nothing to a
+    /// mirror and every key reports `MirrorStatus::NotMirrored`. Mirrors stored
+    /// earlier are kept, and resume when mirroring is turned on again.
+    pub mirroring: bool,
     /// Sync interval in seconds (default: 30)
     pub sync_interval_secs: u64,
     /// HTTP relay that delivers sign-in approvals from the user's signer app
@@ -39,6 +45,7 @@ impl Default for BackupManagerConfig {
             data_dir: None,
             validation_timeout_secs: 30,
             offline: false,
+            mirroring: false,
             sync_interval_secs: crate::sync::DEFAULT_SYNC_INTERVAL_SECONDS,
             http_relay: None,
             client_id: ClientId::new(DEFAULT_CLIENT_ID)
@@ -270,5 +277,10 @@ mod tests {
         let config = BackupManagerConfig::default();
 
         assert_eq!(config.client_id.as_str(), DEFAULT_CLIENT_ID);
+    }
+
+    #[test]
+    fn test_default_config_does_not_offer_mirroring() {
+        assert!(!BackupManagerConfig::default().mirroring);
     }
 }

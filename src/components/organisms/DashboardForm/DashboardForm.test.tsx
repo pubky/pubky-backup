@@ -60,6 +60,7 @@ describe("DashboardForm", () => {
     vi.mocked(services.getConfig).mockResolvedValue({
       sync_interval_secs: 300,
       keys_dir: "/home/user/.pubky-backup/keys",
+      mirroring: true,
     });
 
     useUIStore.setState({

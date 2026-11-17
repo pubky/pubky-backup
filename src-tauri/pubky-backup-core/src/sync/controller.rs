@@ -208,6 +208,8 @@ pub struct BackupController {
     sync_interval_rx: watch::Receiver<u64>,
     /// Make no network calls: syncs find no events and no session is restored
     offline: bool,
+    /// Whether to copy to the pubky's mirror, if it has one
+    mirroring: bool,
     /// Session of a signed-in pubky, restored from the stored session secret
     session: Option<RestoredSession>,
     /// A stored session secret the homeserver rejected, which is not used again
@@ -286,6 +288,7 @@ impl BackupController {
             initial_delay: Duration::ZERO,
             sync_interval_rx,
             offline: false,
+            mirroring: true,
             session: None,
             rejected_secret: None,
             mirror: None,
@@ -317,6 +320,15 @@ impl BackupController {
     /// working on the sync loop without a network.
     pub fn offline(mut self, offline: bool) -> Self {
         self.offline = offline;
+        self
+    }
+
+    /// Copy to the pubky's mirror after each backup (default: true).
+    ///
+    /// When off, a stored mirror is left alone: nothing is copied to it and its
+    /// session is not restored.
+    pub fn mirroring(mut self, mirroring: bool) -> Self {
+        self.mirroring = mirroring;
         self
     }
 
