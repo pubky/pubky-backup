@@ -286,7 +286,7 @@ impl BackupManager {
             &self.storage,
             pubky,
             ActivityType::SignedIn,
-            "Signed in — private data is backed up too".to_string(),
+            "Signed in".to_string(),
         )
         .await;
         if let Err(e) = self.force_sync(pubky).await {

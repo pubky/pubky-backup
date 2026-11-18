@@ -7,7 +7,8 @@ const COPIED_LABEL_DURATION_MS = 2000;
 
 export interface SignInApprovalProps {
   authorizationUrl: string;
-  instructions: string;
+  /** Shown above the buttons, if given */
+  instructions?: string;
   /** Shown next to the copy button, e.g. to cancel the sign-in */
   action: ReactNode;
 }
@@ -52,7 +53,9 @@ export function SignInApproval({
         className="shrink-0"
       />
       <div className="flex flex-col items-start gap-3">
-        <span className="text-sm text-text-light">{instructions}</span>
+        {instructions && (
+          <span className="text-sm text-text-light">{instructions}</span>
+        )}
         <div className="flex gap-2">
           <Atoms.Button
             variant="secondary"

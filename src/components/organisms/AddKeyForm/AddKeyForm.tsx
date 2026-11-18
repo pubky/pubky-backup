@@ -45,8 +45,7 @@ export function AddKeyForm({
             Public and private data
           </h3>
           <p className="text-sm text-text-secondary m-0">
-            Sign in with Pubky Ring. It only grants read access, and your key
-            never leaves Pubky Ring.
+            Sign in with Pubky Ring.
           </p>
         </div>
         <SignInSection onSignedIn={onAdded} disabled={isAddingPubky} />
@@ -111,7 +110,6 @@ function SignInSection({ onSignedIn, disabled }: SignInSectionProps) {
     return (
       <Molecules.SignInApproval
         authorizationUrl={state.authorization_url}
-        instructions="Scan with Pubky Ring and approve. Backing up starts as soon as you do."
         action={
           <Atoms.Button
             variant="secondary"

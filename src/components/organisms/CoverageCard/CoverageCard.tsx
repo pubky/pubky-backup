@@ -28,8 +28,7 @@ function describePrivateCoverage(auth: AuthStatus): PrivateCoverage {
       };
     case "AwaitingApproval":
       return {
-        description:
-          "Scan with Pubky Ring and approve. This only grants read access to your private data, and your key never leaves Pubky Ring.",
+        description: "Waiting for approval in Pubky Ring.",
         tone: "neutral",
         actionLabel: "Cancel",
         action: "cancel",
@@ -342,7 +341,6 @@ export function CoverageCard({ pubky }: CoverageCardProps) {
       <CoverageCardFrame title="Sign in to back up private data">
         <Molecules.SignInApproval
           authorizationUrl={auth.authorization_url}
-          instructions={privateCoverage.description}
           action={
             <ActionButton
               label="Cancel"
