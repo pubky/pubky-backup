@@ -22,8 +22,6 @@ export interface StackedActivity {
   timestamp: number;
   /** How many times it occurred in a row */
   count: number;
-  /** When it first occurred in this run */
-  first_timestamp: number;
 }
 
 export type Screen = "startup" | "dashboard";

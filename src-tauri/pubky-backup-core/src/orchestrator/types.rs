@@ -268,14 +268,11 @@ pub struct StackedActivity {
     pub latest: ActivityEntry,
     /// How many times it occurred in a row
     pub count: usize,
-    /// When it first occurred in this run
-    pub first_timestamp: u64,
 }
 
 impl StackedActivity {
     fn new(entry: ActivityEntry) -> Self {
         Self {
-            first_timestamp: entry.timestamp,
             latest: entry,
             count: 1,
         }
@@ -292,7 +289,6 @@ impl StackedActivity {
                         && stack.latest.message == entry.message =>
                 {
                     stack.count += 1;
-                    stack.first_timestamp = entry.timestamp;
                 }
                 _ => stacks.push(Self::new(entry)),
             }

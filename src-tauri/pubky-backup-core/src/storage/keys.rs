@@ -817,7 +817,6 @@ mod tests {
         assert_eq!(stacks[0].latest.message, "Offline");
         assert_eq!(stacks[0].count, 3);
         assert_eq!(stacks[0].latest.timestamp, 300);
-        assert_eq!(stacks[0].first_timestamp, 100);
     }
 
     #[tokio::test]
@@ -850,7 +849,6 @@ mod tests {
 
         assert_eq!(stacks.len(), 1);
         assert_eq!(stacks[0].count, 40);
-        assert_eq!(stacks[0].first_timestamp, 2);
     }
 
     #[tokio::test]
