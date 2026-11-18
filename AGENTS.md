@@ -46,7 +46,7 @@ PUBKY_TESTNET=1 cargo tauri dev
 
 # Rust checks, as CI runs them
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --exclude pubky-backup-core
 cargo test -p pubky-backup-core --lib
 cargo test -p pubky-backup-core --test integration_tests -- --test-threads=1
