@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::error::BackupAppError;
 use pubky_backup_core::{
-    is_testnet_mode, AppStorage, BackupManager, BackupManagerConfig, KeyState, KeyStatus,
-    StackedActivity,
+    get_data_directory, is_testnet_mode, AppStorage, BackupManager, BackupManagerConfig, KeyState,
+    KeyStatus, StackedActivity,
 };
 use tauri::{
     ipc::Channel,
@@ -48,9 +48,42 @@ pub struct AppConfig {
     mirroring: bool,
 }
 
+/// Environment variable that points the app at another data directory than
+/// `~/.pubky-backup`, e.g. to start from scratch during development.
+const DATA_DIR_ENV: &str = "PUBKY_BACKUP_DATA_DIR";
+
+/// Name of the data directory in testnet mode, next to `~/.pubky-backup`.
+const TESTNET_DATA_DIR_NAME: &str = ".pubky-backup-testnet";
+
+/// The data directory, when it isn't the default `~/.pubky-backup`.
+///
+/// That is the one set through [`DATA_DIR_ENV`], or else in testnet mode a
+/// directory of its own, so testnet keys and sign-ins never mix with real ones.
+fn data_dir_override() -> Option<PathBuf> {
+    let from_env = std::env::var_os(DATA_DIR_ENV)
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from);
+    if from_env.is_some() || !is_testnet_mode() {
+        return from_env;
+    }
+    get_data_directory()
+        .ok()
+        .map(|default| default.with_file_name(TESTNET_DATA_DIR_NAME))
+}
+
+/// Open the app's storage directly, for reads that don't wait for the manager.
+fn open_storage() -> Result<AppStorage, BackupAppError> {
+    match data_dir_override() {
+        Some(data_dir) => AppStorage::new_with_path(&data_dir),
+        None => AppStorage::new(),
+    }
+    .map_err(BackupAppError::internal)
+}
+
 /// Create a BackupManager for mainnet, or for a local testnet in testnet mode.
 async fn create_manager() -> Result<BackupManager, BackupAppError> {
     let config = BackupManagerConfig {
+        data_dir: data_dir_override(),
         mirroring: MIRRORING_ENABLED,
         ..Default::default()
     };
@@ -176,7 +209,7 @@ async fn get_keys(app: AppHandle) -> Result<Vec<String>, BackupAppError> {
         return Ok(manager.list_pubky_directories()?);
     }
     // Manager not ready — read directly from storage (cheap, no network).
-    let storage = AppStorage::new().map_err(BackupAppError::internal)?;
+    let storage = open_storage()?;
     storage
         .list_pubky_directories()
         .map_err(BackupAppError::internal)
@@ -192,7 +225,7 @@ async fn get_last_pubky(app: AppHandle) -> Result<Option<String>, BackupAppError
         manager.read_last_pubky()?
     } else {
         // Manager not ready — read directly from storage (cheap, no network).
-        let storage = AppStorage::new().map_err(BackupAppError::internal)?;
+        let storage = open_storage()?;
         storage
             .read_last_pubky()
             .map_err(BackupAppError::internal)?
@@ -452,6 +485,9 @@ pub fn run() {
 
     if is_testnet_mode() {
         info!("Testnet mode enabled via PUBKY_TESTNET environment variable");
+    }
+    if let Some(data_dir) = data_dir_override() {
+        info!("Using data directory {}", data_dir.display());
     }
 
     tauri::Builder::default()
