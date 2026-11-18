@@ -37,9 +37,19 @@ For executable build:
 cargo tauri build
 ```
 
+## Separate data directory
+
+The app keeps its data in `~/.pubky-backup`, or `~/.pubky-backup-testnet` in testnet mode. To start from scratch without touching either, for example to test the first launch, point it at another directory:
+
+```
+PUBKY_BACKUP_DATA_DIR=/tmp/pubky-backup-fresh cargo tauri dev
+```
+
+The directory is created if it doesn't exist. The variable works in testnet mode too.
+
 ## Testnet mode (local network)
 
-Testnet mode runs the app against a Pubky network on your own machine, so you can exercise real syncing and signing in without mainnet or a phone. It needs Docker.
+Testnet mode runs the app against a Pubky network on your own machine, so you can exercise real syncing and signing in without mainnet or a phone. It needs Docker. It keeps its data in `~/.pubky-backup-testnet`, apart from your real backups in `~/.pubky-backup`.
 
 ```bash
 cd src-tauri
