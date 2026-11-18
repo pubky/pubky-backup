@@ -9,7 +9,8 @@ use super::session::is_session_rejection;
 use crate::utils::retry_with_backoff;
 use futures_util::Stream;
 use log::{info, warn};
-use pubky::{Event, EventCursor, Pubky, PublicKey};
+use pubky::errors::RequestError;
+use pubky::{Event, EventCursor, Pubky, PublicKey, StatusCode};
 use std::pin::Pin;
 
 /// Batch size for event stream processing and cursor save frequency.
@@ -53,19 +54,35 @@ pub(super) async fn create_event_stream(
             warn!("Private event stream for {} rejected: {}", user, e);
             return Err(SyncError::SessionRejected);
         }
-        Err(e) => {
-            return Err(EventsError::FetchFailed(format!(
-                "Failed to subscribe to event stream: {}",
-                e
-            ))
-            .into())
-        }
+        Err(e) => return Err(subscribe_failure(user, e)),
     };
 
     info!("Event stream subscribed OK for {}", user);
     Ok(Box::pin(futures_util::StreamExt::map(stream, |result| {
         result.map_err(|e| EventsError::FetchFailed(format!("Event stream error: {}", e)))
     })))
+}
+
+/// The error for a subscription that failed even after retrying.
+///
+/// When nothing answered, or the homeserver is limiting requests, the error
+/// says so plainly and the details, which spell out the request, go to the
+/// log. Other errors are kept as they are.
+fn subscribe_failure(user: &PublicKey, error: pubky::Error) -> SyncError {
+    match &error {
+        pubky::Error::Request(RequestError::Transport(_)) => {
+            warn!("Could not reach the homeserver of {}: {}", user, error);
+            SyncError::Unreachable
+        }
+        pubky::Error::Request(RequestError::Server { status, .. })
+            if *status == StatusCode::TOO_MANY_REQUESTS =>
+        {
+            warn!("Homeserver of {} is limiting requests: {}", user, error);
+            SyncError::RateLimited
+        }
+        _ => EventsError::FetchFailed(format!("Failed to subscribe to event stream: {}", error))
+            .into(),
+    }
 }
 
 #[cfg(test)]
@@ -193,8 +210,10 @@ pub mod test_helpers {
 #[cfg(test)]
 mod tests {
     use super::test_helpers::*;
+    use super::*;
     use futures_util::StreamExt;
     use pubky::EventType;
+    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_create_test_event_stream_yields_events() {
@@ -250,5 +269,51 @@ mod tests {
 
         // Stream should be exhausted
         assert!(stream.next().await.is_none());
+    }
+
+    fn test_pubky() -> PublicKey {
+        PublicKey::from_str(crate::TEST_PUBKY).unwrap()
+    }
+
+    fn server_error(status: StatusCode) -> pubky::Error {
+        RequestError::Server {
+            status,
+            message: "error".to_string(),
+        }
+        .into()
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_failure_without_response_is_unreachable() {
+        // Nothing listens on port 1, so the request gets no response at all
+        let transport = reqwest::Client::new()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .unwrap_err();
+        let error = pubky::Error::from(RequestError::Transport(transport));
+
+        let failure = subscribe_failure(&test_pubky(), error);
+
+        assert!(matches!(failure, SyncError::Unreachable));
+    }
+
+    #[test]
+    fn test_subscribe_failure_when_rate_limited() {
+        let error = server_error(StatusCode::TOO_MANY_REQUESTS);
+
+        let failure = subscribe_failure(&test_pubky(), error);
+
+        assert!(matches!(failure, SyncError::RateLimited));
+    }
+
+    #[test]
+    fn test_subscribe_failure_keeps_other_server_errors() {
+        let error = server_error(StatusCode::INTERNAL_SERVER_ERROR);
+
+        let failure = subscribe_failure(&test_pubky(), error);
+
+        assert!(matches!(failure, SyncError::Events(_)));
+        assert!(failure.to_string().contains("500"));
     }
 }
