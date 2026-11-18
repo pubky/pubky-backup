@@ -161,12 +161,28 @@ jobs:
         with:
           path: artifacts
 
+      # The intro and install instructions, then the changes since the previous tag
+      - name: Write release notes
+        env:
+          CHANGES: ${{ steps.changelog.outputs.changes }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          {
+            cat .github/release-notes-header.md
+            printf "\n## What's Changed\n\n%s\n" "$CHANGES"
+            if [ -n "$PREVIOUS_TAG" ]; then
+              printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
+                "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$PREVIOUS_TAG" "$TAG"
+            fi
+          } > release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           files: artifacts/**/pubky-backup-*
-          body: ${{ steps.changelog.outputs.changes }}
+          body_path: release-notes.md
           # Tags like v0.6.0-rc.1 are pre-releases, never shown as the latest
           prerelease: ${{ contains(github.ref_name, '-') }}
