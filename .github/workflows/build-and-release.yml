@@ -5,9 +5,48 @@ on:
     tags:
       - 'v*'
 
-# This workflow will trigger on tags to build and create a release
+# Builds the app for every platform on a version tag and publishes a release
+# with the artifacts. See RELEASING.md.
 jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate semver format
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SEMVER_REGEX="^([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z.-]+))?(\+([0-9A-Za-z.-]+))?$"
+          if [[ ! "$VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not valid semver (expected e.g. v0.6.0, v1.0.0-rc.1)"
+            exit 1
+          fi
+
+      - name: Verify versions match the tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          MISMATCH=0
+          for MANIFEST in src-tauri/Cargo.toml src-tauri/pubky-backup-core/Cargo.toml; do
+            FOUND=$(grep -m1 '^version' "$MANIFEST" | cut -d'"' -f2)
+            if [ "$FOUND" != "$VERSION" ]; then
+              echo "::error::Version mismatch in $MANIFEST: tag is $VERSION but it has $FOUND"
+              MISMATCH=1
+            fi
+          done
+          FOUND=$(node -p "require('./package.json').version")
+          if [ "$FOUND" != "$VERSION" ]; then
+            echo "::error::Version mismatch in package.json: tag is $VERSION but it has $FOUND"
+            MISMATCH=1
+          fi
+          if [ "$MISMATCH" = 1 ]; then
+            echo "Run ./.scripts/set-version.sh $VERSION and merge it before tagging"
+            exit 1
+          fi
+          echo "All versions match tag: $VERSION"
+
   build:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -105,6 +144,17 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        uses: requarks/changelog-action@v1
+        with:
+          token: ${{ github.token }}
+          tag: ${{ github.ref_name }}
+          excludeTypes: ""
+          useGitmojis: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -117,5 +167,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           files: artifacts/**/pubky-backup-*
-          generate_release_notes: true
-          draft: true
+          body: ${{ steps.changelog.outputs.changes }}
+          # Tags like v0.6.0-rc.1 are pre-releases, never shown as the latest
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -90,7 +90,7 @@ Note: Docker must be running. The first run pulls the PostgreSQL image.
 
 
 
-# Release Github Workflow
+# Releasing
 
-Application Build and Github Release pipelines are triggered upon tag creation.
+See [RELEASING.md](RELEASING.md).
 
