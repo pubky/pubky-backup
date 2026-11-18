@@ -9,7 +9,8 @@ use super::session::is_session_rejection;
 use crate::utils::retry_with_backoff;
 use futures_util::Stream;
 use log::{info, warn};
-use pubky::errors::RequestError;
+use pubky::errors::{PkarrError, RequestError};
+use pubky::pkarr::errors::ResolveError;
 use pubky::{Event, EventCursor, Pubky, PublicKey, StatusCode};
 use std::pin::Pin;
 
@@ -29,6 +30,9 @@ pub(super) type EventStream = Pin<Box<dyn Stream<Item = Result<Event, EventsErro
 ///
 /// Returns `SyncError::SessionRejected` if the homeserver does not accept
 /// the session of a private scope.
+/// Returns `SyncError::Unreachable` if nothing answered: neither the
+/// homeserver, nor the DHT when looking the homeserver up.
+/// Returns `SyncError::RateLimited` if the homeserver is limiting requests.
 pub(super) async fn create_event_stream(
     pubky_client: &Pubky,
     user: &PublicKey,
@@ -72,6 +76,14 @@ fn subscribe_failure(user: &PublicKey, error: pubky::Error) -> SyncError {
     match &error {
         pubky::Error::Request(RequestError::Transport(_)) => {
             warn!("Could not reach the homeserver of {}: {}", user, error);
+            SyncError::Unreachable
+        }
+        // The homeserver is looked up in the DHT first, and the lookup is only
+        // cached in memory, so after starting offline this is where it fails
+        pubky::Error::Pkarr(PkarrError::Resolve(
+            ResolveError::NoDhtNodesQueried | ResolveError::NoResponses,
+        )) => {
+            warn!("Could not look up the homeserver of {}: {}", user, error);
             SyncError::Unreachable
         }
         pubky::Error::Request(RequestError::Server { status, .. })
@@ -286,7 +298,11 @@ mod tests {
     #[tokio::test]
     async fn test_subscribe_failure_without_response_is_unreachable() {
         // Nothing listens on port 1, so the request gets no response at all
-        let transport = reqwest::Client::new()
+        let transport = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap()
             .get("http://127.0.0.1:1/")
             .send()
             .await
@@ -296,6 +312,26 @@ mod tests {
         let failure = subscribe_failure(&test_pubky(), error);
 
         assert!(matches!(failure, SyncError::Unreachable));
+    }
+
+    #[test]
+    fn test_subscribe_failure_when_no_one_answers_the_lookup_is_unreachable() {
+        for resolve in [ResolveError::NoDhtNodesQueried, ResolveError::NoResponses] {
+            let error = pubky::Error::Pkarr(PkarrError::Resolve(resolve));
+
+            let failure = subscribe_failure(&test_pubky(), error);
+
+            assert!(matches!(failure, SyncError::Unreachable));
+        }
+    }
+
+    #[test]
+    fn test_subscribe_failure_keeps_other_lookup_errors() {
+        let error = pubky::Error::Pkarr(PkarrError::Resolve(ResolveError::NoUsableResponses));
+
+        let failure = subscribe_failure(&test_pubky(), error);
+
+        assert!(matches!(failure, SyncError::Events(_)));
     }
 
     #[test]
