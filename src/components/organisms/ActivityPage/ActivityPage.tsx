@@ -54,8 +54,7 @@ export function ActivityPage() {
       <div className="flex flex-col gap-1">
         <h2 className="text-xl font-bold text-white m-0">Activity</h2>
         <p className="text-base font-medium text-text-light m-0">
-          All manual and automatic sync attempts and related errors are recorded
-          and displayed here for review.
+          Syncs and errors for this pubky.
         </p>
       </div>
       <div className="flex flex-1 min-h-0 flex-col gap-0.5 overflow-y-auto pr-2">
@@ -77,7 +76,7 @@ export function ActivityPage() {
                       : "bg-green-500"
                   }`}
                 />
-                <span className="text-sm font-bold text-white leading-5 min-w-0 break-all">
+                <span className="text-sm font-bold text-white leading-5 min-w-0 break-words">
                   {entry.type === "sync_failed" ? (
                     <>
                       Sync failed{" "}

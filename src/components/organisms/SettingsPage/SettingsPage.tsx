@@ -58,7 +58,7 @@ export function SettingsPage() {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "Choose Backup Location",
+      title: "Choose backup location",
     });
 
     if (!selected) return; // User cancelled
@@ -81,21 +81,16 @@ export function SettingsPage() {
   return (
     <div className="flex flex-col gap-6">
       {/* Header */}
-      <div className="flex flex-col gap-1">
-        <h2 className="text-xl font-bold leading-normal text-white text-left">
-          Settings
-        </h2>
-        <p className="text-base font-medium leading-normal text-text-light text-left">
-          Configure your backup preferences.
-        </p>
-      </div>
+      <h2 className="text-xl font-bold leading-normal text-white text-left">
+        Settings
+      </h2>
 
       {/* Settings content */}
       <div className="flex flex-col gap-6">
         {/* Backup location */}
         <div className="flex flex-col gap-2">
           <label className="text-xs font-medium tracking-[0.1em] uppercase text-text-secondary text-left">
-            Choose Backup location
+            Backup location
           </label>
           {isMoving ? (
             <div className="flex items-center bg-[#303034] rounded-lg px-6 py-[18px] gap-6">

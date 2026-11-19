@@ -25,7 +25,7 @@ export interface StatusBadgeProps
 
 const statusTextMap = {
   syncing: "SYNCING",
-  snapshot: "SNAPSHOT!",
+  snapshot: "SNAPSHOT",
   synced: "SYNCED",
   error: "ERROR",
 } as const;

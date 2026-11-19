@@ -34,7 +34,7 @@ export function ActionButtons({
           <Atoms.SnapshotIcon className="w-4 h-4 text-white" size={16} />
         )}
         <span className="text-sm font-bold text-white whitespace-nowrap">
-          Create Snapshot
+          Create snapshot
         </span>
       </Atoms.Button>
 
@@ -48,7 +48,7 @@ export function ActionButtons({
           isForceSyncing && "bg-surface-dark border-border",
         )}
       >
-        <span className="text-sm font-bold text-pubky-purple">Force Sync</span>
+        <span className="text-sm font-bold text-pubky-purple">Force sync</span>
         <Atoms.RefreshIcon
           className={cn(
             "w-4 h-4 text-pubky-purple",

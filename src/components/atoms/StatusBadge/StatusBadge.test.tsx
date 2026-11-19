@@ -18,9 +18,9 @@ describe("StatusBadge", () => {
     expect(screen.getByText("SYNCING")).toBeInTheDocument();
   });
 
-  it("should display SNAPSHOT! when status is snapshot", () => {
+  it("should display SNAPSHOT when status is snapshot", () => {
     render(<StatusBadge status="snapshot" />);
-    expect(screen.getByText("SNAPSHOT!")).toBeInTheDocument();
+    expect(screen.getByText("SNAPSHOT")).toBeInTheDocument();
   });
 
   it("should apply green background for synced status", () => {
@@ -37,7 +37,7 @@ describe("StatusBadge", () => {
 
   it("should apply blue background for snapshot status", () => {
     render(<StatusBadge status="snapshot" />);
-    const badge = screen.getByText("SNAPSHOT!");
+    const badge = screen.getByText("SNAPSHOT");
     expect(badge).toHaveClass("bg-pubky-blue");
   });
 

@@ -26,9 +26,8 @@ export function handleBackendError(error: unknown): void {
   // Handle discriminated union errors from Rust
   switch (error.type) {
     case "InvalidPubkyFormat":
-      showError(
-        `Invalid Format: ${error.message || "Please check your pubky format"}`,
-      );
+      // The backend's message comes from the key decoder and means nothing to users
+      showError("That isn't a valid pubky.");
       break;
 
     case "HomeserverNotFound":

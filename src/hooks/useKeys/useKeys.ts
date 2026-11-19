@@ -17,7 +17,7 @@ import { useUIStore } from "@/stores/uiStore";
  *     value={pubkyValue}
  *     onChange={setPubkyValue}
  *     suggestions={keys}
- *     placeholder={keys.length > 0 ? 'Enter your pubky...' : 'g1b6wp8bhhxt...'}
+ *     placeholder="Enter pubky to add..."
  *   />
  * );
  * ```

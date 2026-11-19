@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import * as Atoms from "@/components/atoms";
 import * as Hooks from "@/hooks";
 import * as Stores from "@/stores";
@@ -82,9 +83,20 @@ export function KeysPage() {
   const currentPubky = lastPubky;
 
   const handleRemove = async (pubky: string) => {
-    setIsDeleting(true);
-    setNavDisabled(true);
     try {
+      const confirmed = await ask(
+        `Stop backing up ${Utils.displayPubky(pubky)}? Its backed-up files stay on this computer.`,
+        {
+          title: "Remove pubky",
+          kind: "warning",
+          okLabel: "Remove",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!confirmed) return;
+
+      setIsDeleting(true);
+      setNavDisabled(true);
       await Services.removeKey(pubky);
 
       // If we removed the currently viewed key, select another one or go to startup screen
@@ -158,10 +170,9 @@ export function KeysPage() {
     <div className="flex flex-1 min-h-0 flex-col gap-6 self-stretch">
       {/* Header */}
       <div className="flex flex-col gap-1 text-left">
-        <h2 className="text-xl font-bold text-white m-0">Manage keys</h2>
+        <h2 className="text-xl font-bold text-white m-0">Manage pubkys</h2>
         <p className="text-base font-medium text-text-light m-0">
-          Select a pubky to see its backup activity and status.
-          {"\n"}Don't worry, all your keys will be synced in the background.
+          Select a pubky to see its status. All of them are backed up.
         </p>
       </div>
 

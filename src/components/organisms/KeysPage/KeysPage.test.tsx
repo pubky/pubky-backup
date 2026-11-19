@@ -10,6 +10,7 @@ import { KeysPage } from "./KeysPage";
 import { useUIStore } from "@/stores/uiStore";
 import type { KeyState } from "@/stores/uiStore";
 import * as services from "@/services";
+import { ask } from "@tauri-apps/plugin-dialog";
 
 // Mock services
 vi.mock("@/services", () => ({
@@ -18,6 +19,10 @@ vi.mock("@/services", () => ({
   removeKey: vi.fn(),
   signInNewKey: vi.fn(),
   cancelSignInNewKey: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  ask: vi.fn(),
 }));
 
 describe("KeysPage", () => {
@@ -33,6 +38,7 @@ describe("KeysPage", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(ask).mockResolvedValue(true);
     useUIStore.setState({
       keyStates: {},
       lastPubky: null,
@@ -44,9 +50,9 @@ describe("KeysPage", () => {
     it("should render header and description", () => {
       render(<KeysPage />);
 
-      expect(screen.getByText("Manage keys")).toBeInTheDocument();
+      expect(screen.getByText("Manage pubkys")).toBeInTheDocument();
       expect(
-        screen.getByText(/Select a pubky to see its backup activity/i),
+        screen.getByText(/Select a pubky to see its status/i),
       ).toBeInTheDocument();
     });
 
@@ -121,7 +127,7 @@ describe("KeysPage", () => {
           g1b6wp8bhhxt1234567890abcdef: {
             ...mockKeyState,
             status: { type: "Error" },
-            error: { message: "Sync error: disk full" },
+            error: { message: "disk full" },
           },
           a2c7xq9ciiyv0987654321fedcba: mockKeyState,
         },
@@ -239,6 +245,43 @@ describe("KeysPage", () => {
           useUIStore.getState().keyStates["pk:test-pubky-to-remove"],
         ).toBeUndefined();
       });
+    });
+
+    it("should keep the key when the removal is not confirmed", async () => {
+      vi.mocked(ask).mockResolvedValue(false);
+      useUIStore.setState({
+        keyStates: { "pk:test-pubky-to-keep": mockKeyState },
+      });
+
+      render(<KeysPage />);
+      fireEvent.click(screen.getByTitle("Remove pubky"));
+
+      await waitFor(() => {
+        expect(ask).toHaveBeenCalled();
+      });
+      expect(services.removeKey).not.toHaveBeenCalled();
+      expect(
+        useUIStore.getState().keyStates["pk:test-pubky-to-keep"],
+      ).toBeDefined();
+    });
+
+    it("should show an error and keep the key when the dialog fails", async () => {
+      vi.mocked(ask).mockRejectedValue(new Error("no dialog"));
+      useUIStore.setState({
+        keyStates: { "pk:test-pubky-to-keep": mockKeyState },
+      });
+
+      render(<KeysPage />);
+      fireEvent.click(screen.getByTitle("Remove pubky"));
+
+      await waitFor(() => {
+        expect(useUIStore.getState().toast.visible).toBe(true);
+      });
+      expect(useUIStore.getState().toast.type).toBe("error");
+      expect(services.removeKey).not.toHaveBeenCalled();
+      expect(
+        useUIStore.getState().keyStates["pk:test-pubky-to-keep"],
+      ).toBeDefined();
     });
 
     it("should select another key when removing the currently viewed key", async () => {

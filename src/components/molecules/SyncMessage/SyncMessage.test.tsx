@@ -77,8 +77,7 @@ describe("SyncMessage", () => {
   });
 
   it("should keep the full message in a tooltip", () => {
-    const message =
-      "Sync error: Events error: Failed to fetch events: Failed to subscribe";
+    const message = "Events error: Failed to fetch events: Failed to subscribe";
     render(<SyncMessage status="error" message={message} />);
     expect(screen.getByText(message)).toHaveAttribute("title", message);
   });
