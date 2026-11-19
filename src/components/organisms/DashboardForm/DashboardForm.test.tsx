@@ -52,7 +52,7 @@ describe("DashboardForm", () => {
   const erroredKeyState: KeyState = {
     ...mockKeyState,
     status: { type: "Error" },
-    error: { message: "Sync error: Storage error: disk full" },
+    error: { message: "Storage error: disk full" },
   };
 
   beforeEach(() => {
@@ -177,9 +177,9 @@ describe("DashboardForm", () => {
     it("should show the error message instead of the countdown", () => {
       render(<DashboardForm />);
 
-      expect(
-        screen.getByText("Sync error: Storage error: disk full"),
-      ).toHaveClass("text-pubky-red");
+      expect(screen.getByText("Storage error: disk full")).toHaveClass(
+        "text-pubky-red",
+      );
       expect(screen.queryByText(/next backup/i)).not.toBeInTheDocument();
     });
 
@@ -217,7 +217,7 @@ describe("DashboardForm", () => {
         expect(screen.getByText("SYNCED")).toBeInTheDocument();
       });
       expect(
-        screen.queryByText("Sync error: Storage error: disk full"),
+        screen.queryByText("Storage error: disk full"),
       ).not.toBeInTheDocument();
       expect(
         screen.queryByRole("button", { name: "Retry" }),

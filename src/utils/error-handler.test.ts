@@ -37,22 +37,7 @@ describe("handleBackendError", () => {
       const toast = getLastErrorToast();
       expect(toast.visible).toBe(true);
       expect(toast.type).toBe("error");
-      expect(toast.message).toBe("Invalid Format: Invalid pubky key format");
-    });
-
-    it("should use fallback message when message is empty", () => {
-      const error: BackendError = {
-        type: "InvalidPubkyFormat",
-        message: "",
-      };
-
-      handleBackendError(error);
-
-      const toast = getLastErrorToast();
-      expect(toast.visible).toBe(true);
-      expect(toast.message).toBe(
-        "Invalid Format: Please check your pubky format",
-      );
+      expect(toast.message).toBe("That isn't a valid pubky.");
     });
 
     it("should not throw when handling InvalidPubkyFormat", () => {

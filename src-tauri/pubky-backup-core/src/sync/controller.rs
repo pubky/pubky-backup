@@ -505,7 +505,7 @@ impl BackupController {
                 ControlFlow::Break(())
             }
             Err(e) => {
-                let message = format!("Sync error: {}", e);
+                let message = e.to_string();
                 error!("{}: {}", self.pubky, message);
                 self.send_status(ControllerStatus::Error { message });
                 // Retried on the next sync interval

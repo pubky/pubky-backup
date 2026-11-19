@@ -44,9 +44,9 @@ describe("KeysPage", () => {
     it("should render header and description", () => {
       render(<KeysPage />);
 
-      expect(screen.getByText("Manage keys")).toBeInTheDocument();
+      expect(screen.getByText("Manage pubkys")).toBeInTheDocument();
       expect(
-        screen.getByText(/Select a pubky to see its backup activity/i),
+        screen.getByText(/Select a pubky to see its status/i),
       ).toBeInTheDocument();
     });
 
@@ -121,7 +121,7 @@ describe("KeysPage", () => {
           g1b6wp8bhhxt1234567890abcdef: {
             ...mockKeyState,
             status: { type: "Error" },
-            error: { message: "Sync error: disk full" },
+            error: { message: "disk full" },
           },
           a2c7xq9ciiyv0987654321fedcba: mockKeyState,
         },

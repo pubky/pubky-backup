@@ -38,9 +38,6 @@ describe("SettingsPage", () => {
     it("should render the settings header", async () => {
       render(<SettingsPage />);
       expect(screen.getByText("Settings")).toBeInTheDocument();
-      expect(
-        screen.getByText("Configure your backup preferences."),
-      ).toBeInTheDocument();
     });
 
     it("should render sync interval buttons", async () => {

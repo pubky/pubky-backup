@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { StartupForm } from "./StartupForm";
 import { useUIStore } from "@/stores/uiStore";
-import type { KeyState } from "@/stores/uiStore";
 import * as services from "@/services";
 
 // Mock services
@@ -14,16 +13,6 @@ vi.mock("@/services", () => ({
 }));
 
 describe("StartupForm", () => {
-  const mockKeyState: KeyState = {
-    status: { type: "Idle" },
-    data_size: 1024,
-    last_sync: 1672531200,
-    next_sync: 1672531230,
-    error: null,
-    auth: { type: "SignedOut" },
-    mirror: { type: "NotMirrored" },
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
     // Mock getLastPubky to return null by default (no auto-load)
@@ -55,7 +44,7 @@ describe("StartupForm", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByPlaceholderText(/g1b6wp8bhhxt/i),
+          screen.getByPlaceholderText(/enter pubky to add/i),
         ).toBeInTheDocument();
       });
     });
@@ -75,21 +64,7 @@ describe("StartupForm", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByPlaceholderText(/g1b6wp8bhhxt/i),
-        ).toBeInTheDocument();
-      });
-    });
-
-    it("should show different placeholder when keys exist", async () => {
-      useUIStore.setState({
-        keyStates: { "pk:existing-key": mockKeyState },
-      });
-
-      render(<StartupForm />);
-
-      await waitFor(() => {
-        expect(
-          screen.getByPlaceholderText(/enter your pubky/i),
+          screen.getByPlaceholderText(/enter pubky to add/i),
         ).toBeInTheDocument();
       });
     });
@@ -108,9 +83,12 @@ describe("StartupForm", () => {
 
     it("should enable button when input has value", async () => {
       render(<StartupForm />);
-      fireEvent.change(await screen.findByPlaceholderText(/g1b6wp8bhhxt/i), {
-        target: { value: "some-pubky" },
-      });
+      fireEvent.change(
+        await screen.findByPlaceholderText(/enter pubky to add/i),
+        {
+          target: { value: "some-pubky" },
+        },
+      );
 
       await waitFor(() => {
         expect(
@@ -123,9 +101,12 @@ describe("StartupForm", () => {
   describe("form submission", () => {
     it("should call addKey when the public-only backup button is clicked", async () => {
       render(<StartupForm />);
-      fireEvent.change(await screen.findByPlaceholderText(/g1b6wp8bhhxt/i), {
-        target: { value: "my-pubky" },
-      });
+      fireEvent.change(
+        await screen.findByPlaceholderText(/enter pubky to add/i),
+        {
+          target: { value: "my-pubky" },
+        },
+      );
 
       await waitFor(() => {
         expect(
@@ -146,9 +127,12 @@ describe("StartupForm", () => {
       // The dashboard may have been left on another page by a removed key
       useUIStore.setState({ currentPage: "keys" });
       render(<StartupForm />);
-      fireEvent.change(await screen.findByPlaceholderText(/g1b6wp8bhhxt/i), {
-        target: { value: "my-pubky" },
-      });
+      fireEvent.change(
+        await screen.findByPlaceholderText(/enter pubky to add/i),
+        {
+          target: { value: "my-pubky" },
+        },
+      );
 
       await waitFor(() => {
         expect(
@@ -168,9 +152,12 @@ describe("StartupForm", () => {
 
     it("should trim whitespace from input before submitting", async () => {
       render(<StartupForm />);
-      fireEvent.change(await screen.findByPlaceholderText(/g1b6wp8bhhxt/i), {
-        target: { value: "  pubky-with-spaces  " },
-      });
+      fireEvent.change(
+        await screen.findByPlaceholderText(/enter pubky to add/i),
+        {
+          target: { value: "  pubky-with-spaces  " },
+        },
+      );
 
       await waitFor(() => {
         expect(
@@ -206,9 +193,12 @@ describe("StartupForm", () => {
 
     it("should not submit when only whitespace", async () => {
       render(<StartupForm />);
-      fireEvent.change(await screen.findByPlaceholderText(/g1b6wp8bhhxt/i), {
-        target: { value: "   " },
-      });
+      fireEvent.change(
+        await screen.findByPlaceholderText(/enter pubky to add/i),
+        {
+          target: { value: "   " },
+        },
+      );
 
       await waitFor(() => {
         expect(
@@ -241,7 +231,7 @@ describe("StartupForm", () => {
       // Wait for hooks to settle
       await waitFor(() => {
         expect(
-          screen.getByPlaceholderText(/g1b6wp8bhhxt/i),
+          screen.getByPlaceholderText(/enter pubky to add/i),
         ).toBeInTheDocument();
       });
 
@@ -288,9 +278,12 @@ describe("StartupForm", () => {
     it("should handle add key errors gracefully", async () => {
       vi.mocked(services.addKey).mockRejectedValue(new Error("Invalid pubky"));
       render(<StartupForm />);
-      fireEvent.change(await screen.findByPlaceholderText(/g1b6wp8bhhxt/i), {
-        target: { value: "bad-pubky" },
-      });
+      fireEvent.change(
+        await screen.findByPlaceholderText(/enter pubky to add/i),
+        {
+          target: { value: "bad-pubky" },
+        },
+      );
 
       await waitFor(() => {
         expect(
@@ -313,9 +306,12 @@ describe("StartupForm", () => {
     it("should not navigate on error", async () => {
       vi.mocked(services.addKey).mockRejectedValue(new Error("Failed"));
       render(<StartupForm />);
-      fireEvent.change(await screen.findByPlaceholderText(/g1b6wp8bhhxt/i), {
-        target: { value: "bad-pubky" },
-      });
+      fireEvent.change(
+        await screen.findByPlaceholderText(/enter pubky to add/i),
+        {
+          target: { value: "bad-pubky" },
+        },
+      );
 
       await waitFor(() => {
         expect(
@@ -349,26 +345,6 @@ describe("StartupForm", () => {
         expect(useUIStore.getState().currentScreen).toBe("dashboard");
       });
       expect(useUIStore.getState().lastPubky).toBe("signed-in-pubky");
-    });
-  });
-
-  describe("suggestions", () => {
-    it("should pass existing keys as suggestions to input", async () => {
-      useUIStore.setState({
-        keyStates: {
-          "pk:key1": mockKeyState,
-          "pk:key2": mockKeyState,
-        },
-      });
-
-      render(<StartupForm />);
-
-      // When keys exist, placeholder changes
-      await waitFor(() => {
-        expect(
-          screen.getByPlaceholderText(/enter your pubky/i),
-        ).toBeInTheDocument();
-      });
     });
   });
 });

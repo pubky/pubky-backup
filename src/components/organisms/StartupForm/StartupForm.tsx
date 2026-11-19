@@ -15,10 +15,6 @@ export function StartupForm() {
     setScreen("dashboard");
   }, []);
 
-  // Determine placeholder based on available keys
-  const placeholder =
-    keys.length > 0 ? "Enter your pubky..." : "g1b6wp8bhhxt...";
-
   return (
     <div className="flex flex-col items-stretch gap-6">
       {/* Header */}
@@ -38,7 +34,7 @@ export function StartupForm() {
         <AddKeyForm
           onAdded={handleAdded}
           suggestions={keys}
-          placeholder={placeholder}
+          placeholder="Enter pubky to add..."
         />
       )}
     </div>

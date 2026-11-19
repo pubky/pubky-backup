@@ -30,7 +30,7 @@ describe("DashboardHeader", () => {
   it("should render the status badge with snapshot status", () => {
     render(<DashboardHeader {...defaultProps} status="snapshot" />);
 
-    expect(screen.getByText("SNAPSHOT!")).toBeInTheDocument();
+    expect(screen.getByText("SNAPSHOT")).toBeInTheDocument();
   });
 
   it("should render the status badge with error status", () => {

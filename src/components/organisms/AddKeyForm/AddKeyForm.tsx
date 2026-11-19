@@ -39,15 +39,10 @@ export function AddKeyForm({
     <div className="flex flex-col gap-6 text-left">
       {/* Signing in: public and private data */}
       <section className="flex flex-col gap-3 p-6 bg-surface-light rounded-lg">
-        <div className="flex flex-col gap-1">
-          <h3 className="flex items-center gap-2 text-base font-bold text-white m-0">
-            <Atoms.LockIcon size={16} className="text-pubky-green" />
-            Public and private data
-          </h3>
-          <p className="text-sm text-text-secondary m-0">
-            Sign in with Pubky Ring.
-          </p>
-        </div>
+        <h3 className="flex items-center gap-2 text-base font-bold text-white m-0">
+          <Atoms.LockIcon size={16} className="text-pubky-green" />
+          Public and private data
+        </h3>
         <SignInSection onSignedIn={onAdded} disabled={isAddingPubky} />
       </section>
 
