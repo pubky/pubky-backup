@@ -16,7 +16,7 @@ function once(
   message: string,
   timestamp: number,
 ): StackedActivity {
-  return { type, message, timestamp, count: 1, first_timestamp: timestamp };
+  return { type, message, timestamp, count: 1 };
 }
 
 /** The coloured dot shown in front of an activity entry's message. */
@@ -58,14 +58,13 @@ describe("ActivityPage", () => {
     expect(dotOf(/2 new files/)).toHaveClass("bg-green-500");
   });
 
-  it("should show how often a stacked entry occurred and since when", async () => {
+  it("should show how often a stacked entry occurred", async () => {
     const entries: StackedActivity[] = [
       {
         type: "sync_failed",
         message: "Offline",
         timestamp: now,
         count: 37,
-        first_timestamp: now - 3 * 3600,
       },
       once("signed_in", "Signed in", now - 4 * 3600),
     ];
@@ -73,9 +72,7 @@ describe("ActivityPage", () => {
 
     render(<ActivityPage />);
 
-    expect(
-      await screen.findByText("Just now · 37 times, first 3 hours ago"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Just now · 37 times")).toBeInTheDocument();
     expect(screen.getByText("4 hours ago")).toBeInTheDocument();
   });
 

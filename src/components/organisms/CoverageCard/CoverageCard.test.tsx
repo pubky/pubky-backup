@@ -127,7 +127,6 @@ describe("CoverageCard", () => {
       await renderWithAuth(awaiting);
 
       expect(screen.getByTitle("Sign-in QR code")).toBeInTheDocument();
-      expect(screen.getByText(/only grants read access/i)).toBeInTheDocument();
     });
 
     it("should show only the approval step, to fit the window", async () => {

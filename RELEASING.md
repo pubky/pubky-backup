@@ -69,7 +69,7 @@ When a `v*` tag is pushed, the workflow:
 
 1. **Validates** that the tag is valid semver and matches the version in both `Cargo.toml` files and `package.json`. If any differ, nothing is built.
 2. **Builds** the app for Linux (amd64), Windows (amd64) and macOS (arm64 and amd64).
-3. **Publishes a GitHub Release** with the artifacts and release notes grouped by commit type (features, fixes, and so on), once every build has succeeded. A tag with a pre-release suffix, such as `v0.6.0-rc.1`, is published as a pre-release.
+3. **Publishes a GitHub Release** with the artifacts, once every build has succeeded. The release notes start with the intro and install instructions from [`.github/release-notes-header.md`](.github/release-notes-header.md), followed by the changes since the previous tag, grouped by commit type (features, fixes, and so on), and a link to the full diff. A tag with a pre-release suffix, such as `v0.6.0-rc.1`, is published as a pre-release.
 
 The release notes depend on PR titles following conventional commits (`feat:`, `fix:`, `chore:` and so on). The [PR title check](.github/workflows/pr-title.yml) enforces this on every PR.
 

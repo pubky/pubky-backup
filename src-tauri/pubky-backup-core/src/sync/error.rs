@@ -17,6 +17,17 @@ pub enum SyncError {
     #[error("The homeserver rejected the session")]
     SessionRejected,
 
+    /// No response came from the homeserver: this device is offline, or the
+    /// homeserver is down or unreachable. The details are logged.
+    #[error("Could not reach the homeserver. Check your internet connection.")]
+    Unreachable,
+
+    /// The homeserver turned the request down for coming too often
+    #[error(
+        "The homeserver is limiting requests right now. The backup tries again at the next sync."
+    )]
+    RateLimited,
+
     /// Internal sync error
     #[error("Internal error: {0}")]
     Internal(String),

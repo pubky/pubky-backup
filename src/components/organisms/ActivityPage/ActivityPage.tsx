@@ -102,8 +102,7 @@ export function ActivityPage() {
               </div>
               <span className="text-sm text-text-secondary leading-5 pl-6">
                 {formatRelativeTime(entry.timestamp)}
-                {entry.count > 1 &&
-                  ` · ${entry.count} times, first ${formatRelativeTime(entry.first_timestamp).toLowerCase()}`}
+                {entry.count > 1 && ` · ${entry.count} times`}
               </span>
             </div>
           ))
