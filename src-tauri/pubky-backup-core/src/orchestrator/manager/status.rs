@@ -156,7 +156,7 @@ impl StatusHandler {
                     };
                     let message = format!(
                         "Initial backup successful — {}",
-                        format_files_backed_up(count)
+                        format_changes_backed_up(count)
                     );
                     Some(ActivityEntry {
                         activity_type: ActivityType::InitialBackup,
@@ -167,7 +167,7 @@ impl StatusHandler {
                     if *events_processed > 0 {
                         Some(ActivityEntry {
                             activity_type: ActivityType::FilesBackedUp,
-                            message: format_files_backed_up(*events_processed),
+                            message: format_changes_backed_up(*events_processed),
                             timestamp: now,
                         })
                     } else {
@@ -195,11 +195,12 @@ pub(crate) fn current_unix_timestamp() -> u64 {
         .as_secs()
 }
 
-fn format_files_backed_up(count: usize) -> String {
+/// Counts homeserver events, so a deleted file counts as a change too
+fn format_changes_backed_up(count: usize) -> String {
     format!(
-        "{} new {} backed up",
+        "{} {} backed up",
         count,
-        if count == 1 { "file" } else { "files" }
+        if count == 1 { "change" } else { "changes" }
     )
 }
 
@@ -461,7 +462,7 @@ mod tests {
         assert_eq!(entries[0].latest.activity_type, ActivityType::InitialBackup);
         assert_eq!(
             entries[0].latest.message,
-            "Initial backup successful — 0 new files backed up"
+            "Initial backup successful — 0 changes backed up"
         );
     }
 
@@ -481,7 +482,7 @@ mod tests {
         assert_eq!(entries[0].latest.activity_type, ActivityType::InitialBackup);
         assert_eq!(
             entries[0].latest.message,
-            "Initial backup successful — 18 new files backed up"
+            "Initial backup successful — 18 changes backed up"
         );
     }
 
@@ -514,7 +515,7 @@ mod tests {
         assert_eq!(entries.len(), 2);
         // Newest should be FilesBackedUp, NOT a second InitialBackup
         assert_eq!(entries[0].latest.activity_type, ActivityType::FilesBackedUp);
-        assert_eq!(entries[0].latest.message, "3 new files backed up");
+        assert_eq!(entries[0].latest.message, "3 changes backed up");
     }
 
     #[tokio::test]
@@ -531,7 +532,7 @@ mod tests {
         let entries = storage.read_activity(&pubky, 10).await;
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].latest.activity_type, ActivityType::FilesBackedUp);
-        assert_eq!(entries[0].latest.message, "5 new files backed up");
+        assert_eq!(entries[0].latest.message, "5 changes backed up");
     }
 
     #[tokio::test]
@@ -547,7 +548,7 @@ mod tests {
 
         let entries = storage.read_activity(&pubky, 10).await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].latest.message, "1 new file backed up");
+        assert_eq!(entries[0].latest.message, "1 change backed up");
     }
 
     #[tokio::test]

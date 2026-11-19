@@ -46,7 +46,7 @@ describe("ActivityPage", () => {
     const entries: StackedActivity[] = [
       once("session_expired", "Session expired", now),
       once("signed_out", "Signed out", now),
-      once("files_backed_up", "2 new files", now),
+      once("files_backed_up", "2 changes backed up", now),
     ];
     vi.mocked(commands.getActivity).mockResolvedValue(entries);
 
@@ -55,7 +55,7 @@ describe("ActivityPage", () => {
     await screen.findByText("Session expired");
     expect(dotOf(/Session expired/)).toHaveClass("bg-red-500");
     expect(dotOf(/Signed out/)).toHaveClass("bg-green-500");
-    expect(dotOf(/2 new files/)).toHaveClass("bg-green-500");
+    expect(dotOf(/2 changes backed up/)).toHaveClass("bg-green-500");
   });
 
   it("should show how often a stacked entry occurred", async () => {

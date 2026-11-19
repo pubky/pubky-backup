@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import * as Atoms from "@/components/atoms";
 import * as Hooks from "@/hooks";
 import * as Stores from "@/stores";
@@ -82,9 +83,20 @@ export function KeysPage() {
   const currentPubky = lastPubky;
 
   const handleRemove = async (pubky: string) => {
-    setIsDeleting(true);
-    setNavDisabled(true);
     try {
+      const confirmed = await ask(
+        `Stop backing up ${Utils.displayPubky(pubky)}? Its backed-up files stay on this computer.`,
+        {
+          title: "Remove pubky",
+          kind: "warning",
+          okLabel: "Remove",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!confirmed) return;
+
+      setIsDeleting(true);
+      setNavDisabled(true);
       await Services.removeKey(pubky);
 
       // If we removed the currently viewed key, select another one or go to startup screen

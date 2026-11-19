@@ -441,7 +441,12 @@ impl BackupController {
             Some(ControllerCommand::ForceSync) => {
                 info!("Force sync triggered for {}", self.pubky);
                 self.sync_now = true;
-                self.cycle = None;
+                // Start over from public data, but keep the count of a cycle
+                // in progress: signing in forces a sync while the first
+                // one is still running, and its files belong in the activity
+                if let Some(cycle) = &mut self.cycle {
+                    cycle.phase = SyncPhase::Backup(DataScope::Public);
+                }
                 ControlFlow::Continue(())
             }
             Some(ControllerCommand::Cancel) => {
@@ -1047,10 +1052,46 @@ mod tests {
 
         assert!(flow.is_continue());
         assert!(controller.sync_now);
-        assert!(
-            controller.cycle.is_none(),
-            "The next sync should start a fresh cycle from public data"
+        let cycle = controller
+            .cycle
+            .expect("The cycle in progress should be kept");
+        assert_eq!(
+            cycle.phase,
+            SyncPhase::Backup(DataScope::Public),
+            "The next sync should start over from public data"
         );
+        assert_eq!(
+            cycle.events, 5,
+            "Events already backed up should still count"
+        );
+    }
+
+    /// Signing in forces a sync while the first one may still be running.
+    /// The activity entry is built from the last count before `Idle`, so that
+    /// count must include what the interrupted cycle had already backed up.
+    #[tokio::test]
+    async fn test_force_sync_during_a_cycle_reports_its_events_when_done() {
+        let (storage, _temp_dir) = create_test_storage();
+        let (mut controller, _control_tx, mut status_rx) = create_controlled_controller(storage);
+        controller.cycle = Some(SyncCycle {
+            events: 1,
+            phase: SyncPhase::Backup(DataScope::Private),
+        });
+
+        let _ = controller.handle_command(Some(ControllerCommand::ForceSync));
+        while controller.sync_batch().await.is_continue() {}
+
+        let mut last_count = None;
+        loop {
+            match next_status(&mut status_rx, Duration::from_secs(1)).await {
+                ControllerStatus::Syncing { events_processed } => {
+                    last_count = Some(events_processed)
+                }
+                ControllerStatus::Idle => break,
+                other => panic!("Unexpected status {:?}", other),
+            }
+        }
+        assert_eq!(last_count, Some(1));
     }
 
     #[tokio::test]
