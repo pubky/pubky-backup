@@ -1,7 +1,7 @@
 export { StartupForm } from "./StartupForm";
 export { DashboardForm } from "./DashboardForm";
 export { ActionButtons, type ActionButtonsProps } from "./ActionButtons";
-export { CoverageCard, type CoverageCardProps } from "./CoverageCard";
+export { MirrorCard, type MirrorCardProps } from "./MirrorCard";
 export { CoverageNotice, type CoverageNoticeProps } from "./CoverageNotice";
 export { AddKeyForm, type AddKeyFormProps } from "./AddKeyForm";
 export { ActivityPage } from "./ActivityPage";

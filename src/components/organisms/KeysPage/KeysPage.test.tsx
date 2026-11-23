@@ -221,20 +221,216 @@ describe("KeysPage", () => {
       expect(services.setLastPubky).not.toHaveBeenCalled();
       expect(useUIStore.getState().currentPage).toBe("keys");
     });
+  });
 
-    it("should offer sign-in for the selected key only", async () => {
+  describe("signing in", () => {
+    it("should let any key sign in without selecting it", async () => {
       vi.mocked(services.startSignIn).mockResolvedValue(undefined);
       useUIStore.setState({
-        keyStates: { "pk:key1": mockKeyState, "pk:key2": mockKeyState },
+        keyStates: {
+          "pk:key1": mockKeyState,
+          "pk:key2": { ...mockKeyState, auth: { type: "SignedIn" } },
+        },
         lastPubky: "pk:key2",
       });
 
       render(<KeysPage />);
-      // getByRole throws if more than one key shows a sign-in button
       fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
       await waitFor(() => {
-        expect(services.startSignIn).toHaveBeenCalledWith("pk:key2");
+        expect(services.startSignIn).toHaveBeenCalledWith("pk:key1");
+      });
+      expect(services.setLastPubky).not.toHaveBeenCalled();
+    });
+
+    it("should sign a signed-in key out", async () => {
+      vi.mocked(services.signOut).mockResolvedValue(undefined);
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": { ...mockKeyState, auth: { type: "SignedIn" } },
+        },
+        lastPubky: "pk:key1",
+      });
+
+      render(<KeysPage />);
+      fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+      await waitFor(() => {
+        expect(services.signOut).toHaveBeenCalledWith("pk:key1");
+      });
+      expect(ask).toHaveBeenCalledWith(
+        expect.stringContaining("Sign out of"),
+        expect.objectContaining({ okLabel: "Sign out" }),
+      );
+    });
+
+    it("should stay signed in when the sign-out is not confirmed", async () => {
+      vi.mocked(ask).mockResolvedValue(false);
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": { ...mockKeyState, auth: { type: "SignedIn" } },
+        },
+        lastPubky: "pk:key1",
+      });
+
+      render(<KeysPage />);
+      fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+      await waitFor(() => {
+        expect(ask).toHaveBeenCalled();
+      });
+      expect(services.signOut).not.toHaveBeenCalled();
+    });
+
+    it("should offer sign-out on the selected pubky only", () => {
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": { ...mockKeyState, auth: { type: "SignedIn" } },
+          "pk:key2": { ...mockKeyState, auth: { type: "SignedIn" } },
+        },
+        lastPubky: "pk:key2",
+      });
+
+      render(<KeysPage />);
+
+      // getByRole throws if more than one key offers it
+      expect(
+        screen.getByRole("button", { name: "Sign out" }),
+      ).toBeInTheDocument();
+      expect(screen.getAllByText("Public + private")).toHaveLength(2);
+    });
+
+    it("should ask to sign in again when the session expired", () => {
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": { ...mockKeyState, auth: { type: "SessionExpired" } },
+        },
+        lastPubky: "pk:key1",
+      });
+
+      render(<KeysPage />);
+
+      expect(
+        screen.getByRole("button", { name: "Sign in again" }),
+      ).toBeInTheDocument();
+    });
+
+    it("should show why the sign-in failed and offer to try again", () => {
+      useUIStore.setState({
+        keyStates: {
+          "pk:key1": {
+            ...mockKeyState,
+            auth: {
+              type: "SignInFailed",
+              message: "approved by a different key",
+            },
+          },
+        },
+        lastPubky: "pk:key1",
+      });
+
+      render(<KeysPage />);
+
+      expect(
+        screen.getByText("Sign-in failed: approved by a different key"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Try again" }),
+      ).toBeInTheDocument();
+    });
+
+    it("should show an error toast when the sign-in cannot be started", async () => {
+      vi.mocked(services.startSignIn).mockRejectedValue({
+        type: "Internal",
+        message: "relay unreachable",
+      });
+      useUIStore.setState({
+        keyStates: { "pk:key1": mockKeyState },
+        lastPubky: "pk:key1",
+      });
+
+      render(<KeysPage />);
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+      await waitFor(() => {
+        expect(useUIStore.getState().toast.message).toContain(
+          "relay unreachable",
+        );
+      });
+    });
+
+    describe("awaiting approval", () => {
+      const awaiting: KeyState = {
+        ...mockKeyState,
+        auth: {
+          type: "AwaitingApproval",
+          authorization_url: "pubkyauth://example",
+        },
+      };
+
+      it("should show the QR code in a pop-up", () => {
+        useUIStore.setState({
+          keyStates: { "pk:key1": mockKeyState, "pk:key2": awaiting },
+          lastPubky: "pk:key1",
+        });
+
+        render(<KeysPage />);
+
+        const dialog = screen.getByRole("dialog");
+        expect(dialog).toHaveAccessibleName(/^Sign in /);
+        expect(screen.getByTitle("Sign-in QR code")).toBeInTheDocument();
+      });
+
+      it("should cancel the sign-in without selecting the key", async () => {
+        vi.mocked(services.cancelSignIn).mockResolvedValue(undefined);
+        useUIStore.setState({
+          keyStates: { "pk:key1": mockKeyState, "pk:key2": awaiting },
+          lastPubky: "pk:key1",
+        });
+
+        render(<KeysPage />);
+        fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+        await waitFor(() => {
+          expect(services.cancelSignIn).toHaveBeenCalledWith("pk:key2");
+        });
+        expect(services.setLastPubky).not.toHaveBeenCalled();
+      });
+
+      it("should cancel the sign-in on Escape", async () => {
+        vi.mocked(services.cancelSignIn).mockResolvedValue(undefined);
+        useUIStore.setState({
+          keyStates: { "pk:key1": awaiting },
+          lastPubky: "pk:key1",
+        });
+
+        render(<KeysPage />);
+        fireEvent.keyDown(window, { key: "Escape" });
+
+        await waitFor(() => {
+          expect(services.cancelSignIn).toHaveBeenCalledWith("pk:key1");
+        });
+      });
+
+      it("should close the pop-up once the sign-in is approved", () => {
+        useUIStore.setState({
+          keyStates: { "pk:key1": awaiting },
+          lastPubky: "pk:key1",
+        });
+        render(<KeysPage />);
+
+        act(() => {
+          useUIStore.setState({
+            keyStates: {
+              "pk:key1": { ...awaiting, auth: { type: "SignedIn" } },
+            },
+          });
+        });
+
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: "Sign out" }),
+        ).toBeInTheDocument();
       });
     });
   });

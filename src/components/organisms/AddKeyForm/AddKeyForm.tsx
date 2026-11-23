@@ -97,28 +97,12 @@ interface SignInSectionProps {
   disabled: boolean;
 }
 
-/** The sign-in button, or the QR code to approve the sign-in with. */
+/** The sign-in button, and the QR code to approve the sign-in with. */
 function SignInSection({ onSignedIn, disabled }: SignInSectionProps) {
   const { state, start, cancel } = Hooks.useNewKeySignIn(onSignedIn);
-
-  if (state.type === "AwaitingApproval") {
-    return (
-      <Molecules.SignInApproval
-        authorizationUrl={state.authorization_url}
-        action={
-          <Atoms.Button
-            variant="secondary"
-            onClick={cancel}
-            className="py-2 px-4"
-          >
-            <span className="text-white text-sm font-medium">Cancel</span>
-          </Atoms.Button>
-        }
-      />
-    );
-  }
-
+  const isAwaiting = state.type === "AwaitingApproval";
   const isStarting = state.type === "Starting";
+
   return (
     <div className="flex flex-col gap-2">
       {state.type === "Failed" && (
@@ -128,16 +112,26 @@ function SignInSection({ onSignedIn, disabled }: SignInSectionProps) {
       )}
       <Atoms.Button
         onClick={() => void start()}
-        disabled={disabled || isStarting}
+        disabled={disabled || isStarting || isAwaiting}
       >
         <span className="text-sm font-bold text-pubky-purple">
           {isStarting
             ? "Preparing sign-in..."
-            : state.type === "Failed"
-              ? "Try again"
-              : "Sign in with Pubky Ring"}
+            : isAwaiting
+              ? "Waiting for approval..."
+              : state.type === "Failed"
+                ? "Try again"
+                : "Sign in with Pubky Ring"}
         </span>
       </Atoms.Button>
+      {state.type === "AwaitingApproval" && (
+        <Molecules.SignInApproval
+          authorizationUrl={state.authorization_url}
+          title="Sign in with Pubky Ring"
+          instructions="Scan with Pubky Ring and approve to back up public and private data."
+          onCancel={cancel}
+        />
+      )}
     </div>
   );
 }

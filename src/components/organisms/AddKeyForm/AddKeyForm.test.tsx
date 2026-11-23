@@ -63,6 +63,17 @@ describe("AddKeyForm", () => {
       ).toBeInTheDocument();
     });
 
+    it("should not start another sign-in while one awaits approval", async () => {
+      mockSignInAwaitingApproval();
+      render(<AddKeyForm onAdded={vi.fn()} />);
+
+      await act(async () => clickSignIn());
+
+      expect(
+        screen.getByRole("button", { name: "Waiting for approval..." }),
+      ).toBeDisabled();
+    });
+
     it("should cancel a sign-in awaiting approval", async () => {
       mockSignInAwaitingApproval();
       render(<AddKeyForm onAdded={vi.fn()} />);
