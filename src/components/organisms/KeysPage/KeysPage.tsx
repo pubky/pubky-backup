@@ -168,8 +168,7 @@ export function KeysPage() {
   }
 
   return (
-    // Not limited to the window: a long list scrolls with the whole page
-    <div className="flex flex-1 flex-col gap-6 self-stretch">
+    <div className="flex flex-1 min-h-0 flex-col gap-6 self-stretch">
       {/* Header */}
       <div className="flex flex-col gap-1 text-left">
         <h2 className="text-xl font-bold text-white m-0">Manage pubkys</h2>
@@ -190,28 +189,31 @@ export function KeysPage() {
         </div>
       ) : (
         <>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-1 min-h-0 flex-col gap-2">
             <span className="text-xs font-medium text-text-secondary uppercase tracking-widest">
               Your pubkys ({keys.length})
             </span>
-            {keys.map((pubky) => (
-              <Fragment key={pubky}>
-                <KeyItem
-                  pubky={pubky}
-                  isSelected={pubky === currentPubky}
-                  onSelect={() => handleSelect(pubky)}
-                  onRemove={() => handleRemove(pubky)}
-                />
-                {/* Signing in and mirroring, under the pubky they act on */}
-                {pubky === currentPubky && <CoverageCard pubky={pubky} />}
-              </Fragment>
-            ))}
+            {/* Scrolls on its own, so the header and the add button stay put */}
+            <div className="flex flex-1 min-h-0 flex-col gap-2 overflow-y-auto pr-2">
+              {keys.map((pubky) => (
+                <Fragment key={pubky}>
+                  <KeyItem
+                    pubky={pubky}
+                    isSelected={pubky === currentPubky}
+                    onSelect={() => handleSelect(pubky)}
+                    onRemove={() => handleRemove(pubky)}
+                  />
+                  {/* Signing in and mirroring, under the pubky they act on */}
+                  {pubky === currentPubky && <CoverageCard pubky={pubky} />}
+                </Fragment>
+              ))}
+            </div>
           </div>
 
           <Atoms.Button
             variant="secondary"
             onClick={() => setShowAddInput(true)}
-            className="w-full mt-auto"
+            className="w-full shrink-0"
           >
             <span className="text-text-light text-sm font-bold">
               Add another pubky

@@ -29,20 +29,29 @@ function renderNotice(auth: AuthStatus, mirror: MirrorStatus = NOT_MIRRORED) {
 }
 
 describe("CoverageNotice", () => {
+  it("should show nothing while signed out", () => {
+    const { container } = renderNotice({ type: "SignedOut" });
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("should show nothing while an approval is pending", () => {
+    const { container } = renderNotice(
+      { type: "AwaitingApproval", authorization_url: "pubkyauth://example" },
+      {
+        type: "AwaitingApproval",
+        homeserver: HOMESERVER,
+        authorization_url: "pubkyauth://example",
+      },
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("should show nothing while private data is backed up and nothing needs attention", () => {
     const { container } = renderNotice(SIGNED_IN, {
       type: "Mirroring",
       homeserver: HOMESERVER,
     });
     expect(container).toBeEmptyDOMElement();
-  });
-
-  it("should offer to set up private backup when signed out", () => {
-    renderNotice({ type: "SignedOut" });
-    expect(
-      screen.getByText("Private data isn't backed up."),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Set up" })).toBeInTheDocument();
   });
 
   it("should warn when the session expired", () => {
@@ -54,14 +63,6 @@ describe("CoverageNotice", () => {
   it("should warn when the sign-in failed", () => {
     renderNotice({ type: "SignInFailed", message: "denied" });
     expect(screen.getByText(/Sign-in failed/)).toBeInTheDocument();
-  });
-
-  it("should point to a pending sign-in approval", () => {
-    renderNotice({
-      type: "AwaitingApproval",
-      authorization_url: "pubkyauth://example",
-    });
-    expect(screen.getByText(/sign-in is waiting/)).toBeInTheDocument();
   });
 
   it("should warn when the mirror is paused", () => {
@@ -91,31 +92,9 @@ describe("CoverageNotice", () => {
     expect(screen.getByRole("button", { name: "Fix" })).toBeInTheDocument();
   });
 
-  it("should point to a pending mirror approval", () => {
-    renderNotice(SIGNED_IN, {
-      type: "AwaitingApproval",
-      homeserver: HOMESERVER,
-      authorization_url: "pubkyauth://example",
-    });
-    expect(screen.getByText(/mirror is waiting/)).toBeInTheDocument();
-  });
-
-  it("should point to a pending approval before an expired session", () => {
-    renderNotice(
-      { type: "SessionExpired" },
-      {
-        type: "AwaitingApproval",
-        homeserver: HOMESERVER,
-        authorization_url: "pubkyauth://example",
-      },
-    );
-    expect(screen.getByText(/mirror is waiting/)).toBeInTheDocument();
-    expect(screen.queryByText(/your session expired/)).not.toBeInTheDocument();
-  });
-
   it("should open the controls when its button is clicked", () => {
-    const { onOpen } = renderNotice({ type: "SignedOut" });
-    fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+    const { onOpen } = renderNotice({ type: "SessionExpired" });
+    fireEvent.click(screen.getByRole("button", { name: "Fix" }));
     expect(onOpen).toHaveBeenCalledOnce();
   });
 });

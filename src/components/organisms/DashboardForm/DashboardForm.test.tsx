@@ -577,11 +577,19 @@ describe("DashboardForm", () => {
   });
 
   describe("private data", () => {
-    it("should open the Keys page to back up private data", async () => {
-      useUIStore.setState({ currentPage: "sync" });
+    it("should open the Keys page to sign in again", async () => {
+      useUIStore.setState({
+        currentPage: "sync",
+        keyStates: {
+          "pk:test-pubky": {
+            ...mockKeyState,
+            auth: { type: "SessionExpired" },
+          },
+        },
+      });
       render(<DashboardForm />);
 
-      fireEvent.click(await screen.findByRole("button", { name: "Set up" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Fix" }));
 
       expect(useUIStore.getState().currentPage).toBe("keys");
     });
