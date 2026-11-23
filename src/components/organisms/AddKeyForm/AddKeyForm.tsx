@@ -36,9 +36,9 @@ export function AddKeyForm({
   };
 
   return (
-    <div className="flex flex-col gap-6 text-left">
+    <div className="flex flex-col gap-4 text-left">
       {/* Signing in: public and private data */}
-      <section className="flex flex-col gap-3 p-6 bg-surface-light rounded-lg">
+      <section className="flex flex-col gap-3 p-4 bg-surface-light rounded-lg">
         <h3 className="flex items-center gap-2 text-base font-bold text-white m-0">
           <Atoms.LockIcon size={16} className="text-pubky-green" />
           Public and private data

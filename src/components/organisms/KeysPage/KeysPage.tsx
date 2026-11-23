@@ -252,7 +252,7 @@ export function KeysPage() {
 
   if (showAddInput) {
     return (
-      <div className="flex flex-col gap-6 self-stretch">
+      <div className="flex flex-col gap-4 self-stretch">
         <div className="flex items-start gap-4 text-left">
           <div className="flex flex-col gap-1 flex-1">
             <h2 className="text-xl font-bold text-white m-0">Add a pubky</h2>
