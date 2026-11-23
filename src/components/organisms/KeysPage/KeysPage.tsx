@@ -37,7 +37,7 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
         }
       }}
       className={cn(
-        "flex items-center w-full px-5 py-4 rounded-lg gap-4",
+        "flex items-center w-full px-4 py-2.5 rounded-lg gap-4",
         "border transition-colors duration-200",
         "text-left cursor-pointer",
         isSelected
@@ -56,9 +56,6 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
           isMirrored={isMirrored}
           className="min-w-0"
         />
-        {isSelected && (
-          <Atoms.CheckIcon size={16} className="text-text-light" />
-        )}
         <button
           type="button"
           onClick={(e) => {
@@ -66,7 +63,7 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
             onRemove();
           }}
           title="Remove pubky"
-          className="flex items-center justify-center shrink-0 w-9 h-9 rounded-full bg-surface-light shadow-[0_1px_2px_rgba(5,5,10,0.2)] cursor-pointer hover:opacity-80 transition-opacity"
+          className="flex items-center justify-center shrink-0 w-8 h-8 rounded-full bg-surface-light shadow-[0_1px_2px_rgba(5,5,10,0.2)] cursor-pointer hover:opacity-80 transition-opacity"
         >
           <Atoms.TrashIcon size={16} />
         </button>
