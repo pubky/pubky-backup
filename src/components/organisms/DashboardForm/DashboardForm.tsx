@@ -23,6 +23,7 @@ export function DashboardForm() {
     handleForceSync,
     handleSnapshot,
     handleOpenDataDir,
+    handleOpenSnapshotsDir,
     handleSelectKey,
     isForceSyncing,
     isCreatingSnapshot,
@@ -70,6 +71,14 @@ export function DashboardForm() {
               className="py-2 px-4 shrink-0"
             >
               <span className="text-sm font-bold text-white">Retry</span>
+            </Atoms.Button>
+          ) : statusInfo.message === "snapshot-success" ? (
+            <Atoms.Button
+              variant="secondary"
+              onClick={() => void handleOpenSnapshotsDir()}
+              className="py-2 px-4 shrink-0"
+            >
+              <span className="text-sm font-bold text-white">Open folder</span>
             </Atoms.Button>
           ) : undefined
         }

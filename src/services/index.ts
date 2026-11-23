@@ -17,6 +17,7 @@ export {
   cancelMirror,
   stopMirror,
   openDataDir,
+  openSnapshotsDir,
   createSnapshot,
   setSyncInterval,
   setBackupLocation,

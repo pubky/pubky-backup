@@ -3,8 +3,10 @@ import * as Stores from "@/stores";
 import * as Hooks from "@/hooks";
 import * as Utils from "@/utils";
 import { Logger } from "@/lib";
+import { openSnapshotsDir } from "@/services";
 
-const SNAPSHOT_MESSAGE_DURATION_MS = 3000;
+// Long enough to read the message and reach its "Open folder" button
+const SNAPSHOT_MESSAGE_DURATION_MS = 10000;
 
 /**
  * Actions returned by useDashboardActions hook
@@ -14,6 +16,8 @@ export interface DashboardActions {
   handleForceSync: (pubky: string | null) => Promise<void>;
   handleSnapshot: (pubky: string | null) => Promise<void>;
   handleOpenDataDir: () => Promise<void>;
+  /** Opens the snapshots folder of the pubky the last snapshot was made for */
+  handleOpenSnapshotsDir: () => Promise<void>;
   handleSelectKey: (selectedPubky: string) => void;
   isForceSyncing: boolean;
   isCreatingSnapshot: boolean;
@@ -50,6 +54,8 @@ export function useDashboardActions(): DashboardActions {
 
   // Snapshot message timeout ref
   const snapshotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The selected pubky can change while the snapshot message shows
+  const snapshotPubkyRef = useRef<string | null>(null);
 
   // Cleanup on unmount: clear timeout and reset snapshot message mode
   useEffect(() => {
@@ -117,6 +123,7 @@ export function useDashboardActions(): DashboardActions {
       try {
         const snapshotPath = await createSnapshotFn(pubky);
         Logger.debug("DashboardActions", "Snapshot created", { snapshotPath });
+        snapshotPubkyRef.current = pubky;
         showSnapshotMessage("snapshot-success");
       } catch (error: unknown) {
         Logger.error("DashboardActions", "Snapshot creation failed", { error });
@@ -136,6 +143,19 @@ export function useDashboardActions(): DashboardActions {
     }
   }, [openDir]);
 
+  const handleOpenSnapshotsDir = useCallback(async () => {
+    const pubky = snapshotPubkyRef.current;
+    if (pubky === null) return;
+    try {
+      await openSnapshotsDir(pubky);
+    } catch (error: unknown) {
+      Logger.error("DashboardActions", "Failed to open snapshots directory", {
+        error,
+      });
+      Utils.handleBackendError(error);
+    }
+  }, []);
+
   const handleSelectKey = useCallback(
     (selectedPubky: string) => {
       void setLastPubky(selectedPubky);
@@ -148,6 +168,7 @@ export function useDashboardActions(): DashboardActions {
     handleForceSync,
     handleSnapshot,
     handleOpenDataDir,
+    handleOpenSnapshotsDir,
     handleSelectKey,
     isForceSyncing,
     isCreatingSnapshot,
