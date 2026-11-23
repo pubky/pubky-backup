@@ -110,10 +110,13 @@ describe("MirrorCard", () => {
     await waitFor(() => {
       expect(services.startMirror).toHaveBeenCalledWith(PUBKY, HOMESERVER);
     });
-    // The form closes; the QR code follows in the key's state
-    expect(
-      screen.queryByPlaceholderText("Homeserver key"),
-    ).not.toBeInTheDocument();
+    // The form closes once the request is accepted, a few ticks after the
+    // call; the QR code follows in the key's state
+    await waitFor(() => {
+      expect(
+        screen.queryByPlaceholderText("Homeserver key"),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("should keep the form open when the request fails", async () => {
