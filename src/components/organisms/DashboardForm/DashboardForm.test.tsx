@@ -471,6 +471,17 @@ describe("DashboardForm", () => {
     });
   });
 
+  describe("private data", () => {
+    it("should open the Keys page to back up private data", async () => {
+      useUIStore.setState({ currentPage: "sync" });
+      render(<DashboardForm />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Set up" }));
+
+      expect(useUIStore.getState().currentPage).toBe("keys");
+    });
+  });
+
   describe("null pubky handling", () => {
     it("should handle null lastPubky gracefully", async () => {
       useUIStore.setState({

@@ -16,7 +16,7 @@ export function StartupForm() {
   }, []);
 
   return (
-    <div className="flex flex-col items-stretch gap-6">
+    <div className="flex flex-col items-stretch gap-6 my-auto">
       {/* Header */}
       <div className="flex flex-col items-center gap-2 pt-4">
         <Atoms.PubkyLogo />

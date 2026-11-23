@@ -243,8 +243,7 @@ interface CoverageCardFrameProps {
 
 function CoverageCardFrame({ title, children }: CoverageCardFrameProps) {
   return (
-    // Padding matches the info cards above, which nest two p-3 containers
-    <div className="flex flex-col self-stretch gap-3 p-6 bg-surface-light rounded-lg text-left">
+    <div className="flex flex-col self-stretch gap-3 p-5 bg-surface-light rounded-lg text-left">
       {title && (
         <span className="text-xs font-medium uppercase tracking-widest text-text-secondary">
           {title}
@@ -335,7 +334,7 @@ export function CoverageCard({ pubky }: CoverageCardProps) {
   };
 
   // While a request awaits approval the card shows only that, which keeps the
-  // dashboard within the window's maximum height
+  // Keys page within the window's height
   if (auth.type === "AwaitingApproval") {
     return (
       <CoverageCardFrame title="Sign in to back up private data">

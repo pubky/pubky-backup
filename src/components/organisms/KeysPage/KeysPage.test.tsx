@@ -19,6 +19,13 @@ vi.mock("@/services", () => ({
   removeKey: vi.fn(),
   signInNewKey: vi.fn(),
   cancelSignInNewKey: vi.fn(),
+  getConfig: vi.fn(),
+  startSignIn: vi.fn(),
+  cancelSignIn: vi.fn(),
+  signOut: vi.fn(),
+  startMirror: vi.fn(),
+  cancelMirror: vi.fn(),
+  stopMirror: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -39,6 +46,11 @@ describe("KeysPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(ask).mockResolvedValue(true);
+    vi.mocked(services.getConfig).mockResolvedValue({
+      sync_interval_secs: 300,
+      keys_dir: "/home/user/.pubky-backup/keys",
+      mirroring: false,
+    });
     useUIStore.setState({
       keyStates: {},
       lastPubky: null,
@@ -52,7 +64,7 @@ describe("KeysPage", () => {
 
       expect(screen.getByText("Manage pubkys")).toBeInTheDocument();
       expect(
-        screen.getByText(/Select a pubky to see its status/i),
+        screen.getByText(/Select a pubky to manage its backup/i),
       ).toBeInTheDocument();
     });
 
@@ -174,34 +186,12 @@ describe("KeysPage", () => {
       expect(removeButtons.length).toBe(2);
     });
 
-    it("should call setLastPubky when clicking a different key", async () => {
+    it("should stay on the Keys page when selecting a key", async () => {
       vi.mocked(services.setLastPubky).mockResolvedValue(undefined);
-
       useUIStore.setState({
         keyStates: {
           "pk:key1": mockKeyState,
           "pk:key2": mockKeyState,
-        },
-        lastPubky: "pk:key1",
-      });
-
-      render(<KeysPage />);
-
-      // Click on a key item (not the remove button) - KeyItem is now a div with role="button"
-      const key2Element = screen.getByText(/key2/i).closest("[role='button']");
-      if (key2Element) {
-        fireEvent.click(key2Element);
-      }
-
-      await waitFor(() => {
-        expect(services.setLastPubky).toHaveBeenCalled();
-      });
-    });
-
-    it("should navigate to sync page when clicking already selected key", () => {
-      useUIStore.setState({
-        keyStates: {
-          "pk:key1": mockKeyState,
         },
         lastPubky: "pk:key1",
         currentPage: "keys",
@@ -209,13 +199,43 @@ describe("KeysPage", () => {
 
       render(<KeysPage />);
 
-      // Click on the already selected key - KeyItem is now a div with role="button"
-      const keyElement = screen.getByText(/key1/i).closest("[role='button']");
-      if (keyElement) {
-        fireEvent.click(keyElement);
-      }
+      const key2Element = screen.getByText(/key2/i).closest("[role='button']");
+      fireEvent.click(key2Element!);
 
-      expect(useUIStore.getState().currentPage).toBe("sync");
+      await waitFor(() => {
+        expect(services.setLastPubky).toHaveBeenCalled();
+      });
+      expect(useUIStore.getState().currentPage).toBe("keys");
+    });
+
+    it("should do nothing when clicking the selected key", () => {
+      useUIStore.setState({
+        keyStates: { "pk:key1": mockKeyState },
+        lastPubky: "pk:key1",
+        currentPage: "keys",
+      });
+
+      render(<KeysPage />);
+      fireEvent.click(screen.getByText(/key1/i).closest("[role='button']")!);
+
+      expect(services.setLastPubky).not.toHaveBeenCalled();
+      expect(useUIStore.getState().currentPage).toBe("keys");
+    });
+
+    it("should offer sign-in for the selected key only", async () => {
+      vi.mocked(services.startSignIn).mockResolvedValue(undefined);
+      useUIStore.setState({
+        keyStates: { "pk:key1": mockKeyState, "pk:key2": mockKeyState },
+        lastPubky: "pk:key2",
+      });
+
+      render(<KeysPage />);
+      // getByRole throws if more than one key shows a sign-in button
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+      await waitFor(() => {
+        expect(services.startSignIn).toHaveBeenCalledWith("pk:key2");
+      });
     });
   });
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import * as Atoms from "@/components/atoms";
 import * as Hooks from "@/hooks";
@@ -7,6 +7,7 @@ import * as Utils from "@/utils";
 import * as Services from "@/services";
 import { cn, Logger } from "@/lib";
 import { AddKeyForm } from "../AddKeyForm";
+import { CoverageCard } from "../CoverageCard";
 
 interface KeyItemProps {
   pubky: string;
@@ -44,12 +45,17 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
           : "bg-[rgba(5,5,10,0.1)] border-border hover:border-text-secondary",
       )}
     >
-      <span className="text-text-light font-medium text-base flex-1">
+      <span className="text-text-light font-medium text-base flex-1 whitespace-nowrap">
         {Utils.displayPubky(pubky)}
       </span>
-      <div className="flex items-center gap-4">
+      {/* Shrinks the badge, not the buttons, when the row is too narrow */}
+      <div className="flex items-center gap-3 min-w-0">
         {hasError && <Atoms.ErrorMarker />}
-        <Atoms.CoverageBadge coverage={coverage} isMirrored={isMirrored} />
+        <Atoms.CoverageBadge
+          coverage={coverage}
+          isMirrored={isMirrored}
+          className="min-w-0"
+        />
         {isSelected && (
           <Atoms.CheckIcon size={16} className="text-text-light" />
         )}
@@ -60,7 +66,7 @@ function KeyItem({ pubky, isSelected, onSelect, onRemove }: KeyItemProps) {
             onRemove();
           }}
           title="Remove pubky"
-          className="flex items-center justify-center w-9 h-9 rounded-full bg-surface-light shadow-[0_1px_2px_rgba(5,5,10,0.2)] cursor-pointer hover:opacity-80 transition-opacity"
+          className="flex items-center justify-center shrink-0 w-9 h-9 rounded-full bg-surface-light shadow-[0_1px_2px_rgba(5,5,10,0.2)] cursor-pointer hover:opacity-80 transition-opacity"
         >
           <Atoms.TrashIcon size={16} />
         </button>
@@ -77,7 +83,6 @@ export function KeysPage() {
   const lastPubky = Stores.useUIStore((s) => s.lastPubky);
   const setNavDisabled = Stores.useUIStore((s) => s.setNavDisabled);
   const { setLastPubky } = Hooks.useSetLastPubky();
-  const { setPage } = Stores.useUIStore.getState();
 
   // lastPubky is already normalized (z32 without prefix) from the backend
   const currentPubky = lastPubky;
@@ -124,14 +129,10 @@ export function KeysPage() {
   };
 
   const handleSelect = async (pubky: string) => {
-    if (pubky === currentPubky) {
-      setPage("sync");
-      return;
-    }
+    if (pubky === currentPubky) return;
 
     try {
       await setLastPubky(pubky);
-      setPage("sync");
     } catch (error: unknown) {
       Logger.error("KeysPage", "Failed to switch key", { error });
       Utils.handleBackendError(error);
@@ -167,12 +168,13 @@ export function KeysPage() {
   }
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col gap-6 self-stretch">
+    // Not limited to the window: a long list scrolls with the whole page
+    <div className="flex flex-1 flex-col gap-6 self-stretch">
       {/* Header */}
       <div className="flex flex-col gap-1 text-left">
         <h2 className="text-xl font-bold text-white m-0">Manage pubkys</h2>
         <p className="text-base font-medium text-text-light m-0">
-          Select a pubky to see its status. All of them are backed up.
+          Select a pubky to manage its backup.
         </p>
       </div>
 
@@ -188,27 +190,28 @@ export function KeysPage() {
         </div>
       ) : (
         <>
-          <div className="flex flex-1 min-h-0 flex-col gap-2">
+          <div className="flex flex-col gap-2">
             <span className="text-xs font-medium text-text-secondary uppercase tracking-widest">
               Your pubkys ({keys.length})
             </span>
-            <div className="flex flex-1 min-h-0 flex-col gap-2 overflow-y-auto pr-2">
-              {keys.map((pubky) => (
+            {keys.map((pubky) => (
+              <Fragment key={pubky}>
                 <KeyItem
-                  key={pubky}
                   pubky={pubky}
                   isSelected={pubky === currentPubky}
                   onSelect={() => handleSelect(pubky)}
                   onRemove={() => handleRemove(pubky)}
                 />
-              ))}
-            </div>
+                {/* Signing in and mirroring, under the pubky they act on */}
+                {pubky === currentPubky && <CoverageCard pubky={pubky} />}
+              </Fragment>
+            ))}
           </div>
 
           <Atoms.Button
             variant="secondary"
             onClick={() => setShowAddInput(true)}
-            className="w-full"
+            className="w-full mt-auto"
           >
             <span className="text-text-light text-sm font-bold">
               Add another pubky

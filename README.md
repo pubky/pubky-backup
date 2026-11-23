@@ -63,11 +63,11 @@ PUBKY_TESTNET=1 cargo run -p pubky-backup-core --example dev_signer -- signup <h
 # 3. Run the app against the local network and add that pubky
 PUBKY_TESTNET=1 cargo tauri dev
 
-# 4. Click "Sign in", copy the link, and approve it in place of Pubky Ring
+# 4. On the Keys page, click "Sign in", copy the link, and approve it in place of Pubky Ring
 PUBKY_TESTNET=1 cargo run -p pubky-backup-core --example dev_signer -- approve 'pubkyauth://...' user.key
 ```
 
-The network also runs a second homeserver (printed as "Mirror homeserver") to try mirroring against. Give the test user an account there by adding its key to step 2 (`dev_signer -- signup <homeserver> user.key <mirror-homeserver>`), then click "Add mirror", enter that key and approve the request the same way as the sign-in. Mirroring is turned off until Pubky Ring supports it, so to try it, first set `MIRRORING_ENABLED` to `true` in `src-tauri/src/lib.rs`.
+The network also runs a second homeserver (printed as "Mirror homeserver") to try mirroring against. Give the test user an account there by adding its key to step 2 (`dev_signer -- signup <homeserver> user.key <mirror-homeserver>`), then click "Add mirror" on the Keys page, enter that key and approve the request the same way as the sign-in. Mirroring is turned off until Pubky Ring supports it, so to try it, first set `MIRRORING_ENABLED` to `true` in `src-tauri/src/lib.rs`.
 
 ## Testing
 
