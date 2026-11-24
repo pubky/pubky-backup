@@ -18,6 +18,7 @@ vi.mock("@/services", () => ({
   createSnapshot: vi.fn(),
   getConfig: vi.fn(),
   openDataDir: vi.fn(),
+  openSnapshotsDir: vi.fn(),
 }));
 
 // Mock clipboard API
@@ -411,6 +412,110 @@ describe("DashboardForm", () => {
       });
     });
 
+    it("should open the snapshots folder from the success message", async () => {
+      vi.mocked(services.createSnapshot).mockResolvedValue(
+        "/path/to/snapshot.zip",
+      );
+      vi.mocked(services.openSnapshotsDir).mockResolvedValue(undefined);
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: /open folder/i }),
+      );
+
+      await waitFor(() => {
+        expect(services.openSnapshotsDir).toHaveBeenCalledWith("pk:test-pubky");
+      });
+    });
+
+    it("should open the snapshotted pubky's folder after switching keys", async () => {
+      vi.mocked(services.createSnapshot).mockResolvedValue(
+        "/path/to/snapshot.zip",
+      );
+      vi.mocked(services.openSnapshotsDir).mockResolvedValue(undefined);
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
+      const openFolder = await screen.findByRole("button", {
+        name: /open folder/i,
+      });
+      act(() => {
+        useUIStore.setState({
+          keyStates: {
+            "pk:test-pubky": mockKeyState,
+            "pk:other-pubky": mockKeyState,
+          },
+          lastPubky: "pk:other-pubky",
+        });
+      });
+      fireEvent.click(openFolder);
+
+      await waitFor(() => {
+        expect(services.openSnapshotsDir).toHaveBeenCalledWith("pk:test-pubky");
+      });
+    });
+
+    it("should show an error toast when the snapshots folder can't be opened", async () => {
+      vi.mocked(services.createSnapshot).mockResolvedValue(
+        "/path/to/snapshot.zip",
+      );
+      vi.mocked(services.openSnapshotsDir).mockRejectedValue({
+        type: "Internal",
+        message: "No such directory",
+      });
+      useUIStore.setState({
+        toast: { visible: false, pubkyText: "", type: "success", message: "" },
+      });
+
+      render(<DashboardForm />);
+
+      fireEvent.click(screen.getByRole("button", { name: /create snapshot/i }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: /open folder/i }),
+      );
+
+      await waitFor(() => {
+        expect(useUIStore.getState().toast).toMatchObject({
+          visible: true,
+          type: "error",
+        });
+      });
+    });
+
+    it("should keep the open folder button for 10 seconds", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(services.createSnapshot).mockResolvedValue(
+          "/path/to/snapshot.zip",
+        );
+        render(<DashboardForm />);
+
+        await act(async () => {
+          fireEvent.click(
+            screen.getByRole("button", { name: /create snapshot/i }),
+          );
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(9000);
+        });
+        expect(
+          screen.getByRole("button", { name: /open folder/i }),
+        ).toBeInTheDocument();
+
+        await act(async () => {
+          vi.advanceTimersByTime(1000);
+        });
+        expect(
+          screen.queryByRole("button", { name: /open folder/i }),
+        ).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("should show error message when snapshot fails", async () => {
       vi.mocked(services.createSnapshot).mockRejectedValue(
         new Error("Disk full"),
@@ -468,6 +573,25 @@ describe("DashboardForm", () => {
         },
         { timeout: 1000 },
       );
+    });
+  });
+
+  describe("private data", () => {
+    it("should open the Keys page to sign in again", async () => {
+      useUIStore.setState({
+        currentPage: "sync",
+        keyStates: {
+          "pk:test-pubky": {
+            ...mockKeyState,
+            auth: { type: "SessionExpired" },
+          },
+        },
+      });
+      render(<DashboardForm />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Fix" }));
+
+      expect(useUIStore.getState().currentPage).toBe("keys");
     });
   });
 

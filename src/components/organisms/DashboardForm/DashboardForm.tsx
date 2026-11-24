@@ -1,8 +1,9 @@
 import * as Atoms from "@/components/atoms";
 import * as Molecules from "@/components/molecules";
 import { ActionButtons } from "../ActionButtons";
-import { CoverageCard } from "../CoverageCard";
+import { CoverageNotice } from "../CoverageNotice";
 import * as Hooks from "@/hooks";
+import * as Stores from "@/stores";
 import * as Utils from "@/utils";
 
 export function DashboardForm() {
@@ -22,6 +23,7 @@ export function DashboardForm() {
     handleForceSync,
     handleSnapshot,
     handleOpenDataDir,
+    handleOpenSnapshotsDir,
     handleSelectKey,
     isForceSyncing,
     isCreatingSnapshot,
@@ -47,6 +49,14 @@ export function DashboardForm() {
         onSelectKey={handleSelectKey}
       />
 
+      {/* Private data and mirror, which are managed on the Keys page */}
+      {pubky !== null && (
+        <CoverageNotice
+          pubky={pubky}
+          onOpen={() => Stores.useUIStore.getState().setPage("keys")}
+        />
+      )}
+
       {/* Sync message banner */}
       <Molecules.SyncMessage
         status={statusInfo.message}
@@ -61,6 +71,14 @@ export function DashboardForm() {
               className="py-2 px-4 shrink-0"
             >
               <span className="text-sm font-bold text-white">Retry</span>
+            </Atoms.Button>
+          ) : statusInfo.message === "snapshot-success" ? (
+            <Atoms.Button
+              variant="secondary"
+              onClick={() => void handleOpenSnapshotsDir()}
+              className="py-2 px-4 shrink-0"
+            >
+              <span className="text-sm font-bold text-white">Open folder</span>
             </Atoms.Button>
           ) : undefined
         }
@@ -98,9 +116,6 @@ export function DashboardForm() {
           }
         />
       </div>
-
-      {/* Signing in and out to back up private data */}
-      {pubky !== null && <CoverageCard pubky={pubky} />}
 
       {/* Action buttons */}
       <ActionButtons

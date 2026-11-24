@@ -17,7 +17,6 @@ import { stripPubkyPrefix } from "@/utils/pubky";
  *
  * const handleSelect = async (pubky: string) => {
  *   await setLastPubky(pubky);
- *   // Navigate to sync page
  * };
  * ```
  */

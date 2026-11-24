@@ -11,7 +11,7 @@ export function Card({ children, className }: CardProps) {
     <div
       className={cn(
         "w-full flex-1 min-h-0 flex flex-col justify-start items-stretch",
-        "pt-6 px-8 pb-8 gap-6 overflow-y-auto",
+        "pt-6 px-8 pb-6 gap-5 overflow-y-auto",
         "bg-surface-dark",
         className,
       )}

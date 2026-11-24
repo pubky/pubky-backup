@@ -56,7 +56,9 @@ export function CoverageBadge({
       className={cn(coverageBadgeVariants({ coverage }), className)}
     >
       <Icon size={12} />
-      {isMirrored ? `${label}, mirrored` : label}
+      <span className="truncate">
+        {isMirrored ? `${label}, mirrored` : label}
+      </span>
     </span>
   );
 }

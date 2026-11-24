@@ -5,7 +5,7 @@ import type { ButtonProps } from "./Button.types";
 export const buttonVariants = cva(
   [
     "flex justify-center items-center gap-2",
-    "py-5 px-8 rounded-full",
+    "py-4 px-8 rounded-full",
     "shadow-[0_1px_2px_rgba(5,5,10,0.2)]",
     "cursor-pointer transition-all duration-200",
     "disabled:cursor-not-allowed",
